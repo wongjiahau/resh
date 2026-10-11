@@ -36,12 +36,15 @@ impl fmt::Display for Type {
             Type::Str => write!(f, "String"),
             Type::Path => write!(f, "Path"),
             Type::Unit => write!(f, "Unit"),
-            Type::List(t) => write!(f, "List<{t}>"),
+            Type::List(t) => write!(f, "List ({t})"),
             Type::Record(n) => write!(f, "{n}"),
             Type::Enum(n, args) if args.is_empty() => write!(f, "{n}"),
+            Type::Enum(n, args) if n == "Result" && args.len() == 2 => {
+                write!(f, "Result ({}) Or ({})", args[0], args[1])
+            }
             Type::Enum(n, args) => {
-                let a: Vec<String> = args.iter().map(|t| t.to_string()).collect();
-                write!(f, "{n}<{}>", a.join(", "))
+                write!(f, "{n}")?;
+                args.iter().try_for_each(|t| write!(f, " ({t})"))
             }
             Type::Param(p) => write!(f, "{p}"),
             Type::Unknown => write!(f, "?"),
@@ -327,12 +330,12 @@ impl Checker {
             "String" => arity(0, Type::Str),
             "Path" => arity(0, Type::Path),
             "Unit" => arity(0, Type::Unit),
-            "List" => arity(
+            "List _" => arity(
                 1,
                 Type::List(Box::new(args.first().cloned().unwrap_or(Type::Unknown))),
             ),
-            "Option" => arity(1, Type::Enum("Option".into(), args.clone())),
-            "Result" => arity(2, Type::Enum("Result".into(), args.clone())),
+            "Option _" => arity(1, Type::Enum("Option".into(), args.clone())),
+            "Result _ Or _" => arity(2, Type::Enum("Result".into(), args.clone())),
             n if n.len() == 1 && n.chars().all(|c| c.is_ascii_uppercase()) => {
                 Ok(Type::Param(n.to_string()))
             }
@@ -715,7 +718,7 @@ impl Checker {
         let Some(Type::Record(rn)) = exp else {
             return Err(Diag::new(
                 span,
-                "cannot tell which record this `{ ... }` is; write the record's name before it, e.g. `my record { ... }`",
+                "cannot tell which record this `{ ... }` is; write the record's name before it, e.g. `My Record { ... }`",
             ));
         };
         let rd = &self.records[rn];

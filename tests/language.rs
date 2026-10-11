@@ -22,13 +22,13 @@ fn render(src: &str) -> String {
 }
 
 const SHAPES: &str = r#"
-ENUM shape {
+ENUM Shape {
     circle (radius: Float),
     (width: Float) by (height: Float),
     empty
 }
 
-FUNCTION describe (s: shape): String {
+FUNCTION describe (s: Shape): String {
     MATCH s {
         circle (r) => "circle",
         (w) by (h) => "rectangle",
@@ -53,8 +53,8 @@ fn anyfix_constructors_and_match() {
 #[test]
 fn non_exhaustive_match_is_an_error() {
     let src = r#"
-ENUM light { red, green }
-FUNCTION name (l: light): String { MATCH l { red => "r" } }
+ENUM Light { red, green }
+FUNCTION name (l: Light): String { MATCH l { red => "r" } }
 "#;
     assert!(run_err(src).contains("non-exhaustive MATCH; missing: green"));
 }
@@ -62,24 +62,24 @@ FUNCTION name (l: light): String { MATCH l { red => "r" } }
 #[test]
 fn record_literal_defaults_and_bare_boolean_shorthand() {
     let src = r#"
-RECORD job {
+RECORD Job {
     name: String,
     retries?: Int,
     dry run?: Boolean
 }
-LET j = job { name: "build", dry run }
+LET j = Job { name: "build", dry run }
 (dry run) j
 "#;
     // `dry run` is a prefix field: `dry run (j)` -- `(dry run) j` must not parse.
     assert!(Session::new().run(src).is_err());
 
     let src = r#"
-RECORD job {
+RECORD Job {
     name: String,
     retries?: Int,
     dry run?: Boolean
 }
-LET j = job { name: "build", dry run }
+LET j = Job { name: "build", dry run }
 dry run j
 retries j
 name j
@@ -100,11 +100,11 @@ name j
 #[test]
 fn self_field_can_be_suffix_and_infix() {
     let src = r#"
-RECORD person {
+RECORD Person {
     (self) 's name: String,
     age of (self): Int
 }
-LET p = person { 's name: "Ada", age of: 36 }
+LET p = Person { 's name: "Ada", age of: 36 }
 (p) 's name
 age of p
 "#;
@@ -120,7 +120,7 @@ fn pipe_requires_exactly_one_placeholder() {
 #[test]
 fn user_function_with_infix_signature_and_generics() {
     let src = r#"
-FUNCTION (a: List<T>) has more than (b: List<T>): Boolean {
+FUNCTION (a: List (T)) has more than (b: List (T)): Boolean {
     IF (count a) equals (count b) THEN false ELSE true
 }
 [1, 2, 3] has more than [1]
@@ -214,4 +214,14 @@ fn list_file_has_ls_parity_options() {
     assert_eq!(names("{ directory itself }").len(), 1);
     assert_eq!(render("human size of 2048"), "\"2.0K\"");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn type_names_are_anyfix_and_capitalized() {
+    let ok = "FUNCTION first (xs: List (T)): Result (T) Or (String) { NATIVE \"unwrap\" }";
+    assert!(Session::new().run(ok).is_ok());
+    assert!(run_err("RECORD my thing { a: Int }").contains("capitalize every word"));
+    assert!(run_err("FUNCTION f (x: int): Int { 1 }").contains("capitalize every word"));
+    assert!(run_err("FUNCTION f (x: List<Int>): Int { 1 }").contains("unexpected character `<`"));
+    assert!(run_err("FUNCTION f (x: List): Int { 1 }").contains("unknown type `List`"));
 }

@@ -48,8 +48,6 @@ pub enum Tok {
     Arrow,
     Pipe,
     Eq,
-    Lt,
-    Gt,
     Underscore,
     Newline,
     Eof,
@@ -165,14 +163,6 @@ pub fn lex(src: &str) -> Res<Vec<Token>> {
             '?' => {
                 lx.bump();
                 push(Tok::Question);
-            }
-            '<' => {
-                lx.bump();
-                push(Tok::Lt);
-            }
-            '>' => {
-                lx.bump();
-                push(Tok::Gt);
             }
             '=' => {
                 lx.bump();

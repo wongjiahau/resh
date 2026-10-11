@@ -448,8 +448,8 @@ pub fn json_str(s: &str) -> String {
     o
 }
 
-/// Options for `list file`, decoded from the `list options` record.
-/// `sort` is the index of the `sort key` variant: name, size, modified time, extension, unsorted.
+/// Options for `list file`, decoded from the `List Options` record.
+/// `sort` is the index of the `Sort Key` variant: name, size, modified time, extension, unsorted.
 #[derive(Default)]
 struct ListOpts {
     recursive: bool,
@@ -547,10 +547,10 @@ fn make_entry(path: &FsPath, follow: bool) -> std::io::Result<Value> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| shown.clone());
     Ok(Value::Record(
-        "entry".into(),
+        "Entry".into(),
         vec![
             Value::Path(shown),
-            Value::Variant("entry kind".into(), kind, vec![]),
+            Value::Variant("Entry Kind".into(), kind, vec![]),
             Value::Int(if kind == 0 { meta.len() as i64 } else { 0 }),
             Value::Str(name),
             Value::Str(mode_string(kind, meta.mode())),
