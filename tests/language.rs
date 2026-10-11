@@ -178,3 +178,40 @@ read file {b:?}
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn list_file_has_ls_parity_options() {
+    let dir = std::env::temp_dir().join(format!("resh-ls-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    std::fs::write(dir.join("big.txt"), "0123456789").unwrap();
+    std::fs::write(dir.join("a.rs"), "x").unwrap();
+    std::fs::write(dir.join(".hidden"), "h").unwrap();
+    std::fs::write(dir.join("sub").join("deep.txt"), "d").unwrap();
+    let d = format!("{:?}", dir.to_string_lossy());
+    let names = |opts: &str| -> Vec<String> {
+        let src = format!("list file in {d} {opts} |> unwrap (_)");
+        let Value::List(xs) = run(&src).pop().unwrap() else {
+            panic!("not a list")
+        };
+        xs.iter()
+            .map(|e| match e {
+                Value::Record(_, f) => match &f[3] {
+                    Value::Str(s) => s.clone(),
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            })
+            .collect()
+    };
+    assert_eq!(names("{}"), ["a.rs", "big.txt", "sub"]);
+    assert_eq!(names("{ reverse }"), ["sub", "big.txt", "a.rs"]);
+    assert_eq!(names("{ include hidden file }")[0], ".hidden");
+    assert_eq!(names("{ sort by: size }")[0], "big.txt");
+    assert_eq!(
+        names("{ recursive }"),
+        ["a.rs", "big.txt", "sub", "deep.txt"]
+    );
+    assert_eq!(names("{ directory itself }").len(), 1);
+    assert_eq!(render("human size of 2048"), "\"2.0K\"");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

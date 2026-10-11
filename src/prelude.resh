@@ -1,18 +1,40 @@
 // Standard library. Written in resh itself; bodies are native Rust.
 
+ENUM sort key { name, size, modified time, extension, unsorted }
+
+// Mirrors `ls`: recursive = -R, include hidden file = -A, directory itself = -d,
+// reverse = -r, follow symlink = -L, sort by = (-S | -t | -X | -U; default by name).
 RECORD list options {
     recursive?: Boolean,
-    include ignored file?: Boolean
+    include hidden file?: Boolean,
+    directory itself?: Boolean,
+    reverse?: Boolean,
+    follow symlink?: Boolean,
+    sort by?: sort key
 }
 
 ENUM entry kind { file, directory, symlink }
 
+// Every field `ls -l -i -s` can show; times are Unix seconds, `size` is bytes (0 for non-files).
 RECORD entry {
     (self) path: Path,
     (self) kind: entry kind,
-    (self) size: Int
+    (self) size: Int,
+    file name of (self): String,
+    permissions of (self): String,
+    mode of (self): Int,
+    link count of (self): Int,
+    owner id of (self): Int,
+    group id of (self): Int,
+    modified at of (self): Int,
+    accessed at of (self): Int,
+    inode number of (self): Int,
+    block count of (self): Int,
+    link target of (self)?: Path
 }
 
+FUNCTION list file: Result<List<entry>, String> { NATIVE "list_default" }
+FUNCTION list file in (dir: Path): Result<List<entry>, String> { NATIVE "list_in_default" }
 FUNCTION list file (options: list options): Result<List<entry>, String> { NATIVE "list_file" }
 FUNCTION list file in (dir: Path) (options: list options): Result<List<entry>, String> { NATIVE "list_file_in" }
 FUNCTION read file (path: Path): Result<String, String> { NATIVE "read_file" }
@@ -28,3 +50,4 @@ FUNCTION (a: T) equals (b: T): Boolean { NATIVE "equals" }
 FUNCTION path from (text: String): Path { NATIVE "path_from" }
 FUNCTION text of (path: Path): String { NATIVE "text_of" }
 FUNCTION unwrap (result: Result<T, E>): T { NATIVE "unwrap" }
+FUNCTION human size of (bytes: Int): String { NATIVE "human_size" }

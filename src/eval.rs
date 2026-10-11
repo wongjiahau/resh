@@ -1,6 +1,7 @@
 //! Values, the tree-walking evaluator, native functions and rendering.
 
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path as FsPath;
 
 use crate::check::{Checker, FnKind, Ir, PartT};
@@ -8,6 +9,9 @@ use crate::check::{Checker, FnKind, Ir, PartT};
 pub const NATIVES: &[&str] = &[
     "list_file",
     "list_file_in",
+    "list_default",
+    "list_in_default",
+    "human_size",
     "read_file",
     "write_file",
     "move_path",
@@ -170,8 +174,14 @@ impl Interp {
 
     fn native(&self, name: &str, a: Vec<Value>) -> Result<Value, String> {
         match name {
-            "list_file" => Ok(self.list(".", &a[0])),
-            "list_file_in" => Ok(self.list(as_str(&a[0]), &a[1])),
+            "list_file" => Ok(self.list(".", Some(&a[0]))),
+            "list_file_in" => Ok(self.list(as_str(&a[0]), Some(&a[1]))),
+            "list_default" => Ok(self.list(".", None)),
+            "list_in_default" => Ok(self.list(as_str(&a[0]), None)),
+            "human_size" => match &a[0] {
+                Value::Int(n) => Ok(Value::Str(human_size(*n))),
+                _ => Err("human size: not an Int".into()),
+            },
             "read_file" => Ok(match fs::read_to_string(as_str(&a[0])) {
                 Ok(s) => ok(Value::Str(s)),
                 Err(e) => err(format!("cannot read {}: {e}", as_str(&a[0]))),
@@ -233,17 +243,32 @@ impl Interp {
         }
     }
 
-    fn list(&self, dir: &str, opts: &Value) -> Value {
-        let (recursive, hidden) = match opts {
-            Value::Record(_, f) => (opt_bool(&f[0]), opt_bool(&f[1])),
-            _ => (false, false),
-        };
-        let mut out = Vec::new();
-        if let Err(e) = walk(FsPath::new(dir), recursive, hidden, &mut out) {
-            return err(format!("cannot list {dir}: {e}"));
+    fn list(&self, dir: &str, opts: Option<&Value>) -> Value {
+        let mut o = ListOpts::default();
+        if let Some(Value::Record(_, f)) = opts {
+            o.recursive = opt_bool(&f[0]);
+            o.hidden = opt_bool(&f[1]);
+            o.itself = opt_bool(&f[2]);
+            o.reverse = opt_bool(&f[3]);
+            o.follow = opt_bool(&f[4]);
+            if let Value::Variant(e, 0, a) = &f[5]
+                && e == "Option"
+                && let Some(Value::Variant(_, idx, _)) = a.first()
+            {
+                o.sort = *idx;
+            }
         }
-        out.sort_by_key(key);
-        ok(Value::List(out))
+        let mut out = Vec::new();
+        let root = FsPath::new(dir);
+        let res = if o.itself {
+            make_entry(root, o.follow).map(|e| out.push(e))
+        } else {
+            walk(root, &o, &mut out)
+        };
+        match res {
+            Ok(()) => ok(Value::List(out)),
+            Err(e) => err(format!("cannot list {dir}: {e}")),
+        }
     }
 
     // ---------- rendering ----------
@@ -423,40 +448,154 @@ pub fn json_str(s: &str) -> String {
     o
 }
 
-fn key(v: &Value) -> String {
+/// Options for `list file`, decoded from the `list options` record.
+/// `sort` is the index of the `sort key` variant: name, size, modified time, extension, unsorted.
+#[derive(Default)]
+struct ListOpts {
+    recursive: bool,
+    hidden: bool,
+    itself: bool,
+    reverse: bool,
+    follow: bool,
+    sort: usize,
+}
+
+fn field_int(v: &Value, i: usize) -> i64 {
+    match v {
+        Value::Record(_, f) => match f.get(i) {
+            Some(Value::Int(n)) => *n,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
+fn field_path(v: &Value) -> String {
     match v {
         Value::Record(_, f) => as_str(&f[0]).to_string(),
         _ => String::new(),
     }
 }
 
-fn walk(dir: &FsPath, recursive: bool, hidden: bool, out: &mut Vec<Value>) -> std::io::Result<()> {
+fn extension_of(v: &Value) -> String {
+    FsPath::new(&field_path(v))
+        .extension()
+        .map(|x| x.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
+fn mode_string(kind: usize, mode: u32) -> String {
+    let mut s = String::from(match kind {
+        1 => 'd',
+        2 => 'l',
+        _ => '-',
+    });
+    for shift in [6, 3, 0] {
+        let bits = (mode >> shift) & 7;
+        s.push(if bits & 4 != 0 { 'r' } else { '-' });
+        s.push(if bits & 2 != 0 { 'w' } else { '-' });
+        s.push(if bits & 1 != 0 { 'x' } else { '-' });
+    }
+    s
+}
+
+fn human_size(n: i64) -> String {
+    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
+    let mut v = n as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u < UNITS.len() - 1 {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{n}B")
+    } else {
+        format!("{v:.1}{}", UNITS[u])
+    }
+}
+
+fn make_entry(path: &FsPath, follow: bool) -> std::io::Result<Value> {
+    let lmeta = fs::symlink_metadata(path)?;
+    let is_link = lmeta.file_type().is_symlink();
+    let meta = if follow && is_link {
+        fs::metadata(path).unwrap_or_else(|_| lmeta.clone())
+    } else {
+        lmeta.clone()
+    };
+    let kind = if meta.file_type().is_symlink() {
+        2
+    } else if meta.is_dir() {
+        1
+    } else {
+        0
+    };
+    let target = if is_link {
+        match fs::read_link(path) {
+            Ok(t) => Value::Variant(
+                "Option".into(),
+                0,
+                vec![Value::Path(t.to_string_lossy().to_string())],
+            ),
+            Err(_) => none(),
+        }
+    } else {
+        none()
+    };
+    let shown = path.to_string_lossy().trim_start_matches("./").to_string();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| shown.clone());
+    Ok(Value::Record(
+        "entry".into(),
+        vec![
+            Value::Path(shown),
+            Value::Variant("entry kind".into(), kind, vec![]),
+            Value::Int(if kind == 0 { meta.len() as i64 } else { 0 }),
+            Value::Str(name),
+            Value::Str(mode_string(kind, meta.mode())),
+            Value::Int((meta.mode() & 0o7777) as i64),
+            Value::Int(meta.nlink() as i64),
+            Value::Int(meta.uid() as i64),
+            Value::Int(meta.gid() as i64),
+            Value::Int(meta.mtime()),
+            Value::Int(meta.atime()),
+            Value::Int(meta.ino() as i64),
+            Value::Int(meta.blocks() as i64),
+            target,
+        ],
+    ))
+}
+
+fn none() -> Value {
+    Value::Variant("Option".into(), 1, vec![])
+}
+
+fn walk(dir: &FsPath, o: &ListOpts, out: &mut Vec<Value>) -> std::io::Result<()> {
+    let mut level = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !hidden && name.starts_with('.') {
+        if !o.hidden && entry.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
-        let path = entry.path();
-        let meta = fs::symlink_metadata(&path)?;
-        let (kind, size) = if meta.file_type().is_symlink() {
-            (2, 0)
-        } else if meta.is_dir() {
-            (1, 0)
-        } else {
-            (0, meta.len() as i64)
-        };
-        let shown = path.to_string_lossy().trim_start_matches("./").to_string();
-        out.push(Value::Record(
-            "entry".into(),
-            vec![
-                Value::Path(shown),
-                Value::Variant("entry kind".into(), kind, vec![]),
-                Value::Int(size),
-            ],
-        ));
-        if recursive && kind == 1 {
-            walk(&path, recursive, hidden, out)?;
+        level.push(make_entry(&entry.path(), o.follow)?);
+    }
+    match o.sort {
+        0 => level.sort_by_key(field_path),
+        1 => level.sort_by_key(|e| (std::cmp::Reverse(field_int(e, 2)), field_path(e))),
+        2 => level.sort_by_key(|e| (std::cmp::Reverse(field_int(e, 9)), field_path(e))),
+        3 => level.sort_by_key(|e| (extension_of(e), field_path(e))),
+        _ => {}
+    }
+    if o.reverse {
+        level.reverse();
+    }
+    for e in level {
+        let is_dir = matches!(&e, Value::Record(_, f) if matches!(f[1], Value::Variant(_, 1, _)));
+        let path = field_path(&e);
+        out.push(e);
+        if o.recursive && is_dir {
+            walk(FsPath::new(&path), o, out)?;
         }
     }
     Ok(())
