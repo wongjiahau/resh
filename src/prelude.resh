@@ -1,0 +1,30 @@
+// Standard library. Written in resh itself; bodies are native Rust.
+
+RECORD list options {
+    recursive?: Boolean,
+    include ignored file?: Boolean
+}
+
+ENUM entry kind { file, directory, symlink }
+
+RECORD entry {
+    (self) path: Path,
+    (self) kind: entry kind,
+    (self) size: Int
+}
+
+FUNCTION list file (options: list options): Result<List<entry>, String> { NATIVE "list_file" }
+FUNCTION list file in (dir: Path) (options: list options): Result<List<entry>, String> { NATIVE "list_file_in" }
+FUNCTION read file (path: Path): Result<String, String> { NATIVE "read_file" }
+FUNCTION write (text: String) to file (path: Path): Result<Unit, String> { NATIVE "write_file" }
+FUNCTION move (from: Path) to (to: Path): Result<Unit, String> { NATIVE "move_path" }
+
+FUNCTION print (value: T): Unit { NATIVE "print" }
+FUNCTION count (items: List<T>): Int { NATIVE "count" }
+FUNCTION filter (items: List<entry>) by extension (extension: String): List<entry> { NATIVE "filter_ext" }
+FUNCTION lines of (text: String): List<String> { NATIVE "lines_of" }
+FUNCTION join (a: String) with (b: String): String { NATIVE "join_with" }
+FUNCTION (a: T) equals (b: T): Boolean { NATIVE "equals" }
+FUNCTION path from (text: String): Path { NATIVE "path_from" }
+FUNCTION text of (path: Path): String { NATIVE "text_of" }
+FUNCTION unwrap (result: Result<T, E>): T { NATIVE "unwrap" }
