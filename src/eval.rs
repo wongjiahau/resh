@@ -21,8 +21,6 @@ pub const NATIVES: &[&str] = &[
     "lines_of",
     "join_with",
     "equals",
-    "path_from",
-    "text_of",
     "unwrap",
 ];
 
@@ -32,7 +30,6 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     Str(String),
-    Path(String),
     Unit,
     List(Vec<Value>),
     /// record type name, field values in declaration order
@@ -55,7 +52,7 @@ fn err(s: impl Into<String>) -> Value {
 }
 fn as_str(v: &Value) -> &str {
     match v {
-        Value::Str(s) | Value::Path(s) => s,
+        Value::Str(s) => s,
         _ => "",
     }
 }
@@ -77,6 +74,7 @@ impl Interp {
     pub fn eval(&self, ir: &Ir, env: &mut Env) -> Result<Value, String> {
         match ir {
             Ir::Lit(v) => Ok(v.clone()),
+            Ir::Struct(_) => Err("unresolved record literal (checker bug)".into()),
             Ir::Var(n) => env
                 .iter()
                 .rev()
@@ -231,8 +229,6 @@ impl Interp {
             )),
             "join_with" => Ok(Value::Str(format!("{}{}", as_str(&a[0]), as_str(&a[1])))),
             "equals" => Ok(Value::Bool(a[0] == a[1])),
-            "path_from" => Ok(Value::Path(as_str(&a[0]).to_string())),
-            "text_of" => Ok(Value::Str(as_str(&a[0]).to_string())),
             "unwrap" => match &a[0] {
                 Value::Variant(_, 0, args) => Ok(args[0].clone()),
                 other => Err(format!("unwrap failed: {}", self.render(other, false))),
@@ -301,7 +297,7 @@ impl Interp {
             Value::Int(n) => n.to_string(),
             Value::Float(f) => format!("{f:?}"),
             Value::Bool(b) => b.to_string(),
-            Value::Str(s) | Value::Path(s) => format!("{s:?}"),
+            Value::Str(s) => format!("{s:?}"),
             Value::Unit => "unit".into(),
             Value::List(xs) => format!(
                 "[{}]",
@@ -388,7 +384,7 @@ impl Interp {
             Value::Int(n) => n.to_string(),
             Value::Float(f) => format!("{f:?}"),
             Value::Bool(b) => b.to_string(),
-            Value::Str(s) | Value::Path(s) => json_str(s),
+            Value::Str(s) => json_str(s),
             Value::Unit => "null".into(),
             Value::List(xs) => format!(
                 "[{}]",
@@ -534,7 +530,7 @@ fn make_entry(path: &FsPath, follow: bool) -> std::io::Result<Value> {
             Ok(t) => Value::Variant(
                 "Option".into(),
                 0,
-                vec![Value::Path(t.to_string_lossy().to_string())],
+                vec![Value::Str(t.to_string_lossy().to_string())],
             ),
             Err(_) => none(),
         }
@@ -549,7 +545,7 @@ fn make_entry(path: &FsPath, follow: bool) -> std::io::Result<Value> {
     Ok(Value::Record(
         "Entry".into(),
         vec![
-            Value::Path(shown),
+            Value::Str(shown),
             Value::Variant("Entry Kind".into(), kind, vec![]),
             Value::Int(if kind == 0 { meta.len() as i64 } else { 0 }),
             Value::Str(name),

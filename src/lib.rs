@@ -59,7 +59,7 @@ impl Session {
             let Item::Stmt(stmt) = item else { continue };
             match stmt {
                 Stmt::Let(name, e, span) => {
-                    let (ir, ty) = self.interp.ck.check(e, &mut self.globals, None)?;
+                    let (ir, ty) = self.interp.ck.check(e, &mut self.globals)?;
                     let v = self
                         .interp
                         .eval(&ir, &mut self.env)
@@ -68,7 +68,7 @@ impl Session {
                     self.env.push((name.clone(), v));
                 }
                 Stmt::Expr(e) => {
-                    let (ir, _) = self.interp.ck.check(e, &mut self.globals, None)?;
+                    let (ir, _) = self.interp.ck.check(e, &mut self.globals)?;
                     let v = self
                         .interp
                         .eval(&ir, &mut self.env)

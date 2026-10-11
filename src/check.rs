@@ -1,9 +1,12 @@
-//! Declaration table, mixfix resolution and type checking.
+//! Declaration table, overload resolution and type checking.
 //!
-//! Parsing leaves every call as a flat `Seq` of words/atoms. Because every
-//! argument is exactly one token, a call matches a signature iff it has the
-//! same length, the same words in the word positions and *anything* in the
-//! parameter positions. At most one signature may match.
+//! Type checking is bottom-up and one-way: the type of an expression depends
+//! only on its children, never on where it is used. Parsing leaves every call
+//! as a flat `Seq` of words/atoms. Because every argument is exactly one
+//! token, a call can only match a signature with the same length and the same
+//! words in the word positions. Several signatures may share those words and
+//! differ in parameter types (overloading); the arguments are inferred once
+//! and the overload is chosen by testing `argument type <: parameter type`.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -18,13 +21,17 @@ pub enum Type {
     Float,
     Bool,
     Str,
-    Path,
     Unit,
     List(Box<Type>),
     Record(String),
     Enum(String, Vec<Type>),
     Param(String),
-    Unknown,
+    /// The bottom type: a subtype of everything. The element type of `[]`,
+    /// the payload of `none`, and any generic parameter nothing constrains.
+    Never,
+    /// The inferred type of a `{ ... }` literal; it only becomes a `Record`
+    /// when it meets a record parameter or a `: Record Name` annotation.
+    Struct(Vec<(String, Type)>),
 }
 
 impl fmt::Display for Type {
@@ -34,7 +41,6 @@ impl fmt::Display for Type {
             Type::Float => write!(f, "Float"),
             Type::Bool => write!(f, "Boolean"),
             Type::Str => write!(f, "String"),
-            Type::Path => write!(f, "Path"),
             Type::Unit => write!(f, "Unit"),
             Type::List(t) => write!(f, "List ({t})"),
             Type::Record(n) => write!(f, "{n}"),
@@ -47,58 +53,72 @@ impl fmt::Display for Type {
                 args.iter().try_for_each(|t| write!(f, " ({t})"))
             }
             Type::Param(p) => write!(f, "{p}"),
-            Type::Unknown => write!(f, "?"),
+            Type::Never => write!(f, "Never"),
+            Type::Struct(fs) => {
+                write!(f, "record literal {{ ")?;
+                for (i, (k, t)) in fs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k}: {t}")?;
+                }
+                write!(f, " }}")
+            }
         }
     }
 }
 
-fn has_param(t: &Type) -> bool {
-    match t {
-        Type::Param(_) => true,
-        Type::List(x) => has_param(x),
-        Type::Enum(_, a) => a.iter().any(has_param),
-        _ => false,
-    }
-}
-
-pub fn compat(a: &Type, b: &Type) -> bool {
+/// `a <: b`: every value of type `a` is a valid `b`. Covariant everywhere
+/// (values are immutable). Record literals are handled by `Checker::fits`.
+pub fn sub(a: &Type, b: &Type) -> bool {
     match (a, b) {
-        (Type::Unknown, _) | (_, Type::Unknown) => true,
-        (Type::List(x), Type::List(y)) => compat(x, y),
+        (Type::Never, _) => true,
+        (Type::List(x), Type::List(y)) => sub(x, y),
         (Type::Enum(n, xs), Type::Enum(m, ys)) => {
-            n == m && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| compat(x, y))
+            n == m && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| sub(x, y))
         }
         _ => a == b,
     }
 }
 
-fn unify(p: &Type, a: &Type, m: &mut HashMap<String, Type>) -> bool {
-    match (p, a) {
-        (Type::Param(n), _) => match m.get(n).cloned() {
-            None => {
-                m.insert(n.clone(), a.clone());
-                true
-            }
-            Some(Type::Unknown) => {
-                m.insert(n.clone(), a.clone());
-                true
-            }
-            Some(b) => compat(&b, a),
-        },
-        (_, Type::Unknown) => true,
-        (Type::List(x), Type::List(y)) => unify(x, y, m),
-        (Type::Enum(n, xs), Type::Enum(k, ys)) => {
-            n == k && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| unify(x, y, m))
-        }
-        _ => compat(p, a),
+/// The smaller of two comparable types (the one both fit into), if any.
+fn join(a: &Type, b: &Type) -> Option<Type> {
+    if sub(a, b) {
+        Some(b.clone())
+    } else if sub(b, a) {
+        Some(a.clone())
+    } else {
+        None
     }
 }
 
-fn subst(t: &Type, m: &HashMap<String, Type>) -> Type {
+/// Could one argument type match both declared parameter types? Used to
+/// reject overloads that would be ambiguous at some call.
+fn overlap(a: &Type, b: &Type) -> bool {
+    match (a, b) {
+        (Type::Param(_), _) | (_, Type::Param(_)) => true,
+        (Type::List(x), Type::List(y)) => overlap(x, y),
+        (Type::Enum(n, xs), Type::Enum(m, ys)) => {
+            n == m && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| overlap(x, y))
+        }
+        _ => a == b,
+    }
+}
+
+/// Substitutes bound parameters; `keep_unbound` leaves unbound ones as-is
+/// (for messages), otherwise they become `Never`.
+fn subst(t: &Type, m: &HashMap<String, Type>, keep_unbound: bool) -> Type {
     match t {
-        Type::Param(n) => m.get(n).cloned().unwrap_or(Type::Unknown),
-        Type::List(x) => Type::List(Box::new(subst(x, m))),
-        Type::Enum(n, a) => Type::Enum(n.clone(), a.iter().map(|x| subst(x, m)).collect()),
+        Type::Param(n) => match m.get(n) {
+            Some(x) => x.clone(),
+            None if keep_unbound => t.clone(),
+            None => Type::Never,
+        },
+        Type::List(x) => Type::List(Box::new(subst(x, m, keep_unbound))),
+        Type::Enum(n, a) => Type::Enum(
+            n.clone(),
+            a.iter().map(|x| subst(x, m, keep_unbound)).collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -177,6 +197,8 @@ pub enum Ir {
     Block(Vec<Ir>),
     List(Vec<Ir>),
     MkRecord(String, Vec<Ir>),
+    /// A `{ ... }` literal not yet fitted to a record; never reaches `eval`.
+    Struct(Vec<(String, Ir)>),
     If(Box<Ir>, Box<Ir>, Box<Ir>),
     Match(Box<Ir>, Vec<IrArm>),
     Pipe(Box<Ir>, Box<Ir>),
@@ -238,6 +260,7 @@ fn count_placeholders(e: &Expr) -> usize {
                     .map(|a| count_placeholders(&a.body))
                     .sum::<usize>()
         }
+        ExprKind::Ascribe(e, _) => count_placeholders(e),
         // The right side of a nested pipe binds its own `_`.
         ExprKind::Pipe(l, _) => count_placeholders(l),
         _ => 0,
@@ -328,11 +351,10 @@ impl Checker {
             "Float" => arity(0, Type::Float),
             "Boolean" => arity(0, Type::Bool),
             "String" => arity(0, Type::Str),
-            "Path" => arity(0, Type::Path),
             "Unit" => arity(0, Type::Unit),
             "List _" => arity(
                 1,
-                Type::List(Box::new(args.first().cloned().unwrap_or(Type::Unknown))),
+                Type::List(Box::new(args.first().cloned().unwrap_or(Type::Never))),
             ),
             "Option _" => arity(1, Type::Enum("Option".into(), args.clone())),
             "Result _ Or _" => arity(2, Type::Enum("Result".into(), args.clone())),
@@ -375,17 +397,19 @@ impl Checker {
 
     fn add_def(&mut self, parts: Vec<PartT>, ret: Type, kind: FnKind, span: Span) -> Res<usize> {
         for d in &self.defs {
+            // Same words in the same positions, and every parameter could
+            // receive the same argument type: a call could not choose.
             let same = d.parts.len() == parts.len()
                 && d.parts.iter().zip(&parts).all(|(a, b)| match (a, b) {
                     (PartT::Word(x), PartT::Word(y)) => x == y,
-                    (PartT::Param(..), PartT::Param(..)) => true,
+                    (PartT::Param(_, x), PartT::Param(_, y)) => overlap(x, y),
                     _ => false,
                 });
             if same {
                 return Err(Diag::new(
                     span,
                     format!(
-                        "signature `{}` clashes with existing `{}` (same words in the same positions)",
+                        "signature `{}` clashes with existing `{}`: same words in the same positions and no parameter type tells them apart. Overloads must differ in at least one parameter by type constructor (e.g. `Int` vs `String`, `List (T)` vs `Set (T)`); `List (T)` vs `List (Int)` is specialization and is not allowed",
                         label(&parts),
                         label(&d.parts)
                     ),
@@ -571,8 +595,8 @@ impl Checker {
         let FnBody::Block(stmts) = body else {
             unreachable!()
         };
-        let (ir, t) = self.block(stmts, &mut sc, Some(&def.ret))?;
-        if !compat(&def.ret, &t) {
+        let (ir, t) = self.block(stmts, &mut sc)?;
+        if !sub(&t, &def.ret) {
             return Err(Diag::new(
                 span,
                 format!(
@@ -586,23 +610,112 @@ impl Checker {
         Ok(ir)
     }
 
+    // ---------- record literals ----------
+
+    /// Does a value of type `a` fit where `b` is expected? Subtyping, plus
+    /// record literals fitting a record whose fields they cover.
+    pub fn fits(&self, a: &Type, b: &Type) -> bool {
+        match (a, b) {
+            (Type::Struct(fs), Type::Record(rn)) => self.struct_problem(fs, rn).is_none(),
+            (Type::Struct(_), _) => false,
+            _ => sub(a, b),
+        }
+    }
+
+    fn field_ty(d: &FieldDef) -> Type {
+        if d.optional {
+            opt(d.ty.clone())
+        } else {
+            d.ty.clone()
+        }
+    }
+
+    /// Why a record literal with these field types does not fit record `rn`.
+    fn struct_problem(&self, fs: &[(String, Type)], rn: &str) -> Option<String> {
+        let rd = &self.records[rn];
+        for (k, t) in fs {
+            match rd.fields.iter().find(|d| &d.key == k) {
+                None => {
+                    let known: Vec<&str> = rd.fields.iter().map(|d| d.key.as_str()).collect();
+                    return Some(format!(
+                        "record `{rn}` has no field `{k}`; its fields are: {}",
+                        known.join(", ")
+                    ));
+                }
+                Some(d) => {
+                    let want = Self::field_ty(d);
+                    if !self.fits(t, &want) {
+                        let hint = if d.optional && self.fits(t, &d.ty) {
+                            format!(
+                                " (optional fields take an explicit `some ...`: `{k}: some ...`)"
+                            )
+                        } else {
+                            String::new()
+                        };
+                        return Some(format!(
+                            "field `{k}` of `{rn}` expects {want}, found {t}{hint}"
+                        ));
+                    }
+                }
+            }
+        }
+        for d in &rd.fields {
+            if !d.optional && !fs.iter().any(|(k, _)| k == &d.key) {
+                return Some(format!(
+                    "record `{rn}` is missing required field `{}`",
+                    d.key
+                ));
+            }
+        }
+        None
+    }
+
+    /// Turns an expression of type `ty` that `fits` `target` into one whose
+    /// runtime shape is `target`'s: record literals become real records.
+    fn fit(&self, ir: Ir, ty: &Type, target: &Type) -> Ir {
+        let (Ir::Struct(given), Type::Struct(tys), Type::Record(rn)) = (&ir, ty, target) else {
+            return ir;
+        };
+        let rd = &self.records[rn];
+        let irs = rd
+            .fields
+            .iter()
+            .map(|d| match given.iter().position(|(k, _)| k == &d.key) {
+                Some(i) => self.fit(given[i].1.clone(), &tys[i].1, &Self::field_ty(d)),
+                None => Ir::Call(self.variant_id("Option", 1), vec![]),
+            })
+            .collect();
+        Ir::MkRecord(rn.clone(), irs)
+    }
+
+    fn reject_struct(t: &Type, span: Span) -> Res<()> {
+        if matches!(t, Type::Struct(_)) {
+            return Err(Diag::new(
+                span,
+                format!(
+                    "a record literal has no type of its own here (it is {t}); annotate it: `{{ ... }} : Record Name`, or write the record name in front: `Record Name {{ ... }}`"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     // ---------- expressions ----------
 
-    pub fn block(&self, stmts: &[Stmt], sc: &mut Scope, exp: Option<&Type>) -> Res<(Ir, Type)> {
+    pub fn block(&self, stmts: &[Stmt], sc: &mut Scope) -> Res<(Ir, Type)> {
         let mark = sc.len();
         let mut irs = Vec::new();
         let mut last = Type::Unit;
-        for (i, s) in stmts.iter().enumerate() {
+        for s in stmts {
             match s {
                 Stmt::Let(n, e, _) => {
-                    let (ir, t) = self.check(e, sc, None)?;
+                    let (ir, t) = self.check(e, sc)?;
                     sc.push((n.clone(), t));
                     irs.push(Ir::Let(n.clone(), Box::new(ir)));
                     last = Type::Unit;
                 }
                 Stmt::Expr(e) => {
-                    let hint = if i + 1 == stmts.len() { exp } else { None };
-                    let (ir, t) = self.check(e, sc, hint)?;
+                    let (ir, t) = self.check(e, sc)?;
                     irs.push(ir);
                     last = t;
                 }
@@ -613,25 +726,27 @@ impl Checker {
     }
 
     fn check_as(&self, e: &Expr, sc: &mut Scope, ty: &Type) -> Res<Ir> {
-        let (ir, t) = self.check(e, sc, Some(ty))?;
-        if compat(ty, &t) {
+        let (ir, t) = self.check(e, sc)?;
+        if sub(&t, ty) {
             Ok(ir)
         } else {
             Err(Diag::new(e.span, format!("expected {ty}, found {t}")))
         }
     }
 
-    pub fn check(&self, e: &Expr, sc: &mut Scope, exp: Option<&Type>) -> Res<(Ir, Type)> {
+    /// Infers the type of `e`, bottom-up. A bare record literal is rejected
+    /// here; only arguments, record fields and `:` annotations may take one.
+    pub fn check(&self, e: &Expr, sc: &mut Scope) -> Res<(Ir, Type)> {
+        let (ir, t) = self.infer(e, sc)?;
+        Self::reject_struct(&t, e.span)?;
+        Ok((ir, t))
+    }
+
+    fn infer(&self, e: &Expr, sc: &mut Scope) -> Res<(Ir, Type)> {
         match &e.k {
             ExprKind::Int(n) => Ok((Ir::Lit(Value::Int(*n)), Type::Int)),
             ExprKind::Float(f) => Ok((Ir::Lit(Value::Float(*f)), Type::Float)),
-            ExprKind::Str(s) => {
-                if matches!(exp, Some(Type::Path)) {
-                    Ok((Ir::Lit(Value::Path(s.clone())), Type::Path))
-                } else {
-                    Ok((Ir::Lit(Value::Str(s.clone())), Type::Str))
-                }
-            }
+            ExprKind::Str(s) => Ok((Ir::Lit(Value::Str(s.clone())), Type::Str)),
             ExprKind::Placeholder => match sc.iter().rev().find(|(n, _)| n == "_") {
                 Some((_, t)) => Ok((Ir::Var("_".into()), t.clone())),
                 None => Err(Diag::new(
@@ -639,50 +754,38 @@ impl Checker {
                     "`_` can only be used on the right side of `|>`",
                 )),
             },
-            ExprKind::Seq(items) => self.seq(items, e.span, sc, exp),
+            ExprKind::Seq(items) => self.seq(items, e.span, sc),
             ExprKind::List(xs) => {
-                let elem_hint = match exp {
-                    Some(Type::List(t)) if !has_param(t) => Some((**t).clone()),
-                    _ => None,
-                };
-                let mut ty = Type::Unknown;
+                let mut ty = Type::Never;
                 let mut irs = Vec::new();
                 for x in xs {
-                    let (ir, t) = self.check(x, sc, elem_hint.as_ref())?;
-                    if matches!(ty, Type::Unknown) {
-                        ty = t;
-                    } else if !compat(&ty, &t) {
-                        return Err(Diag::new(
+                    let (ir, t) = self.check(x, sc)?;
+                    ty = join(&ty, &t).ok_or_else(|| {
+                        Diag::new(
                             x.span,
                             format!(
                                 "list elements must share one type: earlier elements are {ty}, this one is {t}"
                             ),
-                        ));
-                    }
+                        )
+                    })?;
                     irs.push(ir);
-                }
-                if matches!(ty, Type::Unknown)
-                    && let Some(h) = elem_hint
-                {
-                    ty = h;
                 }
                 Ok((Ir::List(irs), Type::List(Box::new(ty))))
             }
-            ExprKind::Brace(fs) => self.brace(fs, e.span, sc, exp),
+            ExprKind::Brace(fs) => self.brace(fs, sc),
             ExprKind::If(c, t, f) => {
                 let cir = self.check_as(c, sc, &Type::Bool)?;
-                let (tir, tt) = self.check(t, sc, exp)?;
-                let (fir, ft) = self.check(f, sc, exp.or(Some(&tt)))?;
-                if !compat(&tt, &ft) {
+                let (tir, tt) = self.check(t, sc)?;
+                let (fir, ft) = self.check(f, sc)?;
+                let Some(ty) = join(&tt, &ft) else {
                     return Err(Diag::new(
                         f.span,
                         format!("IF branches must have the same type: THEN is {tt}, ELSE is {ft}"),
                     ));
-                }
-                let ty = if matches!(tt, Type::Unknown) { ft } else { tt };
+                };
                 Ok((Ir::If(Box::new(cir), Box::new(tir), Box::new(fir)), ty))
             }
-            ExprKind::Match(s, arms) => self.matching(s, arms, e.span, sc, exp),
+            ExprKind::Match(s, arms) => self.matching(s, arms, e.span, sc),
             ExprKind::Pipe(l, r) => {
                 let n = count_placeholders(r);
                 if n != 1 {
@@ -693,111 +796,71 @@ impl Checker {
                         ),
                     ));
                 }
-                let (lir, lt) = self.check(l, sc, None)?;
+                let (lir, lt) = self.check(l, sc)?;
                 let mark = sc.len();
                 sc.push(("_".into(), lt));
-                let res = self.check(r, sc, exp);
+                let res = self.check(r, sc);
                 sc.truncate(mark);
                 let (rir, rt) = res?;
                 Ok((Ir::Pipe(Box::new(lir), Box::new(rir)), rt))
             }
+            ExprKind::Ascribe(inner, ty) => {
+                let target = self.resolve_ty(ty)?;
+                let (ir, t) = self.infer(inner, sc)?;
+                if !self.fits(&t, &target) {
+                    return Err(Diag::new(
+                        inner.span,
+                        self.mismatch(&format!("annotation `: {target}`"), &target, &t),
+                    ));
+                }
+                Ok((self.fit(ir, &t, &target), target))
+            }
         }
+    }
+
+    /// "expected X, found Y", plus the reason when Y is a record literal.
+    fn mismatch(&self, what: &str, want: &Type, found: &Type) -> String {
+        let mut msg = format!("{what} expects {want}, found {found}");
+        if let (Type::Struct(fs), Type::Record(rn)) = (found, want)
+            && let Some(why) = self.struct_problem(fs, rn)
+        {
+            msg.push_str(&format!(": {why}"));
+        }
+        msg
     }
 
     fn variant_id(&self, en: &str, idx: usize) -> usize {
         self.enums[en].variants[idx].fn_id
     }
 
-    fn brace(
-        &self,
-        fs: &[BraceField],
-        span: Span,
-        sc: &mut Scope,
-        exp: Option<&Type>,
-    ) -> Res<(Ir, Type)> {
-        let Some(Type::Record(rn)) = exp else {
-            return Err(Diag::new(
-                span,
-                "cannot tell which record this `{ ... }` is; write the record's name before it, e.g. `My Record { ... }`",
-            ));
-        };
-        let rd = &self.records[rn];
-        let known: Vec<&str> = rd.fields.iter().map(|f| f.key.as_str()).collect();
+    /// A record literal is inferred from its fields alone. A bare field
+    /// `flag` means `flag: some true`.
+    fn brace(&self, fs: &[BraceField], sc: &mut Scope) -> Res<(Ir, Type)> {
+        let mut irs: Vec<(String, Ir)> = Vec::new();
+        let mut tys: Vec<(String, Type)> = Vec::new();
         for f in fs {
             let k = f.key.join(" ");
-            if !known.contains(&k.as_str()) {
-                return Err(Diag::new(
-                    f.span,
-                    format!(
-                        "record `{rn}` has no field `{k}`; its fields are: {}",
-                        known.join(", ")
-                    ),
-                ));
+            if tys.iter().any(|(n, _)| n == &k) {
+                return Err(Diag::new(f.span, format!("field `{k}` is given twice")));
             }
-        }
-        let mut irs = Vec::new();
-        for d in &rd.fields {
-            let given = fs.iter().find(|f| f.key.join(" ") == d.key);
-            let ir = match given {
-                Some(f) => match &f.value {
-                    Some(e) => {
-                        let mark = sc.len();
-                        let first = self.check_as(e, sc, &d.ty);
-                        sc.truncate(mark);
-                        match first {
-                            Ok(ir) if d.optional => {
-                                Ir::Call(self.variant_id("Option", 0), vec![ir])
-                            }
-                            Ok(ir) => ir,
-                            Err(err) if d.optional => {
-                                let o = opt(d.ty.clone());
-                                let second = self.check_as(e, sc, &o);
-                                sc.truncate(mark);
-                                second.map_err(|_| err)?
-                            }
-                            Err(err) => return Err(err),
-                        }
-                    }
-                    None => {
-                        if d.ty != Type::Bool {
-                            return Err(Diag::new(
-                                f.span,
-                                format!(
-                                    "field `{}` has type {}, so it needs a value: `{}: ...`",
-                                    d.key, d.ty, d.key
-                                ),
-                            ));
-                        }
-                        let t = Ir::Lit(Value::Bool(true));
-                        if d.optional {
-                            Ir::Call(self.variant_id("Option", 0), vec![t])
-                        } else {
-                            t
-                        }
-                    }
-                },
-                None if d.optional => Ir::Call(self.variant_id("Option", 1), vec![]),
-                None => {
-                    return Err(Diag::new(
-                        span,
-                        format!("record `{rn}` is missing required field `{}`", d.key),
-                    ));
-                }
+            let (ir, t) = match &f.value {
+                Some(e) => self.infer(e, sc)?,
+                None => (
+                    Ir::Call(
+                        self.variant_id("Option", 0),
+                        vec![Ir::Lit(Value::Bool(true))],
+                    ),
+                    opt(Type::Bool),
+                ),
             };
-            irs.push(ir);
+            irs.push((k.clone(), ir));
+            tys.push((k, t));
         }
-        Ok((Ir::MkRecord(rn.clone(), irs), Type::Record(rn.clone())))
+        Ok((Ir::Struct(irs), Type::Struct(tys)))
     }
 
-    fn matching(
-        &self,
-        scrut: &Expr,
-        arms: &[Arm],
-        span: Span,
-        sc: &mut Scope,
-        exp: Option<&Type>,
-    ) -> Res<(Ir, Type)> {
-        let (sir, sty) = self.check(scrut, sc, None)?;
+    fn matching(&self, scrut: &Expr, arms: &[Arm], span: Span, sc: &mut Scope) -> Res<(Ir, Type)> {
+        let (sir, sty) = self.check(scrut, sc)?;
         let Type::Enum(en, targs) = &sty else {
             return Err(Diag::new(
                 scrut.span,
@@ -819,7 +882,6 @@ impl Checker {
         let mut irs = Vec::new();
         for arm in arms {
             let mark = sc.len();
-            let hint = out.as_ref().or(exp);
             let (variant, binds) = if arm.pat == [PatItem::Wild] {
                 wildcard = true;
                 (None, vec![])
@@ -855,32 +917,27 @@ impl Checker {
                         if name == "_" {
                             binds.push(None);
                         } else {
-                            sc.push((name.clone(), subst(ty, &pmap)));
+                            sc.push((name.clone(), subst(ty, &pmap, false)));
                             binds.push(Some(name.clone()));
                         }
                     }
                 }
                 (Some(vi), binds)
             };
-            let res = self.check(&arm.body, sc, hint);
+            let res = self.check(&arm.body, sc);
             sc.truncate(mark);
             let (bir, bt) = res?;
-            match &out {
-                None => out = Some(bt),
-                Some(prev) => {
-                    if !compat(prev, &bt) {
-                        return Err(Diag::new(
-                            arm.body.span,
-                            format!(
-                                "MATCH arms must have the same type: earlier arms are {prev}, this one is {bt}"
-                            ),
-                        ));
-                    }
-                    if matches!(prev, Type::Unknown) {
-                        out = Some(bt);
-                    }
-                }
-            }
+            out = Some(match &out {
+                None => bt,
+                Some(prev) => join(prev, &bt).ok_or_else(|| {
+                    Diag::new(
+                        arm.body.span,
+                        format!(
+                            "MATCH arms must have the same type: earlier arms are {prev}, this one is {bt}"
+                        ),
+                    )
+                })?,
+            });
             irs.push(IrArm {
                 variant,
                 binds,
@@ -914,13 +971,39 @@ impl Checker {
             })
     }
 
-    fn seq(
-        &self,
-        items: &[SeqItem],
-        span: Span,
-        sc: &mut Scope,
-        _exp: Option<&Type>,
-    ) -> Res<(Ir, Type)> {
+    /// Unifies an argument type with a declared parameter type, binding
+    /// generic parameters in `m`. An argument may be a subtype of the
+    /// parameter; a generic parameter binds to the join of its arguments.
+    fn unify(&self, p: &Type, a: &Type, m: &mut HashMap<String, Type>) -> bool {
+        match (p, a) {
+            (_, Type::Never) => true,
+            (Type::Param(n), _) => {
+                if matches!(a, Type::Struct(_)) {
+                    return false;
+                }
+                let joined = match m.get(n) {
+                    None => Some(a.clone()),
+                    Some(b) => join(b, a),
+                };
+                match joined {
+                    Some(j) => {
+                        m.insert(n.clone(), j);
+                        true
+                    }
+                    None => false,
+                }
+            }
+            (Type::List(x), Type::List(y)) => self.unify(x, y, m),
+            (Type::Enum(n, xs), Type::Enum(k, ys)) => {
+                n == k
+                    && xs.len() == ys.len()
+                    && xs.iter().zip(ys).all(|(x, y)| self.unify(x, y, m))
+            }
+            _ => self.fits(a, p),
+        }
+    }
+
+    fn seq(&self, items: &[SeqItem], span: Span, sc: &mut Scope) -> Res<(Ir, Type)> {
         if let [SeqItem::Word(w, _)] = items {
             match w.as_str() {
                 "true" => return Ok((Ir::Lit(Value::Bool(true)), Type::Bool)),
@@ -931,52 +1014,103 @@ impl Checker {
                 return Ok((Ir::Var(w.clone()), t.clone()));
             }
         }
-        let ms: Vec<usize> = (0..self.defs.len())
+        let cands: Vec<usize> = (0..self.defs.len())
             .filter(|&i| Self::matches(&self.defs[i].parts, items))
             .collect();
-        if ms.len() > 1 {
-            let c: Vec<String> = ms.iter().map(|&i| label(&self.defs[i].parts)).collect();
-            return Err(Diag::new(
-                span,
-                format!("ambiguous call; it matches: {}", c.join(" | ")),
-            ));
-        }
-        let Some(&id) = ms.first() else {
+        if cands.is_empty() {
             return Err(self.no_match(items, span, sc));
-        };
-        let def = &self.defs[id];
-        let mut map: HashMap<String, Type> = HashMap::new();
-        let mut irs = Vec::new();
-        for (part, item) in def.parts.iter().zip(items) {
-            let PartT::Param(pname, pty) = part else {
-                continue;
-            };
-            let word_arg;
-            let arg: &Expr = match item {
-                SeqItem::Atom(e) => e,
-                SeqItem::Word(w, s) => {
-                    word_arg = Expr {
-                        k: ExprKind::Seq(vec![SeqItem::Word(w.clone(), *s)]),
-                        span: *s,
-                    };
-                    &word_arg
-                }
-            };
-            let hint = if has_param(pty) { None } else { Some(pty) };
-            let (ir, aty) = self.check(arg, sc, hint)?;
-            if !unify(pty, &aty, &mut map) {
-                return Err(Diag::new(
-                    arg.span,
-                    format!(
-                        "argument `{pname}` of `{}` expects {}, found {aty}",
-                        label(&def.parts),
-                        subst_show(pty, &map)
-                    ),
-                ));
-            }
-            irs.push(ir);
         }
-        Ok((Ir::Call(id, irs), subst(&def.ret, &map)))
+        // Each argument is inferred once, on first use, independent of the
+        // candidate it will be tested against.
+        let mut args: Vec<Option<Res<(Ir, Type)>>> = vec![None; items.len()];
+        let mut passing: Vec<(usize, HashMap<String, Type>)> = Vec::new();
+        let mut failures: Vec<Diag> = Vec::new();
+        'cand: for &id in &cands {
+            let def = &self.defs[id];
+            let mut map: HashMap<String, Type> = HashMap::new();
+            for (i, (part, item)) in def.parts.iter().zip(items).enumerate() {
+                let PartT::Param(pname, pty) = part else {
+                    continue;
+                };
+                let (arg_span, arg) = match item {
+                    SeqItem::Atom(e) => (e.span, e.clone()),
+                    SeqItem::Word(w, s) => (
+                        *s,
+                        Expr {
+                            k: ExprKind::Seq(vec![SeqItem::Word(w.clone(), *s)]),
+                            span: *s,
+                        },
+                    ),
+                };
+                let inferred = args[i].get_or_insert_with(|| self.infer(&arg, sc));
+                let aty = match inferred {
+                    Ok((_, t)) => t.clone(),
+                    Err(d) => {
+                        failures.push(d.clone());
+                        continue 'cand;
+                    }
+                };
+                if !self.unify(pty, &aty, &mut map) {
+                    failures.push(Diag::new(
+                        arg_span,
+                        self.mismatch(
+                            &format!("argument `{pname}` of `{}`", label(&def.parts)),
+                            &subst(pty, &map, true),
+                            &aty,
+                        ),
+                    ));
+                    continue 'cand;
+                }
+            }
+            passing.push((id, map));
+        }
+        let shown_args = || {
+            let tys: Vec<String> = args
+                .iter()
+                .flatten()
+                .filter_map(|r| r.as_ref().ok())
+                .map(|(_, t)| t.to_string())
+                .collect();
+            format!("({})", tys.join(", "))
+        };
+        let candidates = |ids: &mut dyn Iterator<Item = usize>| {
+            ids.map(|i| format!("\n    {}", label(&self.defs[i].parts)))
+                .collect::<String>()
+        };
+        match passing.len() {
+            1 => {
+                let (id, map) = passing.pop().unwrap();
+                let def = &self.defs[id];
+                let mut irs = Vec::new();
+                for (i, part) in def.parts.iter().enumerate() {
+                    if let PartT::Param(_, pty) = part
+                        && let Some(Ok((ir, aty))) = args[i].take()
+                    {
+                        irs.push(self.fit(ir, &aty, pty));
+                    }
+                }
+                Ok((Ir::Call(id, irs), subst(&def.ret, &map, false)))
+            }
+            0 if cands.len() == 1 || failures.len() == 1 => Err(failures.swap_remove(0)),
+            0 => Err(Diag::new(
+                span,
+                format!(
+                    "no overload of `{}` accepts argument types {}. Candidates:{}\n  Fix: change an argument so its type matches one candidate; record literals can be fixed with `{{ ... }} : Record Name`.",
+                    seq_text(items),
+                    shown_args(),
+                    candidates(&mut cands.iter().copied())
+                ),
+            )),
+            _ => Err(Diag::new(
+                span,
+                format!(
+                    "ambiguous call `{}` with argument types {}: more than one overload fits:{}\n  Fix: annotate a record literal with `{{ ... }} : Record Name`, or give the arguments more specific types.",
+                    seq_text(items),
+                    shown_args(),
+                    candidates(&mut passing.iter().map(|(i, _)| *i))
+                ),
+            )),
+        }
     }
 
     fn no_match(&self, items: &[SeqItem], span: Span, sc: &Scope) -> Diag {
@@ -1027,22 +1161,5 @@ impl Checker {
             msg.push_str(&format!(" Similar signatures: {}", cands.join(" | ")));
         }
         Diag::new(span, msg)
-    }
-}
-
-fn subst_show(t: &Type, m: &HashMap<String, Type>) -> String {
-    match t {
-        Type::Param(n) => m.get(n).map(|x| x.to_string()).unwrap_or_else(|| n.clone()),
-        Type::List(x) => format!("List<{}>", subst_show(x, m)),
-        Type::Enum(n, a) if !a.is_empty() => {
-            format!(
-                "{n}<{}>",
-                a.iter()
-                    .map(|x| subst_show(x, m))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }
-        other => other.to_string(),
     }
 }

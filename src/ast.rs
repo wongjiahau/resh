@@ -85,6 +85,8 @@ pub enum ExprKind {
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Match(Box<Expr>, Vec<Arm>),
     Pipe(Box<Expr>, Box<Expr>),
+    /// `expr : Type` — states the type an expression must fit.
+    Ascribe(Box<Expr>, TyExpr),
 }
 
 #[derive(Debug, Clone)]

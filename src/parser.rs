@@ -422,6 +422,7 @@ impl Parser {
     /// delimiters newlines are insignificant.
     fn parse_pipeline(&mut self, nl: bool) -> Res<Expr> {
         let mut e = self.parse_seq(nl)?;
+        e = self.parse_ascription(e)?;
         loop {
             let save = self.p;
             self.skip_nl();
@@ -429,6 +430,7 @@ impl Parser {
                 let span = self.bump().span;
                 self.skip_nl();
                 let r = self.parse_seq(nl)?;
+                let r = self.parse_ascription(r)?;
                 e = Expr {
                     k: ExprKind::Pipe(Box::new(e), Box::new(r)),
                     span,
@@ -439,6 +441,19 @@ impl Parser {
             }
         }
         Ok(e)
+    }
+
+    /// Optional `: Type` after an expression.
+    fn parse_ascription(&mut self, e: Expr) -> Res<Expr> {
+        if !matches!(self.peek(), Tok::Colon) {
+            return Ok(e);
+        }
+        let span = self.bump().span;
+        let ty = self.parse_type()?;
+        Ok(Expr {
+            k: ExprKind::Ascribe(Box::new(e), ty),
+            span,
+        })
     }
 
     fn parse_seq(&mut self, nl: bool) -> Res<Expr> {

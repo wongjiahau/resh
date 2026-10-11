@@ -17,7 +17,7 @@ ENUM Entry Kind { file, directory, symlink }
 
 // Every field `ls -l -i -s` can show; times are Unix seconds, `size` is bytes (0 for non-files).
 RECORD Entry {
-    (self) path: Path,
+    (self) path: String,
     (self) kind: Entry Kind,
     (self) size: Int,
     file name of (self): String,
@@ -30,16 +30,16 @@ RECORD Entry {
     accessed at of (self): Int,
     inode number of (self): Int,
     block count of (self): Int,
-    link target of (self)?: Path
+    link target of (self)?: String
 }
 
 FUNCTION list file: Result (List (Entry)) Or (String) { NATIVE "list_default" }
-FUNCTION list file in (dir: Path): Result (List (Entry)) Or (String) { NATIVE "list_in_default" }
+FUNCTION list file in (dir: String): Result (List (Entry)) Or (String) { NATIVE "list_in_default" }
 FUNCTION list file (options: List Options): Result (List (Entry)) Or (String) { NATIVE "list_file" }
-FUNCTION list file in (dir: Path) (options: List Options): Result (List (Entry)) Or (String) { NATIVE "list_file_in" }
-FUNCTION read file (path: Path): Result (String) Or (String) { NATIVE "read_file" }
-FUNCTION write (text: String) to file (path: Path): Result (Unit) Or (String) { NATIVE "write_file" }
-FUNCTION move (from: Path) to (to: Path): Result (Unit) Or (String) { NATIVE "move_path" }
+FUNCTION list file in (dir: String) (options: List Options): Result (List (Entry)) Or (String) { NATIVE "list_file_in" }
+FUNCTION read file (path: String): Result (String) Or (String) { NATIVE "read_file" }
+FUNCTION write (text: String) to file (path: String): Result (Unit) Or (String) { NATIVE "write_file" }
+FUNCTION move (from: String) to (to: String): Result (Unit) Or (String) { NATIVE "move_path" }
 
 FUNCTION print (value: T): Unit { NATIVE "print" }
 FUNCTION count (items: List (T)): Int { NATIVE "count" }
@@ -47,7 +47,5 @@ FUNCTION filter (items: List (Entry)) by extension (extension: String): List (En
 FUNCTION lines of (text: String): List (String) { NATIVE "lines_of" }
 FUNCTION join (a: String) with (b: String): String { NATIVE "join_with" }
 FUNCTION (a: T) equals (b: T): Boolean { NATIVE "equals" }
-FUNCTION path from (text: String): Path { NATIVE "path_from" }
-FUNCTION text of (path: Path): String { NATIVE "text_of" }
 FUNCTION unwrap (result: Result (T) Or (E)): T { NATIVE "unwrap" }
 FUNCTION human size of (bytes: Int): String { NATIVE "human_size" }

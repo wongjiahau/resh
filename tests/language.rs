@@ -138,8 +138,13 @@ fn unknown_name_lists_variables_in_scope() {
 }
 
 #[test]
-fn duplicate_signatures_are_rejected() {
-    let msg = run_err("FUNCTION ping (a: Int): Int { a }\nFUNCTION ping (b: String): Int { 1 }");
+fn overlapping_signatures_are_rejected() {
+    let msg = run_err("FUNCTION ping (a: Int): Int { a }\nFUNCTION ping (b: Int): Int { 1 }");
+    assert!(msg.contains("clashes"), "{msg}");
+    // Specialization and bare generics always overlap something.
+    let msg = run_err("FUNCTION f (a: List (T)): Int { 1 }\nFUNCTION f (a: List (Int)): Int { 2 }");
+    assert!(msg.contains("specialization"), "{msg}");
+    let msg = run_err("FUNCTION f (a: T): Int { 1 }\nFUNCTION f (a: Int): Int { 2 }");
     assert!(msg.contains("clashes"), "{msg}");
 }
 
@@ -150,12 +155,95 @@ fn nested_calls_need_parentheses() {
     assert!(msg.contains("no function matches"), "{msg}");
 }
 
+const OVERLOADS: &str = r#"
+RECORD Bag { items: List (Int) }
+RECORD Pair { left: Int, right: Int }
+RECORD Triple { left: Int, right: Int, extra: Int }
+FUNCTION describe (x: Int): String { "int" }
+FUNCTION describe (x: Boolean): String { "boolean" }
+FUNCTION describe (x: List (T)): String { "list" }
+FUNCTION describe (x: Bag): String { "bag" }
+FUNCTION sum (p: Pair): Int { 1 }
+FUNCTION sum (t: Triple): Int { 3 }
+"#;
+
 #[test]
-fn string_literal_coerces_to_path_but_variable_does_not() {
-    let msg = run_err("LET s = \"a.txt\"\nread file s");
-    assert!(msg.contains("expects Path, found String"), "{msg}");
+fn overload_is_chosen_by_argument_types() {
+    let src = format!(
+        "{OVERLOADS}\ndescribe 1\ndescribe true\ndescribe [\"a\"]\ndescribe []\ndescribe (Bag {{ items: [1] }})"
+    );
+    let want: Vec<Value> = ["int", "boolean", "list", "list", "bag"]
+        .iter()
+        .map(|s| Value::Str((*s).into()))
+        .collect();
+    assert_eq!(run(&src), want);
+}
+
+#[test]
+fn failed_overload_lists_argument_types_and_candidates() {
+    let msg = run_err(&format!("{OVERLOADS}\ndescribe \"hi\""));
+    assert!(msg.contains("no overload of `describe <arg>`"), "{msg}");
+    assert!(msg.contains("argument types (String)"), "{msg}");
+    assert!(
+        msg.contains("(x: Int) describe") || msg.contains("describe (x: Int)"),
+        "{msg}"
+    );
+    assert!(msg.contains("Fix:"), "{msg}");
+}
+
+#[test]
+fn record_literal_picks_the_only_record_it_fits() {
+    let src =
+        format!("{OVERLOADS}\nsum {{ left: 1, right: 2 }}\nsum {{ left: 1, right: 2, extra: 3 }}");
+    assert_eq!(run(&src), vec![Value::Int(1), Value::Int(3)]);
+}
+
+#[test]
+fn ambiguous_record_literal_needs_an_annotation() {
+    let src = r#"
+RECORD Apple { x: Int }
+RECORD Banana { x: Int }
+FUNCTION f (a: Apple): Int { 1 }
+FUNCTION f (b: Banana): Int { 2 }
+"#;
+    let msg = run_err(&format!("{src}\nf {{ x: 1 }}"));
+    assert!(msg.contains("ambiguous call"), "{msg}");
+    assert!(msg.contains("{ ... } : Record Name"), "{msg}");
+    assert_eq!(
+        run(&format!("{src}\nf ({{ x: 1 }} : Banana)")),
+        vec![Value::Int(2)]
+    );
+}
+
+#[test]
+fn bare_record_literal_has_no_type_of_its_own() {
+    let msg = run_err("LET x = { a: 1 }");
+    assert!(msg.contains("annotate it"), "{msg}");
+    let msg = run_err("RECORD Apple { x: Int }\nLET x = { y: 1 } : Apple");
+    assert!(msg.contains("has no field `y`"), "{msg}");
+}
+
+#[test]
+fn optional_fields_need_explicit_some() {
+    let src = "RECORD Job { name: String, retries?: Int }\nLET j = Job { name: \"b\", retries: some 3 }\nretries j";
+    assert_eq!(
+        run(src),
+        vec![Value::Variant("Option".into(), 0, vec![Value::Int(3)])]
+    );
+    let msg =
+        run_err("RECORD Job { name: String, retries?: Int }\nJob { name: \"b\", retries: 3 }");
+    assert!(msg.contains("explicit `some"), "{msg}");
+}
+
+#[test]
+fn no_coercions_and_empty_values_fit_anywhere() {
+    // A String is not a Path-like thing: functions just take String.
     run("read file \"nope.txt\"");
-    run("LET s = \"a.txt\"\nread file (path from s)");
+    // `none` and `[]` are subtypes of every Option / List.
+    run("count []");
+    run("LET x = IF true THEN (some 1) ELSE none\nx");
+    let msg = run_err("IF true THEN 1 ELSE \"a\"");
+    assert!(msg.contains("IF branches must have the same type"), "{msg}");
 }
 
 #[test]
@@ -206,7 +294,7 @@ fn list_file_has_ls_parity_options() {
     assert_eq!(names("{}"), ["a.rs", "big.txt", "sub"]);
     assert_eq!(names("{ reverse }"), ["sub", "big.txt", "a.rs"]);
     assert_eq!(names("{ include hidden file }")[0], ".hidden");
-    assert_eq!(names("{ sort by: size }")[0], "big.txt");
+    assert_eq!(names("{ sort by: some size }")[0], "big.txt");
     assert_eq!(
         names("{ recursive }"),
         ["a.rs", "big.txt", "sub", "deep.txt"]
