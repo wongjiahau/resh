@@ -3,6 +3,7 @@ pub mod check;
 pub mod eval;
 pub mod lexer;
 pub mod parser;
+pub mod repl;
 
 pub use eval::Value;
 pub use lexer::{Diag, Span};
@@ -14,7 +15,7 @@ use eval::Interp;
 const PRELUDE: &str = include_str!("prelude.resh");
 
 /// A persistent interpreter session: declarations and `LET` bindings carry
-/// over between calls to `run`, which is what a REPL would build on.
+/// over between calls to `run`, which is what the REPL builds on.
 pub struct Session {
     pub interp: Interp,
     globals: Scope,

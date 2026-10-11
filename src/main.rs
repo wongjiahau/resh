@@ -2,7 +2,9 @@ use resh::Session;
 use resh::eval::json_str;
 
 fn usage() -> ! {
-    eprintln!("usage: resh run <file.resh> [--json]\n       resh -c \"<source>\" [--json]");
+    eprintln!(
+        "usage: resh [repl] [--json]\n       resh run <file.resh> [--json]\n       resh -c \"<source>\" [--json]"
+    );
     std::process::exit(2);
 }
 
@@ -20,6 +22,10 @@ fn main() {
             eprintln!("cannot read {file}: {e}");
             std::process::exit(2);
         }),
+        [] | ["repl"] => {
+            resh::repl::run(json);
+            return;
+        }
         _ => usage(),
     };
     let mut session = Session::new();
