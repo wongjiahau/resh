@@ -27,6 +27,15 @@ pub const NATIVES: &[&str] = &[
     "map_result",
     "int_to_string",
     "float_to_string",
+    "unit_kb",
+    "unit_mb",
+    "unit_gb",
+    "unit_seconds",
+    "unit_minutes",
+    "unit_hours",
+    "unit_days",
+    "unit_ago",
+    "unit_count",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -313,6 +322,30 @@ impl Interp {
                     Ok(Value::Variant(n.clone(), 0, vec![v]))
                 }
                 other => Ok(other.clone()),
+            },
+            "unit_kb" | "unit_mb" | "unit_gb" | "unit_seconds" | "unit_minutes" | "unit_hours"
+            | "unit_days" => {
+                let (record, factor) = match name {
+                    "unit_kb" => ("Size", 1_000),
+                    "unit_mb" => ("Size", 1_000_000),
+                    "unit_gb" => ("Size", 1_000_000_000),
+                    "unit_seconds" => ("Duration", 1),
+                    "unit_minutes" => ("Duration", 60),
+                    "unit_hours" => ("Duration", 3_600),
+                    _ => ("Duration", 86_400),
+                };
+                match &a[0] {
+                    Value::Int(n) => n
+                        .checked_mul(factor)
+                        .map(|v| Value::Record(record.into(), vec![Value::Int(v)]))
+                        .ok_or_else(|| format!("{n} {} overflows", &name[5..])),
+                    _ => Err("unit: not an Int".into()),
+                }
+            }
+            "unit_ago" => Ok(a[0].clone()),
+            "unit_count" => match &a[0] {
+                Value::Record(_, fs) => Ok(fs[0].clone()),
+                _ => Err("unit: not a Size or Duration".into()),
             },
             "equals" => Ok(Value::Bool(a[0] == a[1])),
             "unwrap" => match &a[0] {

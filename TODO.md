@@ -74,7 +74,7 @@ Ground rules (see CLAUDE.md and README.md):
   `map (result) with (f)`, `join (a) with (b)`.
   *Done when:* each has a test, including the `Result` and `Set` cases.
 
-- [ ] **9. `Size` and `Duration` units.**
+- [x] **9. `Size` and `Duration` units.**
   Types plus suffix functions `kb`, `mb`, `gb`, `seconds`, `minutes`, `hours`,
   `days`, `ago`, and the accessors `(size) bytes`, `(duration) seconds`.
   Units are ordinary suffix functions, no special syntax.

@@ -240,7 +240,7 @@ List literals accept `...` to splice a list in place:
 - When a call has several candidates and none fits, the error lists each
   candidate with the reason it was rejected.
 
-## Units (planned)
+## Units
 
 A unit is an ordinary suffix function. There is no special syntax.
 
@@ -249,6 +249,18 @@ FUNCTION (n: Int) kb: Size { ... }
 FUNCTION (n: Int) mb: Size { ... }
 FUNCTION (n: Int) days: Duration { ... }
 ```
+
+`Size` (held in bytes, decimal: `1 kb` = 1000) and `Duration` (held in seconds)
+are prelude records, built only through these functions:
+
+- `(n: Int) kb`, `mb`, `gb`: `Size`. `(n: Int) seconds`, `minutes`, `hours`,
+  `days`: `Duration`.
+- `(duration: Duration) ago`: `Duration`; it is the identity, a readability
+  marker (fd already reads durations relative to now).
+- Accessors: `(size: Size) bytes`: `Int`; `(duration: Duration) seconds`: `Int`.
+  `seconds` is both a constructor (on `Int`) and an accessor (on `Duration`),
+  resolved by overloading on the argument type.
+- Calls do not nest bare, so `5 days ago` is written `(5 days) ago`.
 
 Multi-token values need parentheses inside a slot, like any other call:
 

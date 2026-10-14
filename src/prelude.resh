@@ -56,3 +56,19 @@ FUNCTION join (a: List (T)) with (b: List (T)): List (T) { NATIVE "join_with" }
 FUNCTION (a: T) equals (b: T): Boolean { NATIVE "equals" }
 FUNCTION unwrap (result: Result (T) Or (E)): T { NATIVE "unwrap" }
 FUNCTION human size of (bytes: Int): String { NATIVE "human_size" }
+
+// Units. `Size` is held in bytes and `Duration` in seconds; construct them only
+// with the suffix functions below (`1 mb`, `5 days`), read them with the accessors.
+RECORD Size { byte count (Int) }
+RECORD Duration { second count (Int) }
+
+FUNCTION (n: Int) kb: Size { NATIVE "unit_kb" }
+FUNCTION (n: Int) mb: Size { NATIVE "unit_mb" }
+FUNCTION (n: Int) gb: Size { NATIVE "unit_gb" }
+FUNCTION (n: Int) seconds: Duration { NATIVE "unit_seconds" }
+FUNCTION (n: Int) minutes: Duration { NATIVE "unit_minutes" }
+FUNCTION (n: Int) hours: Duration { NATIVE "unit_hours" }
+FUNCTION (n: Int) days: Duration { NATIVE "unit_days" }
+FUNCTION (duration: Duration) ago: Duration { NATIVE "unit_ago" }
+FUNCTION (size: Size) bytes: Int { NATIVE "unit_count" }
+FUNCTION (duration: Duration) seconds: Int { NATIVE "unit_count" }

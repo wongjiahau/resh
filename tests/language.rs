@@ -1357,3 +1357,100 @@ mod prelude_functions {
         assert!(msg.contains("join"), "{msg}");
     }
 }
+
+// ---------- Size and Duration units ----------
+
+mod units {
+    use resh::{Session, Value};
+
+    const FD: &str = r#"
+NAMESPACE fd
+
+ENUM Find Option {
+    size at least (s: Size),
+    changed within (d: Duration),
+    max depth (n: Int)
+}
+
+FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)): Int { 1 }
+"#;
+
+    fn session() -> Session {
+        let mut s = Session::new();
+        s.run(FD).unwrap_or_else(|d| panic!("fd failed: {d}"));
+        s
+    }
+
+    fn eval(src: &str) -> Value {
+        Session::new()
+            .run(src)
+            .unwrap_or_else(|d| panic!("unexpected error: {d}"))
+            .pop()
+            .unwrap()
+    }
+
+    #[test]
+    fn size_at_least_one_mb_type_checks() {
+        let v = session()
+            .run(r#"fd::find "" in "." { size at least (1 mb) }"#)
+            .unwrap_or_else(|d| panic!("{d}"));
+        assert_eq!(v, vec![Value::Int(1)]);
+    }
+
+    #[test]
+    fn size_at_least_five_days_is_a_type_error() {
+        let msg = match session().run(r#"fd::find "" in "." { size at least (5 days) }"#) {
+            Ok(v) => panic!("expected an error, got {v:?}"),
+            Err(d) => d.msg,
+        };
+        assert!(msg.contains("Duration") && msg.contains("Size"), "{msg}");
+    }
+
+    #[test]
+    fn duration_units_fit_duration_slots() {
+        session()
+            .run(r#"fd::find "" in "." { changed within (2 hours), max depth 1 }"#)
+            .unwrap_or_else(|d| panic!("{d}"));
+        session()
+            .run(r#"fd::find "" in "." { changed within ((3 days) ago) }"#)
+            .unwrap_or_else(|d| panic!("{d}"));
+    }
+
+    #[test]
+    fn size_accessor_gives_bytes() {
+        assert_eq!(eval("(1 kb) bytes"), Value::Int(1_000));
+        assert_eq!(eval("(2 mb) bytes"), Value::Int(2_000_000));
+        assert_eq!(eval("(3 gb) bytes"), Value::Int(3_000_000_000));
+    }
+
+    #[test]
+    fn duration_accessor_gives_seconds() {
+        assert_eq!(eval("(90 seconds) seconds"), Value::Int(90));
+        assert_eq!(eval("(2 minutes) seconds"), Value::Int(120));
+        assert_eq!(eval("(1 hours) seconds"), Value::Int(3_600));
+        assert_eq!(eval("(5 days) seconds"), Value::Int(432_000));
+        assert_eq!(eval("((5 days) ago) seconds"), Value::Int(432_000));
+    }
+
+    #[test]
+    fn accessor_name_is_resolved_by_argument_type() {
+        // `seconds` is both a constructor (Int) and an accessor (Duration).
+        assert_eq!(eval("((10 seconds) seconds) to string"), Value::Str("10".into()));
+    }
+
+    #[test]
+    fn wrong_unit_argument_is_a_type_error() {
+        let msg = match Session::new().run("(1 mb) seconds") {
+            Ok(v) => panic!("expected an error, got {v:?}"),
+            Err(d) => d.msg,
+        };
+        assert!(msg.contains("seconds") && msg.contains("Size"), "{msg}");
+        let msg = match Session::new().run("(1 days) bytes") {
+            Ok(v) => panic!("expected an error, got {v:?}"),
+            Err(d) => d.msg,
+        };
+        assert!(msg.contains("bytes") && msg.contains("Duration"), "{msg}");
+        assert!(Session::new().run("(\"a\") mb").is_err());
+        assert!(Session::new().run("(1 mb) ago").is_err());
+    }
+}
