@@ -87,7 +87,7 @@ Ground rules (see CLAUDE.md and README.md):
   argv directly.
   *Done when:* a test runs a real harmless command and one failing command.
 
-- [ ] **11. `examples/fd.resh` end to end.**
+- [x] **11. `examples/fd.resh` end to end.**
   Type-check the file, and test `fd::find` with `run` mocked, asserting the
   argv produced for the four usage lines at the bottom of the file.
   *Done when:* those tests pass and the "does not parse yet" note in the file

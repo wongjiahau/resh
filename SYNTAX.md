@@ -125,6 +125,21 @@ MATCH config {
   Every field must be listed, in any order; `(_)` ignores a slot.
 - A record pattern is the only arm; there is no wildcard or second case.
 
+## Enum variants and patterns
+
+- A variant slot holds a type alone or a named parameter: `max depth (Int)` or
+  `max depth (n: Int)`. The type-only form is the norm.
+- A `MATCH` slot is a binder `(name)`, `(_)`, or a nested pattern. A nested
+  pattern is a variant of the slot's enum type: `match (glob) => ...`,
+  `match (fixed string) => ...`. A lone `(word)` is a nested pattern when
+  `word` names a nullary variant of the slot's enum, otherwise a binder (so a
+  binder cannot reuse such a name). All arms nesting into one outer variant
+  are checked together: a missing or repeated inner variant is an error.
+- Outside the file's namespace, a variant value is qualified like any call:
+  `{ match (fd::glob) }`. Patterns inside the file are unqualified.
+- A function's return type may start on the line after `:`, and the `{` on
+  the line after the type.
+
 ## Sets (planned)
 
 `Set (E)` is a set of variants of an enum `E`. Each variant appears at most
@@ -231,6 +246,7 @@ List literals accept `...` to splice a list in place:
 - `flat map (items) with (f)`: `items` is a `List (T)` or a `Set (T)` (two
   overloads); `f` is `Function (T) To (List (U))`; the result is a `List (U)`.
   A set is unordered, so the result order follows the set's literal order.
+- `(text) lines`: splits a `String` into a `List (String)`.
 - `(n) to string`: `n` is an `Int` or a `Float`; the result is a `String`.
 - `map (result) with (f)`: `result` is `Result (T) Or (E)`, `f` is
   `Function (T) To (U)`; `ok` is mapped, `error` is passed through unchanged:
@@ -331,14 +347,14 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)):
     Result (List (String)) Or (String)
 {
     run ("fd", [...(flat map (options) with ((o) => (o) argument)), pattern, dir])
-        |> map (_) with (text) lines
+        |> map (_) with ((text) => (text) lines)
 }
 ```
 
 Callers:
 
 ```
-fd::find "" in "src" { extension "rs", max depth 3 }
+fd::find "" in "src" { extension ["rs"], max depth 3 }
 ```
 
 Language features this relies on and that may not exist yet: `flat map (items)

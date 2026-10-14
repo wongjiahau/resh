@@ -1,10 +1,9 @@
-// Wrapper for `fd`, written in resh. This is the goalpost for the language
-// work described in SYNTAX.md; it does not parse or type-check yet.
+// Wrapper for `fd`, written in resh (see SYNTAX.md, "Running external commands").
 
 NAMESPACE fd
 
 // Alternatives that exclude each other are one variant, so the set's
-// duplicate check rejects `{ case sensitive, case insensitive }` for free.
+// duplicate check rejects `{ case (fd::sensitive), case (fd::insensitive) }` for free.
 ENUM Match Mode { regex, glob, fixed string }
 ENUM Case Mode { smart, sensitive, insensitive }
 
@@ -62,7 +61,7 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)):
     Result (List (String)) Or (String)
 {
     run ("fd", [...(flat map (options) with ((o) => (o) argument)), "--", pattern, dir])
-        |> map (_) with (text) lines
+        |> map (_) with ((text) => (text) lines)
 }
 
 FUNCTION find (pattern: String) in (dir: String): Result (List (String)) Or (String) {
@@ -76,5 +75,5 @@ FUNCTION find (pattern: String): Result (List (String)) Or (String) {
 // Usage:
 //   fd::find "main"
 //   fd::find "" in "src" { extension ["rs", "toml"], max depth 3 }
-//   fd::find "test" in "." { kind file, size at least (1 mb), changed within (7 days) }
-//   fd::find "*.log" in "/var" { match glob, include hidden file, exclude ["old"] }
+//   fd::find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) }
+//   fd::find "*.log" in "/var" { match (fd::glob), include hidden file, exclude ["old"] }

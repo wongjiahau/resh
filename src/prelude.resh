@@ -51,7 +51,7 @@ FUNCTION flat map (items: Set (T)) with (f: Function (T) To (List (U))): List (U
 FUNCTION map (result: Result (T) Or (E)) with (f: Function (T) To (U)): Result (U) Or (E) { NATIVE "map_result" }
 FUNCTION (n: Int) to string: String { NATIVE "int_to_string" }
 FUNCTION (n: Float) to string: String { NATIVE "float_to_string" }
-FUNCTION lines of (text: String): List (String) { NATIVE "lines_of" }
+FUNCTION (text: String) lines: List (String) { NATIVE "lines_of" }
 FUNCTION join (a: String) with (b: String): String { NATIVE "join_with" }
 FUNCTION join (a: List (T)) with (b: List (T)): List (T) { NATIVE "join_with" }
 FUNCTION (a: T) equals (b: T): Boolean { NATIVE "equals" }

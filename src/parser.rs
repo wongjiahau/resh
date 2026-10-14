@@ -176,13 +176,15 @@ impl Parser {
                 }
             }
             "FUNCTION" => {
-                let sig = self.parse_sig()?;
+                let sig = self.parse_sig(false)?;
                 let ret = if matches!(self.peek(), Tok::Colon) {
                     self.bump();
+                    self.skip_nl();
                     Some(self.parse_type()?)
                 } else {
                     None
                 };
+                self.skip_nl();
                 self.expect(Tok::LBrace, "`{` to start the function body")?;
                 self.skip_nl();
                 let body = if matches!(self.peek(), Tok::Kw(k) if k == "NATIVE") {
@@ -224,7 +226,7 @@ impl Parser {
                         self.bump();
                         break;
                     }
-                    let sig = self.parse_sig()?;
+                    let sig = self.parse_sig(true)?;
                     if sig.parts.is_empty() {
                         return self.err("a variant");
                     }
@@ -381,7 +383,9 @@ impl Parser {
         Ok((words.join(" "), span))
     }
 
-    fn parse_sig(&mut self) -> Res<SigAst> {
+    /// `bare_types` (enum variants): a slot may be a type alone, `max depth (Int)`;
+    /// it gets the placeholder name `_`.
+    fn parse_sig(&mut self, bare_types: bool) -> Res<SigAst> {
         let span = self.span();
         let parts = self
             .parse_anyfix(
@@ -393,6 +397,13 @@ impl Parser {
                     let Tok::Word(name) = p.peek().clone() else {
                         return p.err("a parameter name");
                     };
+                    if bare_types && !matches!(p.t[(p.p + 1).min(p.t.len() - 1)].tok, Tok::Colon) {
+                        let ty = p.parse_type()?;
+                        return Ok(Part::Param {
+                            name: "_".into(),
+                            ty: Some(ty),
+                        });
+                    }
                     p.bump();
                     let ty = if matches!(p.peek(), Tok::Colon) {
                         p.bump();
@@ -703,16 +714,14 @@ impl Parser {
                     skip_newlines,
                     ..Default::default()
                 },
-                |p| match p.peek().clone() {
-                    Tok::Word(w) => {
-                        p.bump();
-                        Ok(w)
+                |p| {
+                    let mut inner = p.parse_pattern(true)?;
+                    match inner.as_mut_slice() {
+                        [] => p.err("a variable name to bind"),
+                        [PatItem::Word(w)] => Ok(PatItem::Bind(std::mem::take(w))),
+                        [PatItem::Wild] => Ok(PatItem::Bind("_".into())),
+                        _ => Ok(PatItem::Nested(inner)),
                     }
-                    Tok::Underscore => {
-                        p.bump();
-                        Ok("_".to_string())
-                    }
-                    _ => p.err("a variable name to bind"),
                 },
                 |p| match p.peek() {
                     Tok::Underscore => {
@@ -727,7 +736,7 @@ impl Parser {
             .map(|part| match part {
                 Anyfix::Word(w, _) => PatItem::Word(w),
                 Anyfix::Atom(item) => item,
-                Anyfix::Slot(name) => PatItem::Bind(name),
+                Anyfix::Slot(item) => item,
             })
             .collect())
     }

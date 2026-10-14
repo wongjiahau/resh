@@ -1325,7 +1325,7 @@ mod prelude_functions {
     #[test]
     fn map_result_keeps_error() {
         let src = "LET r = read file \"/definitely/not/here\"\n\
-                   map (r) with ((s) => count (lines of (s)))";
+                   map (r) with ((s) => count ((s) lines))";
         let out = render(src);
         assert!(out.starts_with("error"), "{out}");
     }
@@ -1529,5 +1529,115 @@ mod run_primitive {
             vs,
             vec![Value::Variant("Result".into(), 1, vec![Value::Str("nope".into())])]
         );
+    }
+}
+
+// ---------- examples/fd.resh end to end ----------
+
+mod fd_example {
+    use resh::{Session, Value};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    const FD: &str = include_str!("../examples/fd.resh");
+
+    type Calls = Rc<RefCell<Vec<(String, Vec<String>)>>>;
+
+    fn session(reply: Result<&'static str, &'static str>) -> (Session, Calls) {
+        let calls: Calls = Rc::default();
+        let seen = calls.clone();
+        let mut s = Session::new();
+        s.set_runner(Box::new(move |c, a| {
+            seen.borrow_mut().push((c.to_string(), a.to_vec()));
+            reply.map(String::from).map_err(String::from)
+        }));
+        s.run(FD).unwrap_or_else(|d| panic!("fd.resh failed: {d}"));
+        (s, calls)
+    }
+
+    fn argv(src: &str) -> Vec<String> {
+        let (mut s, calls) = session(Ok(""));
+        s.run(src).unwrap_or_else(|d| panic!("{d}"));
+        let calls = calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "fd");
+        calls[0].1.clone()
+    }
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn header_note_is_gone() {
+        assert!(!FD.contains("does not parse"));
+    }
+
+    #[test]
+    fn usage_plain() {
+        assert_eq!(argv(r#"fd::find "main""#), strs(&["--", "main", "."]));
+    }
+
+    #[test]
+    fn usage_extension_and_depth() {
+        assert_eq!(
+            argv(r#"fd::find "" in "src" { extension ["rs", "toml"], max depth 3 }"#),
+            strs(&["--extension", "rs", "--extension", "toml", "--max-depth", "3", "--", "", "src"])
+        );
+    }
+
+    #[test]
+    fn usage_kind_size_duration() {
+        assert_eq!(
+            argv(r#"fd::find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) }"#),
+            strs(&[
+                "--type", "file", "--size", "+1000000b", "--changed-within", "604800s", "--", "test", "."
+            ])
+        );
+    }
+
+    #[test]
+    fn usage_glob_hidden_exclude() {
+        assert_eq!(
+            argv(r#"fd::find "*.log" in "/var" { match (fd::glob), include hidden file, exclude ["old"] }"#),
+            strs(&["--glob", "--hidden", "--exclude", "old", "--", "*.log", "/var"])
+        );
+    }
+
+    #[test]
+    fn result_is_lines_of_stdout() {
+        let (mut s, _) = session(Ok("a.rs\nb.rs\n"));
+        let v = s.run(r#"fd::find "x""#).unwrap();
+        let list = Value::List(vec![Value::Str("a.rs".into()), Value::Str("b.rs".into())]);
+        assert_eq!(v, vec![Value::Variant("Result".into(), 0, vec![list])]);
+    }
+
+    #[test]
+    fn error_is_passed_through() {
+        let (mut s, _) = session(Err("boom"));
+        let v = s.run(r#"fd::find "x""#).unwrap();
+        assert_eq!(v, vec![Value::Variant("Result".into(), 1, vec![Value::Str("boom".into())])]);
+    }
+
+    #[test]
+    fn bad_calls_are_type_errors() {
+        let (mut s, _) = session(Ok(""));
+        let e = s.run(r#"fd::find "" in "." { max depth 1, max depth 2 }"#).unwrap_err();
+        assert!(e.msg.contains("max depth"), "{}", e.msg);
+        let e = s.run(r#"fd::find "" in "." { case (fd::sensitive), case (fd::insensitive) }"#).unwrap_err();
+        assert!(e.msg.contains("case"), "{}", e.msg);
+        let e = s.run(r#"fd::find "" in "." { size at least (5 days) }"#).unwrap_err();
+        assert!(e.msg.contains("Size"), "{}", e.msg);
+        let e = s.run(r#"find "x""#).unwrap_err();
+        assert!(e.msg.contains("fd::"), "{}", e.msg);
+    }
+
+    #[test]
+    fn nested_patterns_check_exhaustiveness() {
+        let (mut s, _) = session(Ok(""));
+        let e = s
+            .run("ENUM Wrap { w (Entry Kind) }\nFUNCTION f (x: Wrap): Int { MATCH x { w (file) => 1, w (directory) => 2 } }")
+            .unwrap_err();
+        assert!(e.msg.contains("non-exhaustive") && e.msg.contains("symlink"), "{}", e.msg);
     }
 }

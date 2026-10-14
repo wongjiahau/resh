@@ -139,6 +139,10 @@ pub struct Arm {
 pub enum PatItem {
     Word(String),
     Bind(String),
+    /// `(fixed string)` / `(foo (n))`: a slot holding a nested pattern (several
+    /// items). A lone `(word)` is `Bind`; the checker turns it into a nested
+    /// variant pattern when `word` names a variant of the slot's enum.
+    Nested(Vec<PatItem>),
     Wild,
     /// `{ host (h), port (p) }`: destructures a record, one phrase per field.
     Record(Vec<Vec<PatItem>>),
