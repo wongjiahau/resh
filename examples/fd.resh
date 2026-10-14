@@ -1,0 +1,80 @@
+// Wrapper for `fd`, written in resh. This is the goalpost for the language
+// work described in SYNTAX.md; it does not parse or type-check yet.
+
+NAMESPACE fd
+
+// Alternatives that exclude each other are one variant, so the set's
+// duplicate check rejects `{ case sensitive, case insensitive }` for free.
+ENUM Match Mode { regex, glob, fixed string }
+ENUM Case Mode { smart, sensitive, insensitive }
+
+ENUM Find Option {
+    match (Match Mode),                  // default regex      (--glob, --fixed-strings)
+    case (Case Mode),                    // default smart      (--case-sensitive, --ignore-case)
+    include hidden file,                 // --hidden
+    ignore nothing,                      // --no-ignore
+    follow symlink,                      // --follow
+    full path,                           // --full-path: match against the whole path
+    kind (Entry Kind),                   // --type file | directory | symlink
+    extension (List (String)),           // --extension rs --extension toml
+    min depth (Int),
+    max depth (Int),
+    exclude (List (String)),             // --exclude a --exclude b
+    size at least (Size),
+    size at most (Size),
+    changed within (Duration),
+    changed before (Duration)
+}
+
+// One arm per option; this is the entire translation to fd's command line.
+FUNCTION (option: Find Option) argument: List (String) {
+    MATCH option {
+        match (regex) => [],
+        match (glob) => ["--glob"],
+        match (fixed string) => ["--fixed-strings"],
+        case (smart) => [],
+        case (sensitive) => ["--case-sensitive"],
+        case (insensitive) => ["--ignore-case"],
+        include hidden file => ["--hidden"],
+        ignore nothing => ["--no-ignore"],
+        follow symlink => ["--follow"],
+        full path => ["--full-path"],
+        kind (k) => ["--type", (k) fd name],
+        extension (es) => flat map (es) with ((e) => ["--extension", e]),
+        min depth (n) => ["--min-depth", n to string],
+        max depth (n) => ["--max-depth", n to string],
+        exclude (ps) => flat map (ps) with ((p) => ["--exclude", p]),
+        size at least (s) => ["--size", join "+" with ((s) bytes text)],
+        size at most (s) => ["--size", join "-" with ((s) bytes text)],
+        changed within (d) => ["--changed-within", (d) seconds text],
+        changed before (d) => ["--changed-before", (d) seconds text]
+    }
+}
+
+FUNCTION (kind: Entry Kind) fd name: String {
+    MATCH kind { file => "file", directory => "directory", symlink => "symlink" }
+}
+
+FUNCTION (size: Size) bytes text: String { join ((size bytes) to string) with "b" }
+FUNCTION (duration: Duration) seconds text: String { join ((duration seconds) to string) with "s" }
+
+FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)):
+    Result (List (String)) Or (String)
+{
+    run ("fd", [...(flat map (options) with ((o) => (o) argument)), "--", pattern, dir])
+        |> map (_) with (text) lines
+}
+
+FUNCTION find (pattern: String) in (dir: String): Result (List (String)) Or (String) {
+    find pattern in dir {}
+}
+
+FUNCTION find (pattern: String): Result (List (String)) Or (String) {
+    find pattern in "." {}
+}
+
+// Usage:
+//   fd::find "main"
+//   fd::find "" in "src" { extension ["rs", "toml"], max depth 3 }
+//   fd::find "test" in "." { kind file, size at least (1 mb), changed within (7 days) }
+//   fd::find "*.log" in "/var" { match glob, include hidden file, exclude ["old"] }

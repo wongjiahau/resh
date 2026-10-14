@@ -5,32 +5,33 @@ ENUM Sort Key { name, size, modified time, extension, unsorted }
 // Mirrors `ls`: recursive = -R, include hidden file = -A, directory itself = -d,
 // reverse = -r, follow symlink = -L, sort by = (-S | -t | -X | -U; default by name).
 RECORD List Options {
-    recursive?: Boolean,
-    include hidden file?: Boolean,
-    directory itself?: Boolean,
-    reverse?: Boolean,
-    follow symlink?: Boolean,
-    sort by?: Sort Key
+    recursive (Boolean DEFAULT false),
+    include hidden file (Boolean DEFAULT false),
+    directory itself (Boolean DEFAULT false),
+    reverse (Boolean DEFAULT false),
+    follow symlink (Boolean DEFAULT false),
+    sort by (Sort Key DEFAULT name)
 }
 
 ENUM Entry Kind { file, directory, symlink }
 
 // Every field `ls -l -i -s` can show; times are Unix seconds, `size` is bytes (0 for non-files).
+// Read it with a single-case MATCH.
 RECORD Entry {
-    (self) path: String,
-    (self) kind: Entry Kind,
-    (self) size: Int,
-    file name of (self): String,
-    permissions of (self): String,
-    mode of (self): Int,
-    link count of (self): Int,
-    owner id of (self): Int,
-    group id of (self): Int,
-    modified at of (self): Int,
-    accessed at of (self): Int,
-    inode number of (self): Int,
-    block count of (self): Int,
-    link target of (self)?: String
+    path (String),
+    kind (Entry Kind),
+    size (Int),
+    file name (String),
+    permissions (String),
+    mode (Int),
+    link count (Int),
+    owner id (Int),
+    group id (Int),
+    modified at (Int),
+    accessed at (Int),
+    inode number (Int),
+    block count (Int),
+    link target (Option (String))
 }
 
 FUNCTION list file: Result (List (Entry)) Or (String) { NATIVE "list_default" }
@@ -44,6 +45,7 @@ FUNCTION move (from: String) to (to: String): Result (Unit) Or (String) { NATIVE
 FUNCTION print (value: T): Unit { NATIVE "print" }
 FUNCTION count (items: List (T)): Int { NATIVE "count" }
 FUNCTION filter (items: List (Entry)) by extension (extension: String): List (Entry) { NATIVE "filter_ext" }
+FUNCTION flat map (items: List (T)) with (f: Function (T) To (List (U))): List (U) { NATIVE "flat_map" }
 FUNCTION lines of (text: String): List (String) { NATIVE "lines_of" }
 FUNCTION join (a: String) with (b: String): String { NATIVE "join_with" }
 FUNCTION (a: T) equals (b: T): Boolean { NATIVE "equals" }

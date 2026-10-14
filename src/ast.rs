@@ -2,17 +2,21 @@ use crate::lexer::Span;
 
 #[derive(Debug, Clone)]
 pub struct TyExpr {
+    /// Namespace qualifiers, outermost first: `a::b::T` is `["a", "b"]`.
+    pub qualifiers: Vec<String>,
     pub name: String,
     pub args: Vec<TyExpr>,
     pub span: Span,
 }
 
 /// One piece of a mixfix signature: a literal word or a bracketed parameter.
-/// `ty == None` is only legal for `(self)` inside a RECORD.
+/// `ty == None` parses but the checker rejects it: parameters need a type.
 #[derive(Debug, Clone)]
 pub enum Part {
     Word(String),
     Param { name: String, ty: Option<TyExpr> },
+    /// `((name: Type, name: Type))`: one tuple parameter with a binder per component.
+    Tuple(Vec<(String, TyExpr)>),
 }
 
 #[derive(Debug, Clone)]
@@ -21,11 +25,19 @@ pub struct SigAst {
     pub span: Span,
 }
 
+/// One piece of a record field: a literal word or a type-only slot, which may
+/// carry `DEFAULT value`.
+#[derive(Debug, Clone)]
+pub enum FieldPart {
+    Word(String),
+    Slot { ty: TyExpr, default: Option<Expr> },
+}
+
+/// A record field is an anyfix phrase: `port (Int DEFAULT 8080)`.
 #[derive(Debug, Clone)]
 pub struct FieldAst {
-    pub sig: SigAst,
-    pub optional: bool,
-    pub ty: TyExpr,
+    pub parts: Vec<FieldPart>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +48,8 @@ pub enum FnBody {
 
 #[derive(Debug, Clone)]
 pub enum Decl {
+    /// `NAMESPACE name`: file-wide; every other declaration belongs to it.
+    Namespace { name: String, span: Span },
     Function {
         sig: SigAst,
         ret: Option<TyExpr>,
@@ -80,13 +94,24 @@ pub enum ExprKind {
     /// An unresolved mixfix call (or a lone word). Resolved against the
     /// signature table by the checker.
     Seq(Vec<SeqItem>),
+    /// `ns::call`: the qualifier applies to the whole call on its right, and
+    /// is right associative: `a::b::c d` is `Qualified(a, Qualified(b, Seq[c d]))`.
+    Qualified(String, Box<Expr>),
+    /// `[a, ...b, c]`: elements may be `Spread`.
     List(Vec<Expr>),
-    Brace(Vec<BraceField>),
+    /// `...xs`: splices a list into the list literal that contains it.
+    Spread(Box<Expr>),
+    /// `(a, b)`: two or more values.
+    Tuple(Vec<Expr>),
+    /// `{ entry, entry }`: a record (or, later, set) literal.
+    Brace(Vec<BraceEntry>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Match(Box<Expr>, Vec<Arm>),
     Pipe(Box<Expr>, Box<Expr>),
     /// `expr : Type` — states the type an expression must fit.
     Ascribe(Box<Expr>, TyExpr),
+    /// `(x) => body`: a function value of one parameter.
+    Lambda(String, Box<Expr>),
 }
 
 #[derive(Debug, Clone)]
@@ -95,10 +120,11 @@ pub enum SeqItem {
     Atom(Expr),
 }
 
+/// One anyfix phrase of a brace literal. Bare words are always part of the
+/// field's name; slot values are atoms or parenthesized expressions.
 #[derive(Debug, Clone)]
-pub struct BraceField {
-    pub key: Vec<String>,
-    pub value: Option<Expr>,
+pub struct BraceEntry {
+    pub items: Vec<SeqItem>,
     pub span: Span,
 }
 
@@ -114,4 +140,6 @@ pub enum PatItem {
     Word(String),
     Bind(String),
     Wild,
+    /// `{ host (h), port (p) }`: destructures a record, one phrase per field.
+    Record(Vec<Vec<PatItem>>),
 }

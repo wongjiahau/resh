@@ -1,10 +1,11 @@
 //! Values, the tree-walking evaluator, native functions and rendering.
 
 use std::fs;
+use std::rc::Rc;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path as FsPath;
 
-use crate::check::{Checker, FnKind, Ir, PartT};
+use crate::check::{Checker, FieldDef, FnKind, Ir, PartT};
 
 pub const NATIVES: &[&str] = &[
     "list_file",
@@ -22,6 +23,7 @@ pub const NATIVES: &[&str] = &[
     "join_with",
     "equals",
     "unwrap",
+    "flat_map",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,10 +34,26 @@ pub enum Value {
     Str(String),
     Unit,
     List(Vec<Value>),
+    Tuple(Vec<Value>),
     /// record type name, field values in declaration order
     Record(String, Vec<Value>),
     /// enum name, variant index, arguments
     Variant(String, usize, Vec<Value>),
+    /// A lambda with the environment it was written in.
+    Closure(Rc<Closure>),
+}
+
+#[derive(Debug)]
+pub struct Closure {
+    param: String,
+    body: Ir,
+    env: Vec<(String, Value)>,
+}
+
+impl PartialEq for Closure {
+    fn eq(&self, other: &Closure) -> bool {
+        std::ptr::eq(self, other)
+    }
 }
 
 type Env = Vec<(String, Value)>;
@@ -56,8 +74,8 @@ fn as_str(v: &Value) -> &str {
         _ => "",
     }
 }
-fn opt_bool(v: &Value) -> bool {
-    matches!(v, Value::Variant(e, 0, a) if e == "Option" && a.first() == Some(&Value::Bool(true)))
+fn as_bool(v: &Value) -> bool {
+    matches!(v, Value::Bool(true))
 }
 
 impl Default for Interp {
@@ -74,6 +92,11 @@ impl Interp {
     pub fn eval(&self, ir: &Ir, env: &mut Env) -> Result<Value, String> {
         match ir {
             Ir::Lit(v) => Ok(v.clone()),
+            Ir::Lambda(param, body) => Ok(Value::Closure(Rc::new(Closure {
+                param: param.clone(),
+                body: (**body).clone(),
+                env: env.clone(),
+            }))),
             Ir::Struct(_) => Err("unresolved record literal (checker bug)".into()),
             Ir::Var(n) => env
                 .iter()
@@ -95,17 +118,60 @@ impl Interp {
                 env.truncate(mark);
                 Ok(last)
             }
-            Ir::List(xs) => Ok(Value::List(
+            Ir::List(xs) => {
+                let mut out = Vec::new();
+                for x in xs {
+                    match x {
+                        Ir::Spread(inner) => match self.eval(inner, env)? {
+                            Value::List(ys) => out.extend(ys),
+                            _ => return Err("internal error: spreading a non-list".into()),
+                        },
+                        _ => out.push(self.eval(x, env)?),
+                    }
+                }
+                Ok(Value::List(out))
+            }
+            Ir::Spread(_) => Err("internal error: `...` outside a list literal".into()),
+            Ir::Tuple(xs) => Ok(Value::Tuple(
                 xs.iter()
                     .map(|x| self.eval(x, env))
                     .collect::<Result<_, _>>()?,
             )),
+            Ir::Untuple(var, names, body) => {
+                let Some(Value::Tuple(vals)) = env
+                    .iter()
+                    .rev()
+                    .find(|(k, _)| k == var)
+                    .map(|(_, v)| v.clone())
+                else {
+                    return Err("internal error: destructuring a non-tuple".into());
+                };
+                let mark = env.len();
+                env.extend(names.iter().cloned().zip(vals));
+                let res = self.eval(body, env);
+                env.truncate(mark);
+                res
+            }
             Ir::MkRecord(n, fs) => Ok(Value::Record(
                 n.clone(),
                 fs.iter()
                     .map(|x| self.eval(x, env))
                     .collect::<Result<_, _>>()?,
             )),
+            Ir::Unpack(s, binds, body) => {
+                let Value::Record(_, vals) = self.eval(s, env)? else {
+                    return Err("internal error: destructuring a non-record".into());
+                };
+                let mark = env.len();
+                for (name, v) in binds.iter().zip(vals) {
+                    if let Some(name) = name {
+                        env.push((name.clone(), v));
+                    }
+                }
+                let res = self.eval(body, env);
+                env.truncate(mark);
+                res
+            }
             Ir::If(c, t, f) => match self.eval(c, env)? {
                 Value::Bool(true) => self.eval(t, env),
                 _ => self.eval(f, env),
@@ -158,14 +224,18 @@ impl Interp {
                     FnKind::Variant { enum_name, idx } => {
                         Ok(Value::Variant(enum_name.clone(), *idx, vals))
                     }
-                    FnKind::Field { idx } => match vals.into_iter().next() {
-                        Some(Value::Record(_, fs)) => Ok(fs[*idx].clone()),
-                        _ => Err("internal error: field access on a non-record".into()),
-                    },
-                    FnKind::RecordNew => Ok(vals.into_iter().next().unwrap_or(Value::Unit)),
                 }
             }
         }
+    }
+
+    fn apply(&self, f: &Value, arg: Value) -> Result<Value, String> {
+        let Value::Closure(c) = f else {
+            return Err("internal error: calling a non-function".into());
+        };
+        let mut env = c.env.clone();
+        env.push((c.param.clone(), arg));
+        self.eval(&c.body, &mut env)
     }
 
     // ---------- natives ----------
@@ -233,6 +303,19 @@ impl Interp {
                 Value::Variant(_, 0, args) => Ok(args[0].clone()),
                 other => Err(format!("unwrap failed: {}", self.render(other, false))),
             },
+            "flat_map" => {
+                let Value::List(xs) = &a[0] else {
+                    return Err("flat map: not a list".into());
+                };
+                let mut out = Vec::new();
+                for x in xs {
+                    match self.apply(&a[1], x.clone())? {
+                        Value::List(ys) => out.extend(ys),
+                        _ => return Err("flat map: the function must return a list".into()),
+                    }
+                }
+                Ok(Value::List(out))
+            }
             other => Err(format!(
                 "internal error: native `{other}` is not implemented"
             )),
@@ -242,15 +325,12 @@ impl Interp {
     fn list(&self, dir: &str, opts: Option<&Value>) -> Value {
         let mut o = ListOpts::default();
         if let Some(Value::Record(_, f)) = opts {
-            o.recursive = opt_bool(&f[0]);
-            o.hidden = opt_bool(&f[1]);
-            o.itself = opt_bool(&f[2]);
-            o.reverse = opt_bool(&f[3]);
-            o.follow = opt_bool(&f[4]);
-            if let Value::Variant(e, 0, a) = &f[5]
-                && e == "Option"
-                && let Some(Value::Variant(_, idx, _)) = a.first()
-            {
+            o.recursive = as_bool(&f[0]);
+            o.hidden = as_bool(&f[1]);
+            o.itself = as_bool(&f[2]);
+            o.reverse = as_bool(&f[3]);
+            o.follow = as_bool(&f[4]);
+            if let Value::Variant(_, idx, _) = &f[5] {
                 o.sort = *idx;
             }
         }
@@ -292,6 +372,44 @@ impl Interp {
             .join(" ")
     }
 
+    /// Each field of a record value with the slot values that belong to it.
+    fn record_fields<'a>(
+        &'a self,
+        name: &str,
+        vals: &'a [Value],
+    ) -> impl Iterator<Item = (&'a FieldDef, &'a [Value])> {
+        let mut rest = vals;
+        self.ck.records[name].fields.iter().map(move |d| {
+            let (mine, tail) = rest.split_at(d.slots.len());
+            rest = tail;
+            (d, mine)
+        })
+    }
+
+    /// A field as a literal entry: its words with each `_` replaced by the
+    /// slot value, parenthesized unless it is a single-token atom.
+    fn phrase(&self, key: &str, vals: &[Value], show: impl Fn(&Value) -> String) -> String {
+        let mut vals = vals.iter();
+        key.split(' ')
+            .map(|w| match (w == "_").then(|| vals.next()).flatten() {
+                Some(v) => {
+                    let text = show(v);
+                    match v {
+                        Value::Int(_)
+                        | Value::Float(_)
+                        | Value::Str(_)
+                        | Value::List(_)
+                        | Value::Tuple(_)
+                        | Value::Record(..) => text,
+                        _ => format!("({text})"),
+                    }
+                }
+                None => w.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     fn compact(&self, v: &Value) -> String {
         match v {
             Value::Int(n) => n.to_string(),
@@ -299,6 +417,7 @@ impl Interp {
             Value::Bool(b) => b.to_string(),
             Value::Str(s) => format!("{s:?}"),
             Value::Unit => "unit".into(),
+            Value::Closure(_) => "<function>".into(),
             Value::List(xs) => format!(
                 "[{}]",
                 xs.iter()
@@ -306,17 +425,22 @@ impl Interp {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Value::Tuple(xs) => format!(
+                "({})",
+                xs.iter()
+                    .map(|x| self.compact(x))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Value::Record(n, fs) => {
                 if fs.is_empty() {
-                    return format!("{n} {{}}");
+                    return "{}".into();
                 }
-                let keys = &self.ck.records[n].fields;
-                let body: Vec<String> = keys
-                    .iter()
-                    .zip(fs)
-                    .map(|(k, x)| format!("{}: {}", k.key, self.compact(x)))
+                let body: Vec<String> = self
+                    .record_fields(n, fs)
+                    .map(|(d, xs)| self.phrase(&d.key, xs, |x| self.compact(x)))
                     .collect();
-                format!("{n} {{ {} }}", body.join(", "))
+                format!("{{ {} }}", body.join(", "))
             }
             Value::Variant(en, idx, args) => {
                 let mut it = args.iter();
@@ -325,7 +449,7 @@ impl Interp {
                     .iter()
                     .map(|p| match p {
                         PartT::Word(w) => w.clone(),
-                        PartT::Param(..) => format!(
+                        PartT::Param(..) | PartT::Tuple(_) => format!(
                             "({})",
                             it.next().map(|a| self.compact(a)).unwrap_or_default()
                         ),
@@ -352,13 +476,16 @@ impl Interp {
                 format!("[\n{}\n{end}]", rows.join(",\n"))
             }
             Value::Record(n, fs) => {
-                let keys = &self.ck.records[n].fields;
-                let rows: Vec<String> = keys
-                    .iter()
-                    .zip(fs)
-                    .map(|(k, x)| format!("{pad}{}: {}", k.key, self.pretty(x, ind + 2)))
+                let rows: Vec<String> = self
+                    .record_fields(n, fs)
+                    .map(|(d, xs)| {
+                        format!(
+                            "{pad}{}",
+                            self.phrase(&d.key, xs, |x| self.pretty(x, ind + 2))
+                        )
+                    })
                     .collect();
-                format!("{n} {{\n{}\n{end}}}", rows.join(",\n"))
+                format!("{{\n{}\n{end}}}", rows.join(",\n"))
             }
             Value::Variant(en, idx, args) => {
                 let mut it = args.iter();
@@ -367,7 +494,7 @@ impl Interp {
                     .iter()
                     .map(|p| match p {
                         PartT::Word(w) => w.clone(),
-                        PartT::Param(..) => format!(
+                        PartT::Param(..) | PartT::Tuple(_) => format!(
                             "({})",
                             it.next().map(|a| self.pretty(a, ind)).unwrap_or_default()
                         ),
@@ -386,7 +513,8 @@ impl Interp {
             Value::Bool(b) => b.to_string(),
             Value::Str(s) => json_str(s),
             Value::Unit => "null".into(),
-            Value::List(xs) => format!(
+            Value::Closure(_) => "\"<function>\"".into(),
+            Value::List(xs) | Value::Tuple(xs) => format!(
                 "[{}]",
                 xs.iter()
                     .map(|x| self.json(x))
@@ -394,11 +522,22 @@ impl Interp {
                     .join(",")
             ),
             Value::Record(n, fs) => {
-                let keys = &self.ck.records[n].fields;
-                let body: Vec<String> = keys
-                    .iter()
-                    .zip(fs)
-                    .map(|(k, x)| format!("{}:{}", json_str(&k.key), self.json(x)))
+                let body: Vec<String> = self
+                    .record_fields(n, fs)
+                    .map(|(d, xs)| {
+                        let name = d.key.split(' ').filter(|w| *w != "_").collect::<Vec<_>>();
+                        let value = match xs {
+                            [x] => self.json(x),
+                            xs => format!(
+                                "[{}]",
+                                xs.iter()
+                                    .map(|x| self.json(x))
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            ),
+                        };
+                        format!("{}:{value}", json_str(&name.join(" ")))
+                    })
                     .collect();
                 format!("{{{}}}", body.join(","))
             }

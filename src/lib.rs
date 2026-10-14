@@ -54,6 +54,12 @@ impl Session {
             .iter()
             .filter_map(|i| if let Item::Decl(d) = i { Some(d) } else { None })
             .collect();
+        // A file has one namespace; calls in it resolve against that file's.
+        let ns = decls.iter().find_map(|d| match d {
+            Decl::Namespace { name, .. } => Some(name.clone()),
+            _ => None,
+        });
+        self.interp.ck.set_namespace(ns);
         let pending = self.interp.ck.declare(&decls)?;
         self.interp.ck.check_bodies(pending)?;
         for item in &items {

@@ -44,6 +44,10 @@ pub enum Tok {
     RBracket,
     Comma,
     Colon,
+    /// `::`, the namespace qualifier; distinct from the single `:` type annotation.
+    ColonColon,
+    /// `...`, list spread.
+    Ellipsis,
     Question,
     Arrow,
     Pipe,
@@ -60,7 +64,17 @@ pub struct Token {
 }
 
 pub const KEYWORDS: &[&str] = &[
-    "FUNCTION", "RECORD", "ENUM", "MATCH", "LET", "IF", "THEN", "ELSE", "NATIVE",
+    "FUNCTION",
+    "RECORD",
+    "ENUM",
+    "NAMESPACE",
+    "MATCH",
+    "LET",
+    "IF",
+    "THEN",
+    "ELSE",
+    "NATIVE",
+    "DEFAULT",
 ];
 
 struct Lx {
@@ -158,7 +172,22 @@ pub fn lex(src: &str) -> Res<Vec<Token>> {
             }
             ':' => {
                 lx.bump();
-                push(Tok::Colon);
+                if lx.peek() == Some(':') {
+                    lx.bump();
+                    push(Tok::ColonColon);
+                } else {
+                    push(Tok::Colon);
+                }
+            }
+            '.' => {
+                lx.bump();
+                if lx.peek() == Some('.') && lx.peek2() == Some('.') {
+                    lx.bump();
+                    lx.bump();
+                    push(Tok::Ellipsis);
+                } else {
+                    return Err(Diag::new(span, "unexpected `.`; list spread is written `...`"));
+                }
             }
             '?' => {
                 lx.bump();

@@ -4,6 +4,10 @@ A readable shell.
 
 ## Objectives
 
+- **Readable shell commands.** Calls read like plain phrases (anyfix names,
+  `list file in (dir)`), not flag soup or terse abbreviations. Features such as
+  namespaces serve this goal: they group wrapped CLI tools (`git:commit`), and
+  deeply chained forms like `a:b:c` are valid but not the intended style.
 - **Fast type-checking and fast execution.** Type checking is bottom-up and
   one-way (inference flows from leaves to roots only). No bidirectional type
   checking, since it is expensive.
