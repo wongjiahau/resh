@@ -226,6 +226,20 @@ List literals accept `...` to splice a list in place:
 - The operand must be a `List (T)`; element types are joined as for any other
   list literal. Spreading a `Set (E)` is not supported.
 
+## Prelude functions
+
+- `flat map (items) with (f)`: `items` is a `List (T)` or a `Set (T)` (two
+  overloads); `f` is `Function (T) To (List (U))`; the result is a `List (U)`.
+  A set is unordered, so the result order follows the set's literal order.
+- `(n) to string`: `n` is an `Int` or a `Float`; the result is a `String`.
+- `map (result) with (f)`: `result` is `Result (T) Or (E)`, `f` is
+  `Function (T) To (U)`; `ok` is mapped, `error` is passed through unchanged:
+  `Result (U) Or (E)`.
+- `join (a) with (b)`: concatenates two `String`s, or two `List (T)` of the
+  same element type. Nothing else (no mixing, no sets).
+- When a call has several candidates and none fits, the error lists each
+  candidate with the reason it was rejected.
+
 ## Units (planned)
 
 A unit is an ordinary suffix function. There is no special syntax.

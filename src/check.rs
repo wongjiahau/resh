@@ -1786,7 +1786,23 @@ impl Checker {
                     "no overload of `{}` accepts argument types {}. Candidates:{}\n  Fix: change an argument so its type matches one candidate; record literals can be fixed with `{{ ... }} : Record Name`.",
                     seq_text(items),
                     shown_args(),
-                    candidates(&mut cands.iter().copied())
+                    {
+                        // Every failed candidate pushed exactly one reason.
+                        let mut reasons = failures.iter();
+                        cands
+                            .iter()
+                            .map(|&i| {
+                                let line = candidates(&mut std::iter::once(i));
+                                match reasons.next() {
+                                    Some(d) => format!(
+                                        "{line}\n      rejected: {}",
+                                        d.msg.replace('\n', "\n      ")
+                                    ),
+                                    None => line,
+                                }
+                            })
+                            .collect::<String>()
+                    }
                 ),
             )),
             _ => Err(Diag::new(

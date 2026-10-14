@@ -1138,7 +1138,11 @@ mod lambdas {
     fn lambda_parameter_type_comes_from_the_earlier_argument() {
         // `x` is an Int, so it cannot be joined as a String.
         let msg = run_err("flat map ([1]) with ((x) => [join (x) with \"a\"])");
+        // (`join` is overloaded, so the message lists its candidates.)
+        assert!(msg.contains("join <arg> with <arg>"), "{msg}");
         assert!(msg.contains("expects String, found Int"), "{msg}");
+        // The outer call explains why each of its candidates was rejected.
+        assert!(msg.contains("rejected:"), "{msg}");
     }
 
     #[test]
@@ -1264,5 +1268,92 @@ mod tuples_and_spread {
                    run (\"fd\", [...[\"--hidden\"], pattern, dir])\n}\n\
                    wrap \"x\" in \"src\"";
         assert_eq!(run(src), vec![strs(&["fd", "--hidden", "x", "src"])]);
+    }
+}
+
+mod prelude_functions {
+    use super::*;
+
+    const COLORS: &str = "ENUM Color { red, green, rgb (n: Int) }\n";
+
+    #[test]
+    fn flat_map_over_a_set_returns_a_list() {
+        let src = format!(
+            "{COLORS}FUNCTION twice (cs: Set (Color)): List (Color) {{ flat map (cs) with ((c) => [c, c]) }}\n\
+             twice {{ red, green }}"
+        );
+        assert_eq!(render(&src), "[red, red, green, green]");
+    }
+
+    #[test]
+    fn flat_map_over_a_set_type_checks_the_lambda_body() {
+        let src = format!(
+            "{COLORS}FUNCTION bad (cs: Set (Color)): List (Int) {{ flat map (cs) with ((c) => 1) }}"
+        );
+        let msg = run_err(&src);
+        assert!(msg.contains("flat map"), "{msg}");
+    }
+
+    #[test]
+    fn flat_map_on_a_non_collection_is_an_error() {
+        let msg = run_err("flat map (1) with ((x) => [x])");
+        assert!(msg.contains("flat map"), "{msg}");
+    }
+
+    #[test]
+    fn int_to_string() {
+        assert_eq!(run("(42) to string"), vec![Value::Str("42".into())]);
+        
+    }
+
+    #[test]
+    fn float_to_string() {
+        assert_eq!(run("(1.5) to string"), vec![Value::Str("1.5".into())]);
+    }
+
+    #[test]
+    fn to_string_rejects_other_types() {
+        let msg = run_err("(\"a\") to string");
+        assert!(msg.contains("to string"), "{msg}");
+    }
+
+    #[test]
+    fn map_result_applies_to_ok() {
+        assert_eq!(render("map (ok 1) with ((n) => (n) to string)"), "ok (\"1\")");
+    }
+
+    #[test]
+    fn map_result_keeps_error() {
+        let src = "LET r = read file \"/definitely/not/here\"\n\
+                   map (r) with ((s) => count (lines of (s)))";
+        let out = render(src);
+        assert!(out.starts_with("error"), "{out}");
+    }
+
+    #[test]
+    fn map_result_needs_a_result() {
+        let msg = run_err("map ([1]) with ((n) => n)");
+        assert!(msg.contains("map"), "{msg}");
+    }
+
+    #[test]
+    fn join_strings() {
+        assert_eq!(run("join (\"a\") with (\"b\")"), vec![Value::Str("ab".into())]);
+    }
+
+    #[test]
+    fn join_lists() {
+        assert_eq!(
+            run("join ([1, 2]) with ([3])"),
+            vec![Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])]
+        );
+    }
+
+    #[test]
+    fn join_mismatched_types_is_an_error() {
+        let msg = run_err("join ([1]) with ([\"a\"])");
+        assert!(msg.contains("join"), "{msg}");
+        let msg = run_err("join (\"a\") with ([\"a\"])");
+        assert!(msg.contains("join"), "{msg}");
     }
 }

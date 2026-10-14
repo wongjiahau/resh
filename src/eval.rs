@@ -24,6 +24,9 @@ pub const NATIVES: &[&str] = &[
     "equals",
     "unwrap",
     "flat_map",
+    "map_result",
+    "int_to_string",
+    "float_to_string",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -297,7 +300,20 @@ impl Interp {
                     .map(|l| Value::Str(l.to_string()))
                     .collect(),
             )),
-            "join_with" => Ok(Value::Str(format!("{}{}", as_str(&a[0]), as_str(&a[1])))),
+            "join_with" => match (&a[0], &a[1]) {
+                (Value::List(x), Value::List(y)) => {
+                    Ok(Value::List(x.iter().chain(y).cloned().collect()))
+                }
+                _ => Ok(Value::Str(format!("{}{}", as_str(&a[0]), as_str(&a[1])))),
+            },
+            "int_to_string" | "float_to_string" => Ok(Value::Str(self.render(&a[0], false))),
+            "map_result" => match &a[0] {
+                Value::Variant(n, 0, args) => {
+                    let v = self.apply(&a[1], args[0].clone())?;
+                    Ok(Value::Variant(n.clone(), 0, vec![v]))
+                }
+                other => Ok(other.clone()),
+            },
             "equals" => Ok(Value::Bool(a[0] == a[1])),
             "unwrap" => match &a[0] {
                 Value::Variant(_, 0, args) => Ok(args[0].clone()),

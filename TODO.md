@@ -69,7 +69,7 @@ Ground rules (see CLAUDE.md and README.md):
   *Done when:* `[...a, "x", ...b]` and a function taking a tuple parameter
   both work.
 
-- [ ] **8. Prelude functions.**
+- [x] **8. Prelude functions.**
   `flat map (items) with (f)` (lists and sets), `(n) to string`,
   `map (result) with (f)`, `join (a) with (b)`.
   *Done when:* each has a test, including the `Result` and `Set` cases.
