@@ -1,5 +1,6 @@
 //! Values, the tree-walking evaluator, native functions and rendering.
 
+use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
 use std::os::unix::fs::MetadataExt;
@@ -36,6 +37,7 @@ pub const NATIVES: &[&str] = &[
     "unit_days",
     "unit_ago",
     "unit_count",
+    "run",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,8 +72,39 @@ impl PartialEq for Closure {
 
 type Env = Vec<(String, Value)>;
 
+/// Executes `run`: `(command, args)` to stdout (`Ok`) or an error message (`Err`).
+/// Embedders and tests can replace it with `Interp::set_runner`.
+pub type Runner = Box<dyn FnMut(&str, &[String]) -> Result<String, String>>;
+
 pub struct Interp {
     pub ck: Checker,
+    runner: RefCell<Runner>,
+}
+
+/// The real `run`: spawns `command` with `args` as argv. No shell is involved,
+/// so metacharacters in arguments are passed literally. Success (exit 0) gives
+/// stdout; anything else gives `Err` text: the trimmed stderr (if any) followed
+/// by `exit code N` (or `terminated by signal`), or `cannot run <command>: <io error>`.
+pub fn run_process(command: &str, args: &[String]) -> Result<String, String> {
+    let out = std::process::Command::new(command)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {command}: {e}"))?;
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = stderr.trim_end();
+    let code = match out.status.code() {
+        Some(c) => format!("exit code {c}"),
+        None => "terminated by signal".to_string(),
+    };
+    Err(if stderr.is_empty() {
+        code
+    } else {
+        format!("{stderr}\n{code}")
+    })
 }
 
 fn ok(v: Value) -> Value {
@@ -98,7 +131,16 @@ impl Default for Interp {
 
 impl Interp {
     pub fn new() -> Interp {
-        Interp { ck: Checker::new() }
+        Interp {
+            ck: Checker::new(),
+            runner: RefCell::new(Box::new(run_process)),
+        }
+    }
+
+    /// Replaces what `run` does (for tests and embedders), e.g. to record argv
+    /// and return canned output. Returns the previous runner.
+    pub fn set_runner(&mut self, runner: Runner) -> Runner {
+        self.runner.replace(runner)
     }
 
     pub fn eval(&self, ir: &Ir, env: &mut Env) -> Result<Value, String> {
@@ -278,6 +320,20 @@ impl Interp {
                     as_str(&a[1])
                 )),
             }),
+            "run" => {
+                let Value::Tuple(parts) = &a[0] else {
+                    return Err("run: expected a (command, args) tuple".into());
+                };
+                let Some(Value::List(xs)) = parts.get(1) else {
+                    return Err("run: args is not a list".into());
+                };
+                let args: Vec<String> = xs.iter().map(|x| as_str(x).to_string()).collect();
+                let result = (self.runner.borrow_mut())(as_str(&parts[0]), &args);
+                Ok(match result {
+                    Ok(s) => ok(Value::Str(s)),
+                    Err(e) => err(e),
+                })
+            }
             "print" => {
                 println!("{}", self.render(&a[0], false));
                 Ok(Value::Unit)

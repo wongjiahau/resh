@@ -292,7 +292,20 @@ single primitive:
 FUNCTION run ((command: String, args: List (String))): Result (String) Or (String) { NATIVE "run" }
 ```
 
-Stdout is returned as `Ok`; stderr and the exit code as `Err`. A wrapper builds
+Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
+
+- `run` never invokes a shell: `command` is looked up on `PATH` and `args` become
+  argv entries verbatim, so `;`, `$HOME`, `*` and quotes are passed literally.
+  stdin is closed.
+- Exit 0: `Ok(stdout)` (UTF-8, lossy; unchanged, including the trailing newline).
+- Nonzero exit: `Err(text)` where text is the trimmed stderr, a newline, and
+  `exit code N` (just `exit code N` if stderr is empty; `terminated by signal`
+  if killed).
+- Command cannot be started: `Err("cannot run <command>: <os error>")`.
+- Embedders and tests can replace the implementation with
+  `Session::set_runner` (see `eval::Runner`) to record argv and return canned
+  results.
+ A wrapper builds
 a `List (String)` from its typed options and calls `run`:
 
 ```

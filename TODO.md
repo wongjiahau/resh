@@ -81,7 +81,7 @@ Ground rules (see CLAUDE.md and README.md):
   *Done when:* `fd::find "" in "." { size at least (1 mb) }` type-checks and
   `{ size at least (5 days) }` is a type error.
 
-- [ ] **10. `run` primitive.**
+- [x] **10. `run` primitive.**
   `run ((command: String, args: List (String))): Result (String) Or (String)`.
   Stdout is `Ok`; stderr plus exit code is `Err`. Never invoke a shell; pass
   argv directly.

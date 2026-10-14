@@ -1262,10 +1262,10 @@ mod tuples_and_spread {
 
     #[test]
     fn the_spec_example_wrapper_shape_works() {
-        let src = "FUNCTION run ((command: String, args: List (String))): List (String) {\n\
+        let src = "FUNCTION exec ((command: String, args: List (String))): List (String) {\n\
                    [command, ...args]\n}\n\
                    FUNCTION wrap (pattern: String) in (dir: String): List (String) {\n\
-                   run (\"fd\", [...[\"--hidden\"], pattern, dir])\n}\n\
+                   exec (\"fd\", [...[\"--hidden\"], pattern, dir])\n}\n\
                    wrap \"x\" in \"src\"";
         assert_eq!(run(src), vec![strs(&["fd", "--hidden", "x", "src"])]);
     }
@@ -1452,5 +1452,82 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)): I
         assert!(msg.contains("bytes") && msg.contains("Duration"), "{msg}");
         assert!(Session::new().run("(\"a\") mb").is_err());
         assert!(Session::new().run("(1 mb) ago").is_err());
+    }
+}
+
+mod run_primitive {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn ok_str(s: &str) -> Value {
+        Value::Variant("Result".into(), 0, vec![Value::Str(s.into())])
+    }
+
+    fn err_text(src: &str) -> String {
+        let vs = run(src);
+        match &vs[0] {
+            Value::Variant(n, 1, f) if n == "Result" => match &f[0] {
+                Value::Str(s) => s.clone(),
+                v => panic!("not a string: {v:?}"),
+            },
+            v => panic!("expected Err, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn stdout_is_ok() {
+        assert_eq!(run(r#"run ("echo", ["hello", "world"])"#), vec![ok_str("hello world\n")]);
+        assert_eq!(run(r#"run ("true", [])"#), vec![ok_str("")]);
+    }
+
+    #[test]
+    fn failing_command_gives_stderr_and_exit_code() {
+        let e = err_text(r#"run ("sh", ["-c", "echo boom >&2; exit 3"])"#);
+        assert_eq!(e, "boom\nexit code 3");
+        assert_eq!(err_text(r#"run ("false", [])"#), "exit code 1");
+    }
+
+    #[test]
+    fn missing_command_is_err() {
+        let e = err_text(r#"run ("resh-no-such-command-xyz", [])"#);
+        assert!(e.starts_with("cannot run resh-no-such-command-xyz: "), "{e}");
+    }
+
+    #[test]
+    fn shell_metacharacters_are_passed_literally() {
+        let src = r#"run ("echo", ["a;b", "$HOME", "*", "`x`", "$(y)"])"#;
+        assert_eq!(run(src), vec![ok_str("a;b $HOME * `x` $(y)\n")]);
+    }
+
+    #[test]
+    fn argument_types_are_checked() {
+        let e = run_err(r#"run ("echo", [1, 2])"#);
+        assert!(e.contains("run"), "{e}");
+        let e = run_err(r#"run ("echo")"#);
+        assert!(e.contains("run"), "{e}");
+    }
+
+    #[test]
+    fn can_be_mocked_to_record_argv() {
+        let calls: Rc<RefCell<Vec<(String, Vec<String>)>>> = Rc::default();
+        let seen = calls.clone();
+        let mut s = Session::new();
+        s.set_runner(Box::new(move |c, a| {
+            seen.borrow_mut().push((c.to_string(), a.to_vec()));
+            Ok("mocked".into())
+        }));
+        let vs = s.run(r#"run ("fd", ["--hidden", "x"])"#).unwrap();
+        assert_eq!(vs, vec![ok_str("mocked")]);
+        assert_eq!(
+            *calls.borrow(),
+            vec![("fd".to_string(), vec!["--hidden".to_string(), "x".to_string()])]
+        );
+        s.set_runner(Box::new(|_, _| Err("nope".into())));
+        let vs = s.run(r#"run ("fd", [])"#).unwrap();
+        assert_eq!(
+            vs,
+            vec![Value::Variant("Result".into(), 1, vec![Value::Str("nope".into())])]
+        );
     }
 }

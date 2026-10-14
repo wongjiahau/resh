@@ -89,6 +89,13 @@ impl Session {
         Ok(())
     }
 
+    /// Replaces the implementation of `run` (see `eval::Runner`). The runner
+    /// receives the command and its argv; `Ok` is stdout, `Err` the error text.
+    /// Intended for tests and embedding: mock `run` and assert the argv.
+    pub fn set_runner(&mut self, runner: eval::Runner) {
+        self.interp.set_runner(runner);
+    }
+
     /// Convenience for tests: collects the non-Unit results.
     pub fn run(&mut self, src: &str) -> Result<Vec<Value>, Diag> {
         let mut out = Vec::new();

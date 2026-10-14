@@ -42,6 +42,7 @@ FUNCTION read file (path: String): Result (String) Or (String) { NATIVE "read_fi
 FUNCTION write (text: String) to file (path: String): Result (Unit) Or (String) { NATIVE "write_file" }
 FUNCTION move (from: String) to (to: String): Result (Unit) Or (String) { NATIVE "move_path" }
 
+FUNCTION run ((command: String, args: List (String))): Result (String) Or (String) { NATIVE "run" }
 FUNCTION print (value: T): Unit { NATIVE "print" }
 FUNCTION count (items: List (T)): Int { NATIVE "count" }
 FUNCTION filter (items: List (Entry)) by extension (extension: String): List (Entry) { NATIVE "filter_ext" }
