@@ -2,9 +2,9 @@
 
 use std::cell::RefCell;
 use std::fs;
-use std::rc::Rc;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path as FsPath;
+use std::rc::Rc;
 
 use crate::check::{Checker, FieldDef, FnKind, Ir, PartT};
 use crate::pattern::bind;
@@ -439,6 +439,31 @@ impl Interp {
         } else {
             self.pretty(v, 0)
         }
+    }
+
+    /// Plain text for `--raw`: a `Result`'s payload unwrapped (`Err` when it is an
+    /// `error`), strings unescaped, string lists one per line. Anything else is
+    /// rendered as usual.
+    pub fn raw(&self, v: &Value) -> (bool, String) {
+        if let Value::Variant(en, idx, args) = v
+            && let [inner] = args.as_slice()
+        {
+            match self.variant_label(en, *idx).as_str() {
+                "ok" => return (true, self.raw(inner).1),
+                "error" => return (false, self.raw(inner).1),
+                _ => {}
+            }
+        }
+        let text = match v {
+            Value::Str(s) => s.clone(),
+            Value::List(xs) if xs.iter().all(|x| matches!(x, Value::Str(_))) => xs
+                .iter()
+                .map(|x| self.raw(x).1)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => self.pretty(v, 0),
+        };
+        (true, text)
     }
 
     fn variant_label(&self, en: &str, idx: usize) -> String {

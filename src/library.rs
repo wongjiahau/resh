@@ -26,12 +26,13 @@ pub fn user_dir() -> Option<PathBuf> {
     var("HOME").map(|h| PathBuf::from(h).join(".config/resh/lib"))
 }
 
-/// A library name is one plain word, so it can never name a path.
+/// A library name is one lowercase word (also keeps file lookups the same on
+/// case-insensitive file systems), so it can never name a path.
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 /// The source of library `name`, from `dir` (the user directory) or the bundle.

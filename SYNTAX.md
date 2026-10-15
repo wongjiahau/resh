@@ -1,7 +1,34 @@
 # resh syntax
 
-Design notes for the syntax. Sections marked **(planned)** are decided but not
-yet implemented. There are no open questions at the moment.
+The language reference. Everything here is implemented unless a section says
+otherwise.
+
+## Quick start
+
+```
+$ resh -c 'IMPORT git; git::status;'          # run one snippet
+$ resh                                         # a REPL; :symbols lists what is available
+$ resh run script.resh                         # run a file
+$ resh run script.resh --raw                   # plain text instead of `ok ("...")`
+```
+
+```
+IMPORT git;
+LET recent = git::log { max count 3 };        // ok ([...]) or error ("...")
+recent;
+git:: { diff { staged } };                    // a scope block: names of `git` unqualified
+```
+
+Calls read like phrases (see "Anyfix"). Optional flags go in a `{ ... }` set.
+Every call that can fail returns a `Result`: `ok (value)` or `error (message)`.
+Prelude functions (the ones you can call without `IMPORT`) are listed by
+`:symbols` in the REPL, and `:symbols git` lists a library's. Libraries are
+described in "Importing libraries"; writing your own is in "Writing a wrapper".
+
+Command line: `resh --help` shows every subcommand. `--json` prints results (and
+errors) as JSON; `--raw` prints plain text, unwrapping a `Result` (an `error` goes
+to stderr and the exit code is 1) and printing string lists one per line.
+`resh check file.resh` type-checks without running anything and prints `ok`.
 
 ## Statements
 
@@ -224,7 +251,7 @@ MATCH config {
 - A function's return type may start on the line after `:`, and the `{` on
   the line after the type.
 
-## Sets (planned)
+## Sets
 
 `Set (E)` is a set of variants of an enum `E`. Each variant appears at most
 once. It is the way to take optional, order-independent flags: absence is the
@@ -233,13 +260,13 @@ natural state, so there is no `Option`, no sentinel default and no `some`.
 ```
 ENUM Find Option {
     include hidden file,
-    extension (String),
+    extension (List (String)),
     max depth (Int),
     size between (Size) and (Size),
     exclude (List (String))
 }
 
-fd::find "" in "src" { extension "rs", max depth 3 }
+fd::find "" in "src" { extension ["rs"], max depth 3 }
 fd::find "" in "." { size between (1 mb) and (5 gb), include hidden file }
 fd::find "main" in "src" {}
 ```
@@ -324,6 +351,15 @@ List literals accept `...` to splice a list in place:
   anyfix rule (one token, or a parenthesized expression: `...(flat map ...)`).
 - The operand must be a `List (T)`; element types are joined as for any other
   list literal. Spreading a `Set (E)` is not supported.
+
+## Pipes
+
+`a |> f (_) with (x)` passes `a` as the single `_` placeholder of the call on its
+right; it is an error if the right side has no `_` or more than one.
+
+```
+run ("git", ["log"]) |> map (_) with ((text) => (text) lines)
+```
 
 ## Prelude functions
 
@@ -443,6 +479,21 @@ fd::find "" in "src" { extension ["rs"], max depth 3 };
 
 Language features this relies on and that may not exist yet: `flat map (items)
 with (f)` over sets, `(n) to string` and `map (result) with (f)`.
+
+## Writing a wrapper
+
+A wrapper is a library (see "Importing libraries") for one CLI tool. Put it in
+`name.resh` in the user library directory (`resh libs` prints it), starting with
+`NAMESPACE name`. Look at `resh libs show git` and `resh libs show fd` for the
+shape: an `ENUM` of options, a `FUNCTION (option: ...) argument: List (String)`
+that maps each option to argv, and one function per command that calls `run`.
+`///` comments above declarations are their docs (shown by `:symbols`). Check it
+with `resh check name.resh`, then use it with `IMPORT name;`. `resh skill install`
+installs a Claude Code skill that writes wrappers for you.
+
+Wrappers run the tool in resh's current directory, so change directory before
+starting `resh` (or give the wrapper a directory parameter, as `fd::find ... in
+(dir)` does).
 
 ## Inspecting symbols
 

@@ -2157,7 +2157,7 @@ impl Checker {
             return Diag::new(
                 span,
                 format!(
-                    "`{}` is declared in namespace `{ns}`; callers outside it must qualify the call: `{ns}::{}`",
+                    "`{}` is declared in namespace `{ns}`; callers outside it must qualify the call: `{ns}::{}`, or wrap the call in a scope block: `{ns}:: {{ ... }}`",
                     label(&d.parts),
                     seq_text(items)
                 ),

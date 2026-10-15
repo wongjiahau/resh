@@ -94,3 +94,23 @@ fn syntax_doc_and_skill_are_embedded_and_nonempty() {
             .starts_with("---\nname: new-wrapper")
     );
 }
+
+#[test]
+fn mixed_case_library_name_suggests_the_lowercase_one() {
+    let err = session().run("IMPORT Git;").unwrap_err();
+    assert!(err.msg.contains("Did you mean `git`?"), "{}", err.msg);
+}
+
+#[test]
+fn raw_unwraps_results_and_unescapes_strings() {
+    let mut s = session();
+    s.set_runner(Box::new(|_, _| Ok("a\nb\n".to_string())));
+    let mut seen = Vec::new();
+    s.run_with(
+        "run (\"x\", []);\nrun (\"x\", []) |> map (_) with ((t) => (t) lines);",
+        &mut |i, v| seen.push(i.raw(v)),
+    )
+    .unwrap();
+    assert_eq!(seen[0], (true, "a\nb\n".to_string()));
+    assert_eq!(seen[1], (true, "a\nb".to_string()));
+}

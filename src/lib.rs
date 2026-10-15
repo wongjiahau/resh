@@ -79,10 +79,16 @@ impl Session {
                 .into_iter()
                 .map(|(n, _)| n)
                 .collect();
+            let hint = names
+                .iter()
+                .find(|n| n.eq_ignore_ascii_case(name))
+                .map_or(String::new(), |n| {
+                    format!(" Did you mean `{n}`? Library names are lowercase.")
+                });
             return Err(Diag::new(
                 span,
                 format!(
-                    "no library `{name}`; available: {}. Put `{name}.resh` in {} to add your own",
+                    "no library `{name}`; available: {}.{hint} Put `{name}.resh` in {} to add your own",
                     names.join(", "),
                     self.lib_dir
                         .as_deref()

@@ -1,10 +1,23 @@
 use resh::Session;
 use resh::eval::json_str;
 
+fn usage_text() -> &'static str {
+    "usage: resh [repl] [--json]
+       resh run <file.resh> [--json | --raw]
+       resh check <file.resh> [--json]
+       resh -c \"<source>\" [--json | --raw]
+       resh libs [show <name>]
+       resh syntax
+       resh skill install
+       resh --help
+
+--raw prints results as plain text: a Result is unwrapped (an error goes to
+stderr and makes the exit code 1), strings are unescaped, string lists are
+printed one per line."
+}
+
 fn usage() -> ! {
-    eprintln!(
-        "usage: resh [repl] [--json]\n       resh run <file.resh> [--json]\n       resh check <file.resh> [--json]\n       resh -c \"<source>\" [--json]\n       resh libs [show <name>]\n       resh syntax\n       resh skill install"
-    );
+    eprintln!("{}", usage_text());
     std::process::exit(2);
 }
 
@@ -64,16 +77,21 @@ fn install_skill() {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let json = args.iter().any(|a| a == "--json");
+    let raw = args.iter().any(|a| a == "--raw");
     let rest: Vec<&str> = args
         .iter()
         .map(|s| s.as_str())
-        .filter(|a| *a != "--json")
+        .filter(|a| *a != "--json" && *a != "--raw")
         .collect();
     let mut check_only = false;
     let src = match rest.as_slice() {
         ["check", file] => {
             check_only = true;
             read(file)
+        }
+        ["--help"] | ["-h"] | ["help"] => {
+            println!("{}", usage_text());
+            return;
         }
         ["libs"] => {
             libs();
@@ -100,11 +118,22 @@ fn main() {
         _ => usage(),
     };
     let mut session = Session::new();
+    let mut failed = false;
     let result = if check_only {
         session.check_only(&src)
     } else {
         session.run_with(&src, &mut |interp, v| {
-            println!("{}", interp.render(v, json))
+            if raw {
+                let (ok, text) = interp.raw(v);
+                if ok {
+                    println!("{text}");
+                } else {
+                    eprintln!("{text}");
+                    failed = true;
+                }
+            } else {
+                println!("{}", interp.render(v, json))
+            }
         })
     };
     if let Err(d) = result {
@@ -118,6 +147,12 @@ fn main() {
         } else {
             eprintln!("error at {}:{}: {}", d.span.line, d.span.col, d.msg);
         }
+        std::process::exit(1);
+    }
+    if check_only && !json {
+        println!("ok");
+    }
+    if failed {
         std::process::exit(1);
     }
 }
