@@ -2163,8 +2163,13 @@ mod symbols_cli {
 
     /// Runs the real binary with `input` on stdin; returns (stdout, stderr).
     fn repl(args: &[&str], input: &str) -> (String, String) {
+        repl_with_init(args, input, "/nonexistent/init.resh")
+    }
+
+    fn repl_with_init(args: &[&str], input: &str, init: &str) -> (String, String) {
         let mut child = Command::new(env!("CARGO_BIN_EXE_resh"))
             .args(args)
+            .env("RESH_INIT", init)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2181,6 +2186,18 @@ mod symbols_cli {
             String::from_utf8(out.stdout).unwrap(),
             String::from_utf8(out.stderr).unwrap(),
         )
+    }
+
+    #[test]
+    fn init_file_runs_before_the_first_entry() {
+        let dir = std::env::temp_dir().join(format!("resh-init-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let init = dir.join("init.resh");
+        std::fs::write(&init, "IMPORT git;\n").unwrap();
+        let (out, err) = repl_with_init(&[], ":symbols\n", init.to_str().unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(err, "");
+        assert_eq!(out, "namespaces\n  prelude\n  git\n");
     }
 
     // `NAMESPACE` is per REPL entry, so the declaration shares its entry.

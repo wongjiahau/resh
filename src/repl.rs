@@ -36,6 +36,27 @@ fn history_path() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".resh_history"))
 }
 
+/// Runs the init file (see `library::init_path`), if there is one, so its
+/// `IMPORT`s and declarations are in place before the first prompt. Its results
+/// are not printed; an error is reported and the REPL starts anyway.
+fn load_init(session: &mut Session) {
+    let Some(path) = crate::library::init_path() else {
+        return;
+    };
+    let Ok(src) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    if let Err(d) = session.run(&src) {
+        eprintln!(
+            "error in {} at {}:{}: {}",
+            path.display(),
+            d.span.line,
+            d.span.col,
+            d.msg
+        );
+    }
+}
+
 /// Feeds one input line to the session. `Ok(true)` means the line completed an
 /// entry that was run (so it belongs in the history), `Ok(false)` that more
 /// lines are needed; `Err(())` means the REPL should exit.
@@ -89,6 +110,7 @@ fn feed(session: &mut Session, buf: &mut String, line: &str, json: bool) -> Resu
 /// persistent history; piped input is read plainly.
 pub fn run(json: bool) {
     let mut session = Session::new();
+    load_init(&mut session);
     let mut buf = String::new();
     if !io::stdin().is_terminal() {
         for line in io::stdin().lock().lines() {

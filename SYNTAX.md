@@ -153,6 +153,21 @@ git::status;
   prints a library's source; `resh check file.resh` type-checks a library without
   running anything.
 
+## Init file
+
+When the REPL starts it runs the init file, if it exists: `$RESH_INIT`, else
+`$XDG_CONFIG_HOME/resh/init.resh`, else `~/.config/resh/init.resh`. Put your
+`IMPORT`s and declarations there so they are ready at the first prompt (and in
+tab completion):
+
+```
+IMPORT git;
+IMPORT rg;
+```
+
+Its results are not printed, and an error in it is reported without stopping the
+REPL. `resh run`, `resh check` and `resh -c` do not read it.
+
 ## Let bindings
 
 `LET name = value` binds a single-word name. A type may be stated with

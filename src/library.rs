@@ -26,6 +26,19 @@ pub fn user_dir() -> Option<PathBuf> {
     var("HOME").map(|h| PathBuf::from(h).join(".config/resh/lib"))
 }
 
+/// The REPL's init file: `$RESH_INIT`, else `$XDG_CONFIG_HOME/resh/init.resh`,
+/// else `~/.config/resh/init.resh`.
+pub fn init_path() -> Option<PathBuf> {
+    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
+    if let Some(p) = var("RESH_INIT") {
+        return Some(PathBuf::from(p));
+    }
+    if let Some(d) = var("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(d).join("resh/init.resh"));
+    }
+    var("HOME").map(|h| PathBuf::from(h).join(".config/resh/init.resh"))
+}
+
 /// A library name is one lowercase word (also keeps file lookups the same on
 /// case-insensitive file systems), so it can never name a path.
 fn valid_name(name: &str) -> bool {
