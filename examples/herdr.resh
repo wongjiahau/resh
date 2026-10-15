@@ -1,0 +1,274 @@
+// Wrapper for `herdr` (workspaces, tabs, panes and agents), written in resh (see SYNTAX.md,
+// "Running external commands"). Every herdr command prints JSON, so every function returns
+// that JSON text unchanged; ids (`w1`, `w1:t1`, `w1:p1`) are read from it by the caller.
+// Closing and server management are deliberately left out.
+
+NAMESPACE herdr
+
+ENUM Direction { left, right, up, down }
+
+ENUM Read Source { visible, recent, recent unwrapped }
+
+ENUM Agent Kind {
+    claude, codex, gemini, opencode, pi, cursor, copilot, amp, grok
+}
+
+ENUM Create Option {
+    cwd (String),                        // --cwd
+    label (String),                      // --label
+    focus,                               // --focus
+    no focus                             // --no-focus
+}
+
+/// Variant names are global to the namespace, so these differ from `Create Option`'s.
+ENUM Split Option {
+    ratio (Float),                       // --ratio
+    start in (String),                   // --cwd
+    take focus,                          // --focus
+    keep focus                           // --no-focus
+}
+
+ENUM Read Option {
+    source (Read Source),                // default visible   (--source)
+    lines (Int),                         // --lines
+    ansi                                 // --format ansi: keep colors and styling
+}
+
+ENUM Wait Option {
+    timeout (Duration)                   // --timeout, whole seconds
+}
+
+ENUM Agent State { idle, working, blocked, done, unknown }
+
+ENUM Prompt Option {
+    wait,                                // --wait: block until the agent settles
+    until (Agent State),                 // --until
+    give up after (Duration)             // --timeout, whole seconds
+}
+
+FUNCTION (option: Create Option) argument: List (String) {
+    MATCH option {
+        cwd (path) => ["--cwd", path],
+        label (text) => ["--label", text],
+        focus => ["--focus"],
+        no focus => ["--no-focus"]
+    }
+}
+
+FUNCTION (option: Split Option) argument: List (String) {
+    MATCH option {
+        ratio (r) => ["--ratio", r to string],
+        start in (path) => ["--cwd", path],
+        take focus => ["--focus"],
+        keep focus => ["--no-focus"]
+    }
+}
+
+FUNCTION (option: Read Option) argument: List (String) {
+    MATCH option {
+        source (s) => ["--source", (s) herdr name],
+        lines (n) => ["--lines", n to string],
+        ansi => ["--format", "ansi"]
+    }
+}
+
+FUNCTION (option: Wait Option) argument: List (String) {
+    MATCH option {
+        timeout (d) => ["--timeout", (d) milliseconds text]
+    }
+}
+
+FUNCTION (option: Prompt Option) argument: List (String) {
+    MATCH option {
+        wait => ["--wait"],
+        until (state) => ["--until", (state) herdr name],
+        give up after (d) => ["--timeout", (d) milliseconds text]
+    }
+}
+
+FUNCTION (direction: Direction) herdr name: String {
+    MATCH direction { left => "left", right => "right", up => "up", down => "down" }
+}
+
+FUNCTION (source: Read Source) herdr name: String {
+    MATCH source { visible => "visible", recent => "recent", recent unwrapped => "recent-unwrapped" }
+}
+
+FUNCTION (state: Agent State) herdr name: String {
+    MATCH state {
+        idle => "idle", working => "working", blocked => "blocked", done => "done", unknown => "unknown"
+    }
+}
+
+FUNCTION (kind: Agent Kind) herdr name: String {
+    MATCH kind {
+        claude => "claude", codex => "codex", gemini => "gemini", opencode => "opencode",
+        pi => "pi", cursor => "cursor", copilot => "copilot", amp => "amp", grok => "grok"
+    }
+}
+
+/// herdr takes milliseconds; a `Duration` is whole seconds, so append three zeros.
+FUNCTION (duration: Duration) milliseconds text: String {
+    join ((duration seconds) to string) with "000"
+}
+
+// ---------- inspect ----------
+
+FUNCTION list workspace: Result (String) {
+    run ("herdr", ["workspace", "list"])
+}
+
+FUNCTION list tab: Result (String) {
+    run ("herdr", ["tab", "list"])
+}
+
+FUNCTION list tab in workspace (workspace: String): Result (String) {
+    run ("herdr", ["tab", "list", "--workspace", workspace])
+}
+
+FUNCTION list pane: Result (String) {
+    run ("herdr", ["pane", "list"])
+}
+
+FUNCTION list pane in workspace (workspace: String): Result (String) {
+    run ("herdr", ["pane", "list", "--workspace", workspace])
+}
+
+FUNCTION list agent: Result (String) {
+    run ("herdr", ["agent", "list"])
+}
+
+FUNCTION get workspace (id: String): Result (String) {
+    run ("herdr", ["workspace", "get", id])
+}
+
+FUNCTION get pane (id: String): Result (String) {
+    run ("herdr", ["pane", "get", id])
+}
+
+FUNCTION get agent (target: String): Result (String) {
+    run ("herdr", ["agent", "get", target])
+}
+
+/// Terminal output of a pane, as text.
+FUNCTION read pane (id: String) (options: Set (Read Option)): Result (String) {
+    run ("herdr", ["pane", "read", id, ...(flat map (options) with ((o) => (o) argument))])
+}
+
+FUNCTION read pane (id: String): Result (String) {
+    read pane id {}
+}
+
+FUNCTION read agent (target: String) (options: Set (Read Option)): Result (String) {
+    run ("herdr", ["agent", "read", target, ...(flat map (options) with ((o) => (o) argument))])
+}
+
+FUNCTION read agent (target: String): Result (String) {
+    read agent target {}
+}
+
+// ---------- layout ----------
+
+FUNCTION create workspace (options: Set (Create Option)): Result (String) {
+    run ("herdr", ["workspace", "create", ...(flat map (options) with ((o) => (o) argument))])
+}
+
+FUNCTION create tab (options: Set (Create Option)): Result (String) {
+    run ("herdr", ["tab", "create", ...(flat map (options) with ((o) => (o) argument))])
+}
+
+FUNCTION create tab in workspace (workspace: String) (options: Set (Create Option)):
+    Result (String)
+{
+    run ("herdr", [
+        "tab", "create", "--workspace", workspace,
+        ...(flat map (options) with ((o) => (o) argument))
+    ])
+}
+
+FUNCTION split pane (id: String) (direction: Direction) (options: Set (Split Option)):
+    Result (String)
+{
+    run ("herdr", [
+        "pane", "split", id, "--direction", (direction) herdr name,
+        ...(flat map (options) with ((o) => (o) argument))
+    ])
+}
+
+FUNCTION split pane (id: String) (direction: Direction): Result (String) {
+    split pane id direction {}
+}
+
+// ---------- run things ----------
+
+/// Queues `command` and Enter in the pane; success only acknowledges admission.
+FUNCTION run (command: String) in pane (id: String): Result (String) {
+    run ("herdr", ["pane", "run", id, command])
+}
+
+FUNCTION send text (text: String) to pane (id: String): Result (String) {
+    run ("herdr", ["pane", "send-text", id, text])
+}
+
+FUNCTION send key (keys: List (String)) to pane (id: String): Result (String) {
+    run ("herdr", ["pane", "send-keys", id, ...keys])
+}
+
+/// Waits until `text` appears (as a literal substring) in the pane's output.
+FUNCTION wait for output (text: String) in pane (id: String) (options: Set (Wait Option)):
+    Result (String)
+{
+    run ("herdr", [
+        "pane", "wait-output", id, "--match", text,
+        ...(flat map (options) with ((o) => (o) argument))
+    ])
+}
+
+FUNCTION wait for output (text: String) in pane (id: String): Result (String) {
+    wait for output text in pane id {}
+}
+
+// ---------- agents ----------
+
+/// `pane` must be an idle shell prompt. `name` is `[a-z][a-z0-9_-]{0,31}`.
+FUNCTION start agent (name: String) (kind: Agent Kind) in pane (pane: String):
+    Result (String)
+{
+    run ("herdr", ["agent", "start", name, "--kind", (kind) herdr name, "--pane", pane])
+}
+
+FUNCTION prompt agent (target: String) with (text: String) (options: Set (Prompt Option)):
+    Result (String)
+{
+    run ("herdr", [
+        "agent", "prompt", target, text,
+        ...(flat map (options) with ((o) => (o) argument))
+    ])
+}
+
+FUNCTION prompt agent (target: String) with (text: String): Result (String) {
+    prompt agent target with text {}
+}
+
+/// Without `until`, waits for the first settled state (idle, done or blocked).
+FUNCTION wait for agent (target: String) (options: Set (Wait Option)): Result (String) {
+    run ("herdr", [
+        "agent", "wait", target,
+        ...(flat map (options) with ((o) => (o) argument))
+    ])
+}
+
+FUNCTION wait for agent (target: String): Result (String) {
+    wait for agent target {}
+}
+
+// Usage:
+//   herdr::list agent;
+//   herdr:: {
+//       read pane "w1:p1" { lines 50, source (recent unwrapped) };
+//       split pane "w1:p1" (right) { keep focus, start in "/tmp" };
+//       run "just test" in pane "w1:p2";
+//       wait for output "test result" in pane "w1:p2" { timeout (120 seconds) };
+//       start agent "reviewer" (codex) in pane "w1:p3";
+//       prompt agent "reviewer" with "Review the diff" { wait, give up after (120 seconds) };
+//   }
