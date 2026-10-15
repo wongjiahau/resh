@@ -175,8 +175,11 @@ MATCH config {
   pattern is a variant of the slot's enum type: `match (glob) => ...`,
   `match (fixed string) => ...`. A lone `(word)` is a nested pattern when
   `word` names a nullary variant of the slot's enum, otherwise a binder (so a
-  binder cannot reuse such a name). All arms nesting into one outer variant
-  are checked together: a missing or repeated inner variant is an error.
+  binder cannot reuse such a name). Nested patterns may be nested further, to
+  any depth, and an arm may nest in several slots.
+- Exhaustiveness uses the pattern-matrix algorithm: a missing case is reported
+  as a pattern (`missing: deep (w (_))`), and an arm that earlier arms already
+  cover (including any arm after `_`) is an error.
 - Outside the file's namespace, a variant value is qualified like any call:
   `{ match (fd::glob) }`, or unqualified inside a scope block
   `fd:: { ... { match (glob) } ... }`. Patterns inside the file are unqualified.

@@ -2204,3 +2204,72 @@ mod symbols_cli {
         assert!(out.contains("  // A point.\n  record  Pt\n"), "{out}");
     }
 }
+
+// ---------- recursive patterns and matrix exhaustiveness ----------
+
+mod recursive_patterns {
+    use super::{run, run_err};
+    use resh::Value;
+
+    const EXPR: &str = r#"
+ENUM Color { red, green }
+ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) }
+"#;
+
+    fn with(body: &str) -> String {
+        format!("{EXPR}\nFUNCTION f (x: Wrap): Int {{ MATCH x {{ {body} }} }}\n")
+    }
+
+    #[test]
+    fn nests_to_any_depth_and_binds_inside() {
+        let src = format!(
+            "{}\nf (deep (deep (w (green))));",
+            with("w (red) => 1, w (green) => 2, pair (a) and (b) => 3, deep (deep (w (red))) => 4, deep (deep (w (green))) => 5, deep (_) => 6")
+        );
+        assert_eq!(run(&src).last(), Some(&Value::Int(5)));
+        let src = format!(
+            "{}\nf (deep (w (red)));",
+            with("w (_) => 1, pair (a) and (b) => 3, deep (deep (_)) => 4, deep (w (_)) => 7, deep (pair (_) and (_)) => 8")
+        );
+        assert_eq!(run(&src).last(), Some(&Value::Int(7)));
+    }
+
+    #[test]
+    fn two_nested_slots_in_one_arm_are_checked_as_a_matrix() {
+        let arms = "w (_) => 0, deep (_) => 0, pair (red) and (red) => 1, pair (green) and (green) => 2, pair (red) and (green) => 3, pair (green) and (red) => 4";
+        let src = format!("{}\nf (pair (green) and (red));", with(arms));
+        assert_eq!(run(&src).last(), Some(&Value::Int(4)));
+        let missing = "w (_) => 0, deep (_) => 0, pair (red) and (red) => 1, pair (green) and (green) => 2, pair (red) and (green) => 3";
+        let msg = run_err(&with(missing));
+        assert!(msg.contains("non-exhaustive MATCH; missing: pair (green) and (red)"), "{msg}");
+    }
+
+    #[test]
+    fn missing_cases_name_the_deepest_hole() {
+        let msg = run_err(&with("w (_) => 0, pair (_) and (_) => 0, deep (deep (w (red))) => 1"));
+        assert!(msg.contains("deep (w (_))") && msg.contains("deep (pair (_) and (_))"), "{msg}");
+    }
+
+    #[test]
+    fn unreachable_arms_are_rejected() {
+        let msg = run_err(&with("w (_) => 0, pair (_) and (_) => 0, deep (_) => 0, deep (w (red)) => 1"));
+        assert!(msg.contains("unreachable"), "{msg}");
+        let msg = run_err(&with("w (_) => 0, pair (_) and (_) => 0, deep (_) => 0, _ => 1"));
+        assert!(msg.contains("unreachable"), "{msg}");
+        let msg = run_err(&with("_ => 0, w (red) => 1"));
+        assert!(msg.contains("unreachable"), "{msg}");
+    }
+
+    #[test]
+    fn a_wildcard_arm_after_partial_arms_is_exhaustive() {
+        let src = format!("{}\nf (w (green));", with("w (red) => 1, deep (deep (_)) => 2, _ => 3"));
+        assert_eq!(run(&src).last(), Some(&Value::Int(3)));
+    }
+
+    #[test]
+    fn a_non_enum_slot_cannot_hold_a_nested_pattern() {
+        let src = "ENUM Num { num (Int) }\nFUNCTION f (x: Num): Int { MATCH x { num (k (j)) => 1 } }";
+        let msg = run_err(src);
+        assert!(msg.contains("not an enum"), "{msg}");
+    }
+}

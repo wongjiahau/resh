@@ -7,6 +7,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path as FsPath;
 
 use crate::check::{Checker, FieldDef, FnKind, Ir, PartT};
+use crate::pattern::bind;
 
 pub const NATIVES: &[&str] = &[
     "list_file",
@@ -240,19 +241,11 @@ impl Interp {
             }
             Ir::Match(s, arms) => {
                 let v = self.eval(s, env)?;
-                let Value::Variant(_, idx, args) = v else {
-                    return Err("internal error: MATCH on a non-variant".into());
-                };
                 for arm in arms {
-                    if arm.variant.is_none() || arm.variant == Some(idx) {
+                    let mut binds = Vec::new();
+                    if bind(&arm.pat, &v, &mut binds) {
                         let mark = env.len();
-                        let mut it = args.iter();
-                        for b in &arm.binds {
-                            let a = it.next().cloned().unwrap_or(Value::Unit);
-                            if let Some(name) = b {
-                                env.push((name.clone(), a));
-                            }
-                        }
+                        env.extend(binds);
                         let res = self.eval(&arm.body, env);
                         env.truncate(mark);
                         return res;

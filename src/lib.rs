@@ -3,6 +3,7 @@ pub mod check;
 pub mod eval;
 pub mod lexer;
 pub mod parser;
+pub mod pattern;
 pub mod repl;
 
 pub use eval::Value;

@@ -15,6 +15,7 @@ use std::fmt;
 use crate::ast::*;
 use crate::eval::{NATIVES, Value};
 use crate::lexer::{Diag, Res, Span};
+use crate::pattern::{Pat, enum_params, render, useful, witnesses};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -136,7 +137,7 @@ fn overlap(a: &Type, b: &Type) -> bool {
 
 /// Substitutes bound parameters; `keep_unbound` leaves unbound ones as-is
 /// (for messages), otherwise they become `Never`.
-fn subst(t: &Type, m: &HashMap<String, Type>, keep_unbound: bool) -> Type {
+pub(crate) fn subst(t: &Type, m: &HashMap<String, Type>, keep_unbound: bool) -> Type {
     match t {
         Type::Param(n) => match m.get(n) {
             Some(x) => x.clone(),
@@ -299,8 +300,7 @@ pub struct RecordDef {
 
 #[derive(Debug, Clone)]
 pub struct IrArm {
-    pub variant: Option<usize>,
-    pub binds: Vec<Option<String>>,
+    pub pat: Pat,
     pub body: Ir,
 }
 
@@ -1651,76 +1651,70 @@ impl Checker {
         Ok((Ir::Unpack(Box::new(sir), flat, Box::new(bir)), bt))
     }
 
-    /// Nested patterns (`match (glob) => ...`, `match (fixed string) => ...`): a
-    /// slot whose pattern is a variant of the slot's enum type. All arms that
-    /// nest into the same outer variant become one arm binding the slot to a
-    /// hidden variable and matching on it with the inner patterns, so the
-    /// inner MATCH does the exhaustiveness and duplicate checks.
-    fn desugar_nested(&self, ed: &EnumDef, pmap: &HashMap<String, Type>, arms: &[Arm]) -> Vec<Arm> {
-        const HIDDEN: &str = "$nested";
-        let nested_slot = |arm: &Arm| -> Option<(usize, usize, Vec<PatItem>)> {
-            let vi = ed.variants.iter().position(|v| {
-                v.parts.len() == arm.pat.len()
-                    && v.parts.iter().zip(&arm.pat).all(|(p, q)| match (p, q) {
-                        (PartT::Word(a), PatItem::Word(b)) => a == b,
-                        (PartT::Param(..), PatItem::Bind(_) | PatItem::Nested(_)) => true,
-                        _ => false,
-                    })
-            })?;
-            for (i, (p, q)) in ed.variants[vi].parts.iter().zip(&arm.pat).enumerate() {
-                match (p, q) {
-                    (PartT::Param(..), PatItem::Nested(items)) => {
-                        return Some((vi, i, items.clone()));
-                    }
-                    (PartT::Param(_, ty), PatItem::Bind(name)) if name != "_" => {
-                        if let Type::Enum(en, _) = subst(ty, pmap, false)
-                            && self.enums[&en].variants.iter().any(
-                                |v| matches!(v.parts.as_slice(), [PartT::Word(w)] if w == name),
-                            )
-                        {
-                            return Some((vi, i, vec![PatItem::Word(name.clone())]));
+    /// Resolves the words and slots of a variant pattern against enum type
+    /// `ty`; slots hold binders, `(_)`, or nested variant patterns, to any
+    /// depth. Binders are appended to `binds` in left-to-right order.
+    fn resolve_variant(
+        &self,
+        ty: &Type,
+        items: &[PatItem],
+        span: Span,
+        binds: &mut Vec<(String, Type)>,
+    ) -> Res<Pat> {
+        let Type::Enum(en, targs) = ty else {
+            return Err(Diag::new(
+                span,
+                format!("this slot has type {ty}, which is not an enum, so it cannot hold a nested pattern; use a `(name)` binder or `(_)`"),
+            ));
+        };
+        let ed = &self.enums[en];
+        let pmap = enum_params(&self.enums, en, targs);
+        let found = ed.variants.iter().position(|v| {
+            v.parts.len() == items.len()
+                && v.parts.iter().zip(items).all(|(p, q)| match (p, q) {
+                    (PartT::Word(a), PatItem::Word(b)) => a == b,
+                    (PartT::Param(..), PatItem::Bind(_) | PatItem::Nested(_)) => true,
+                    _ => false,
+                })
+        });
+        let Some(vi) = found else {
+            let vs: Vec<String> = ed.variants.iter().map(|v| label(&v.parts)).collect();
+            return Err(Diag::new(
+                span,
+                format!(
+                    "no variant of `{en}` matches this pattern; variants are: {}",
+                    vs.join(" | ")
+                ),
+            ));
+        };
+        let mut args = Vec::new();
+        for (p, q) in ed.variants[vi].parts.iter().zip(items) {
+            let PartT::Param(_, slot) = p else { continue };
+            let slot = subst(slot, &pmap, false);
+            args.push(match q {
+                PatItem::Bind(n) if n == "_" => Pat::Any(None),
+                PatItem::Bind(n) => {
+                    // A lone word naming a nullary variant of the slot's enum is
+                    // that variant, not a binder.
+                    let nullary = match &slot {
+                        Type::Enum(se, _) => self.enums[se].variants.iter().position(
+                            |v| matches!(v.parts.as_slice(), [PartT::Word(w)] if w == n),
+                        ),
+                        _ => None,
+                    };
+                    match nullary {
+                        Some(vi) => Pat::Ctor(vi, vec![]),
+                        None => {
+                            binds.push((n.clone(), slot));
+                            Pat::Any(Some(n.clone()))
                         }
                     }
-                    _ => {}
                 }
-            }
-            None
-        };
-        let mut out: Vec<Arm> = Vec::new();
-        let mut groups: Vec<(usize, usize, usize)> = Vec::new(); // (variant, slot, index in out)
-        for arm in arms {
-            let Some((vi, slot, inner)) = nested_slot(arm) else {
-                out.push(arm.clone());
-                continue;
-            };
-            let inner_arm = Arm {
-                pat: inner,
-                body: arm.body.clone(),
-                span: arm.span,
-            };
-            if let Some(&(_, _, at)) = groups.iter().find(|g| g.0 == vi && g.1 == slot) {
-                if let ExprKind::Match(_, inner_arms) = &mut out[at].body.k {
-                    inner_arms.push(inner_arm);
-                }
-                continue;
-            }
-            let mut pat = arm.pat.clone();
-            pat[slot] = PatItem::Bind(HIDDEN.into());
-            let scrut = Expr {
-                k: ExprKind::Seq(vec![SeqItem::Word(HIDDEN.into(), arm.span)]),
-                span: arm.span,
-            };
-            groups.push((vi, slot, out.len()));
-            out.push(Arm {
-                pat,
-                body: Expr {
-                    k: ExprKind::Match(Box::new(scrut), vec![inner_arm]),
-                    span: arm.span,
-                },
-                span: arm.span,
+                PatItem::Nested(inner) => self.resolve_variant(&slot, inner, span, binds)?,
+                _ => unreachable!("matched as Bind or Nested above"),
             });
         }
-        out
+        Ok(Pat::Ctor(vi, args))
     }
 
     fn matching(&self, scrut: &Expr, arms: &[Arm], span: Span, sc: &mut Scope) -> Res<(Ir, Type)> {
@@ -1728,71 +1722,34 @@ impl Checker {
         if let Type::Record(rn) = &sty {
             return self.unpack(sir, rn, arms, span, sc);
         }
-        let Type::Enum(en, targs) = &sty else {
+        if !matches!(sty, Type::Enum(..)) {
             return Err(Diag::new(
                 scrut.span,
                 format!(
                     "MATCH needs an enum or record value (or Option/Result), found {sty}; use IF for Boolean"
                 ),
             ));
-        };
-        let ed = &self.enums[en];
-        let pmap: HashMap<String, Type> = ed
-            .params
-            .iter()
-            .cloned()
-            .zip(targs.iter().cloned())
-            .collect();
-        let desugared = self.desugar_nested(ed, &pmap, arms);
-        let arms = desugared.as_slice();
-        let mut covered = vec![false; ed.variants.len()];
-        let mut wildcard = false;
+        }
+        let tys = [sty.clone()];
+        let mut rows: Vec<Vec<Pat>> = Vec::new();
         let mut out: Option<Type> = None;
         let mut irs = Vec::new();
         for arm in arms {
-            let mark = sc.len();
-            let (variant, binds) = if arm.pat == [PatItem::Wild] {
-                wildcard = true;
-                (None, vec![])
+            let mut binds = Vec::new();
+            let pat = if arm.pat == [PatItem::Wild] {
+                Pat::Any(None)
             } else {
-                let found = ed.variants.iter().position(|v| {
-                    v.parts.len() == arm.pat.len()
-                        && v.parts.iter().zip(&arm.pat).all(|(p, q)| match (p, q) {
-                            (PartT::Word(a), PatItem::Word(b)) => a == b,
-                            (PartT::Param(..), PatItem::Bind(_)) => true,
-                            _ => false,
-                        })
-                });
-                let Some(vi) = found else {
-                    let vs: Vec<String> = ed.variants.iter().map(|v| label(&v.parts)).collect();
-                    return Err(Diag::new(
-                        arm.span,
-                        format!(
-                            "no variant of `{en}` matches this pattern; variants are: {}",
-                            vs.join(" | ")
-                        ),
-                    ));
-                };
-                if covered[vi] {
-                    return Err(Diag::new(
-                        arm.span,
-                        "this variant is already handled by an earlier arm",
-                    ));
-                }
-                covered[vi] = true;
-                let mut binds = Vec::new();
-                for (p, q) in ed.variants[vi].parts.iter().zip(&arm.pat) {
-                    if let (PartT::Param(_, ty), PatItem::Bind(name)) = (p, q) {
-                        if name == "_" {
-                            binds.push(None);
-                        } else {
-                            sc.push((name.clone(), subst(ty, &pmap, false)));
-                            binds.push(Some(name.clone()));
-                        }
-                    }
-                }
-                (Some(vi), binds)
+                self.resolve_variant(&sty, &arm.pat, arm.span, &mut binds)?
             };
+            if !useful(&self.enums, &rows, std::slice::from_ref(&pat), &tys) {
+                return Err(Diag::new(
+                    arm.span,
+                    "this arm is unreachable: earlier arms already handle every value it matches",
+                ));
+            }
+            rows.push(vec![pat.clone()]);
+            let mark = sc.len();
+            sc.extend(binds);
             let res = self.check(&arm.body, sc);
             sc.truncate(mark);
             let (bir, bt) = res?;
@@ -1807,26 +1764,18 @@ impl Checker {
                     )
                 })?,
             });
-            irs.push(IrArm {
-                variant,
-                binds,
-                body: bir,
-            });
+            irs.push(IrArm { pat, body: bir });
         }
-        if !wildcard {
-            let missing: Vec<String> = ed
-                .variants
+        let missing = witnesses(&self.enums, &rows, &tys);
+        if !missing.is_empty() {
+            let shown: Vec<String> = missing
                 .iter()
-                .zip(&covered)
-                .filter(|(_, c)| !**c)
-                .map(|(v, _)| label(&v.parts))
+                .map(|w| render(&self.enums, &sty, &w[0]))
                 .collect();
-            if !missing.is_empty() {
-                return Err(Diag::new(
-                    span,
-                    format!("non-exhaustive MATCH; missing: {}", missing.join(" | ")),
-                ));
-            }
+            return Err(Diag::new(
+                span,
+                format!("non-exhaustive MATCH; missing: {}", shown.join(" | ")),
+            ));
         }
         Ok((Ir::Match(Box::new(sir), irs), out.unwrap_or(Type::Unit)))
     }
