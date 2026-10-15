@@ -376,6 +376,23 @@ pub struct Symbol {
     pub ret: Option<String>,
 }
 
+/// Removes every `prefix` (`ns::`) that starts a qualified name, leaving
+/// longer identifiers that merely end in the same letters (`xns::T`) alone.
+fn strip_qualifier(text: &str, prefix: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find(prefix) {
+        let before = rest[..i].chars().next_back().or(out.chars().next_back());
+        out.push_str(&rest[..i]);
+        if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':') {
+            out.push_str(prefix);
+        }
+        rest = &rest[i + prefix.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn label(parts: &[PartT]) -> String {
     parts
         .iter()
@@ -729,6 +746,16 @@ impl Checker {
                 ret: Some(d.ret.to_string()),
             });
         types.extend(fns);
+        // Inside `ns`, references to its own types need no `ns::` qualifier.
+        if ns.is_some() {
+            for s in &mut types {
+                s.name = strip_qualifier(&s.name, &prefix);
+                s.ret = s.ret.as_deref().map(|r| strip_qualifier(r, &prefix));
+                for m in &mut s.members {
+                    m.signature = strip_qualifier(&m.signature, &prefix);
+                }
+            }
+        }
         Ok(types)
     }
 
@@ -2142,5 +2169,20 @@ impl Checker {
             msg.push_str(&format!(" Similar signatures: {}", cands.join(" | ")));
         }
         Diag::new(span, msg)
+    }
+}
+
+#[cfg(test)]
+mod strip_qualifier_tests {
+    use super::strip_qualifier;
+
+    #[test]
+    fn strips_only_whole_qualifiers() {
+        assert_eq!(
+            strip_qualifier("find (root: String) with (options: fd::Options)", "fd::"),
+            "find (root: String) with (options: Options)"
+        );
+        assert_eq!(strip_qualifier("List (fd::Entry)", "fd::"), "List (Entry)");
+        assert_eq!(strip_qualifier("xfd::T and a::fd::T", "fd::"), "xfd::T and a::fd::T");
     }
 }
