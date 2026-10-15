@@ -10,7 +10,7 @@
 
 NAMESPACE sed
 
-// Which lines an edit applies to.
+/// Which lines an edit applies to.
 ENUM Scope { every line, line (Int), from line (Int) to line (Int), last line, matching (String) }
 
 ENUM Edit {

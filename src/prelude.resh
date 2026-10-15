@@ -2,8 +2,8 @@
 
 ENUM Sort Key { name, size, modified time, extension, unsorted }
 
-// Mirrors `ls`: recursive = -R, include hidden file = -A, directory itself = -d,
-// reverse = -r, follow symlink = -L, sort by = (-S | -t | -X | -U; default by name).
+/// Mirrors `ls`: recursive = -R, include hidden file = -A, directory itself = -d,
+/// reverse = -r, follow symlink = -L, sort by = (-S | -t | -X | -U; default by name).
 RECORD List Options {
     recursive (Boolean DEFAULT false),
     include hidden file (Boolean DEFAULT false),
@@ -15,8 +15,8 @@ RECORD List Options {
 
 ENUM Entry Kind { file, directory, symlink }
 
-// Every field `ls -l -i -s` can show; times are Unix seconds, `size` is bytes (0 for non-files).
-// Read it with a single-case MATCH.
+/// Every field `ls -l -i -s` can show; times are Unix seconds, `size` is bytes (0 for non-files).
+/// Read it with a single-case MATCH.
 RECORD Entry {
     path (String),
     kind (Entry Kind),
@@ -58,8 +58,8 @@ FUNCTION (a: T) equals (b: T): Boolean { NATIVE "equals" }
 FUNCTION unwrap (result: Result (T) Or (E)): T { NATIVE "unwrap" }
 FUNCTION human size of (bytes: Int): String { NATIVE "human_size" }
 
-// Units. `Size` is held in bytes and `Duration` in seconds; construct them only
-// with the suffix functions below (`1 mb`, `5 days`), read them with the accessors.
+/// Units. `Size` is held in bytes and `Duration` in seconds; construct them only
+/// with the suffix functions below (`1 mb`, `5 days`), read them with the accessors.
 RECORD Size { byte count (Int) }
 RECORD Duration { second count (Int) }
 

@@ -118,7 +118,7 @@ pub fn lex(src: &str) -> Res<Vec<Token>> {
     lex_with_docs(src).map(|(toks, _)| toks)
 }
 
-/// Like `lex`, and also returns doc comments: a run of `//` lines, each alone
+/// Like `lex`, and also returns doc comments: a run of `///` lines, each alone
 /// on its line, directly above a token (no blank line between), keyed by that
 /// token's line. The parser attaches them to the declaration starting there.
 pub fn lex_with_docs(src: &str) -> Res<(Vec<Token>, HashMap<usize, String>)> {
@@ -156,6 +156,10 @@ pub fn lex_with_docs(src: &str) -> Res<(Vec<Token>, HashMap<usize, String>)> {
             '/' if lx.peek2() == Some('/') => {
                 lx.bump();
                 lx.bump();
+                let is_doc = lx.peek() == Some('/');
+                if is_doc {
+                    lx.bump();
+                }
                 let mut text = String::new();
                 while let Some(ch) = lx.peek() {
                     if ch == '\n' {
@@ -165,10 +169,10 @@ pub fn lex_with_docs(src: &str) -> Res<(Vec<Token>, HashMap<usize, String>)> {
                     lx.bump();
                 }
                 let alone = out.last().is_none_or(|t| t.span.line != span.line);
-                if !alone || (!run.is_empty() && span.line != run_end + 1) {
+                if !is_doc || !alone || (!run.is_empty() && span.line != run_end + 1) {
                     run.clear();
                 }
-                if alone {
+                if is_doc && alone {
                     let text = text.strip_prefix(' ').unwrap_or(&text);
                     run.push(text.trim_end().to_string());
                     run_end = span.line;

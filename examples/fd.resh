@@ -2,8 +2,8 @@
 
 NAMESPACE fd
 
-// Alternatives that exclude each other are one variant, so the set's
-// duplicate check rejects `{ case (fd::sensitive), case (fd::insensitive) }` for free.
+/// Alternatives that exclude each other are one variant, so the set's
+/// duplicate check rejects `{ case (fd::sensitive), case (fd::insensitive) }` for free.
 ENUM Match Mode { regex, glob, fixed string }
 ENUM Case Mode { smart, sensitive, insensitive }
 
@@ -25,7 +25,7 @@ ENUM Find Option {
     changed before (Duration)
 }
 
-// One arm per option; this is the entire translation to fd's command line.
+/// One arm per option; this is the entire translation to fd's command line.
 FUNCTION (option: Find Option) argument: List (String) {
     MATCH option {
         match (regex) => [],

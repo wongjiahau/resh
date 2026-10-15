@@ -420,9 +420,9 @@ and functions with their signatures. Start `resh --json` for one JSON
 object instead of text. An unknown namespace is an error on stderr that lists
 the declared ones.
 
-`//` comment lines directly above a `FUNCTION`, `RECORD` or `ENUM` (no blank
+`///` comment lines directly above a `FUNCTION`, `RECORD` or `ENUM` (no blank
 line between) are its docs, and `:symbols` shows them. In the REPL a
-comment-only line waits for the declaration below it. `NAMESPACE` applies per
+comment-only `///` line waits for the declaration below it. `NAMESPACE` applies per
 REPL entry, so put it on the same line as the declaration:
 `NAMESPACE demo; ENUM Mode { fast, slow }`.
 

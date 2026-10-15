@@ -21,7 +21,7 @@ fn is_incomplete(src: &str) -> bool {
             // A comment-only entry waits for the declaration it documents.
             depth > 0
                 || (toks.iter().all(|t| matches!(t.tok, Tok::Eof))
-                    && src.lines().any(|l| l.trim_start().starts_with("//")))
+                    && src.lines().any(|l| l.trim_start().starts_with("///")))
         }
         Err(d) => d.msg.starts_with("unterminated"),
     }
@@ -163,9 +163,9 @@ fn render_symbols_text(ns: Option<&str>, syms: &[Symbol]) -> String {
         if let Some(doc) = &s.doc {
             for l in doc.lines() {
                 out.push(if l.is_empty() {
-                    "  //".into()
+                    "  ///".into()
                 } else {
-                    format!("  // {l}")
+                    format!("  /// {l}")
                 });
             }
         }
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn text_output() {
-        let want = "fd\n  // Search \"options\".\n  // Second line\n  record  Options\n            hidden (Boolean DEFAULT false)\n  enum    Match Kind\n            exact\n            glob (pattern: String)\n  fn      find (root: String) -> List (Entry)";
+        let want = "fd\n  /// Search \"options\".\n  /// Second line\n  record  Options\n            hidden (Boolean DEFAULT false)\n  enum    Match Kind\n            exact\n            glob (pattern: String)\n  fn      find (root: String) -> List (Entry)";
         assert_eq!(render_symbols(Some("fd"), &sample(), false), want);
         assert_eq!(render_symbols(None, &[], false), "prelude");
     }

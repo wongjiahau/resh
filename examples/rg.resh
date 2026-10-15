@@ -26,7 +26,7 @@ ENUM Search Option {
     after context (Int)                  // --after-context
 }
 
-// One arm per option; this is the entire translation to rg's command line.
+/// One arm per option; this is the entire translation to rg's command line.
 FUNCTION (option: Search Option) argument: List (String) {
     MATCH option {
         match (regex) => [],

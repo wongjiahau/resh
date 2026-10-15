@@ -1971,8 +1971,8 @@ mod docs {
     use resh::Session;
 
     const SRC: &str = "\
-// Adds one.
-// Second line.
+/// Adds one.
+/// Second line.
 FUNCTION bump (n: Int): Int { n }
 
 // Detached by a blank line.
@@ -1982,10 +1982,10 @@ FUNCTION lonely: Int { 1 }
 x = 1; // trailing
 FUNCTION trailing_above: Int { 2 }
 
-// A shape.
+/// A shape.
 RECORD Dot Doc { x (Int) }
 
-// Colours.
+/// Colours.
 ENUM Hue Doc { red, blue }
 
 FUNCTION plain: Int { 3 }
@@ -2093,7 +2093,7 @@ mod symbols {
     fn namespaced_listing() {
         let mut s = Session::new();
         s.run(
-            "NAMESPACE fd\n// Search mode.\nENUM Mode { regex, glob }\n// Knobs.\nRECORD Options { port (Int DEFAULT 8080) }\n// Finds.\nFUNCTION find (root: String) with (options: Options): Int { 1 }\n",
+            "NAMESPACE fd\n/// Search mode.\nENUM Mode { regex, glob }\n/// Knobs.\nRECORD Options { port (Int DEFAULT 8080) }\n/// Finds.\nFUNCTION find (root: String) with (options: Options): Int { 1 }\n",
         )
         .unwrap();
         let syms = s.symbols(Some("fd")).unwrap();
@@ -2106,7 +2106,7 @@ mod symbols {
                 (SymbolKind::Record, "Options"),
                 (
                     SymbolKind::Function,
-                    "find (root: String) with (options: fd::Options)"
+                    "find (root: String) with (options: Options)"
                 ),
             ]
         );
@@ -2200,8 +2200,8 @@ mod symbols_cli {
 
     #[test]
     fn doc_comment_lines_are_one_entry_with_their_declaration() {
-        let (out, _) = repl(&[], "// A point.\nRECORD Pt { x (Int) }\n:symbols prelude\n");
-        assert!(out.contains("  // A point.\n  record  Pt\n"), "{out}");
+        let (out, _) = repl(&[], "/// A point.\nRECORD Pt { x (Int) }\n:symbols prelude\n");
+        assert!(out.contains("  /// A point.\n  record  Pt\n"), "{out}");
     }
 }
 
