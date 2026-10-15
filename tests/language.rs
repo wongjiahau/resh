@@ -2317,3 +2317,62 @@ ENUM Shape { dot (Dot), blank }
         assert_eq!(run(src).last(), Some(&Value::Int(1)));
     }
 }
+
+// ---------- examples/sed.resh end to end ----------
+
+mod sed_example {
+    use resh::Session;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    const SED: &str = include_str!("../examples/sed.resh");
+
+    fn argv(src: &str) -> Vec<String> {
+        let calls: Rc<RefCell<Vec<(String, Vec<String>)>>> = Rc::default();
+        let seen = calls.clone();
+        let mut s = Session::new();
+        s.set_runner(Box::new(move |c, a| {
+            seen.borrow_mut().push((c.to_string(), a.to_vec()));
+            Ok(String::new())
+        }));
+        s.run(SED).unwrap_or_else(|d| panic!("sed.resh failed: {d}"));
+        s.run(src).unwrap_or_else(|d| panic!("{d}"));
+        let calls = calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "sed");
+        calls[0].1.clone()
+    }
+
+    fn expected(scripts: &[&str]) -> Vec<String> {
+        let mut v = vec!["-E".to_string()];
+        for s in scripts {
+            v.push("-e".into());
+            v.push(s.to_string());
+        }
+        v.push("f.txt".into());
+        v
+    }
+
+    #[test]
+    fn replace_all_on_every_line() {
+        assert_eq!(
+            argv(r#"sed:: { preview "f.txt" with [ in (every line) do (replace all "a/b" with "c") ] };"#),
+            expected(&["s\ta/b\tc\tg"])
+        );
+    }
+
+    #[test]
+    fn scopes_become_addresses() {
+        assert_eq!(
+            argv(
+                r#"sed:: { preview "f.txt" with [
+                    in (from line 1 to line 10) do (replace first "x" with "y"),
+                    in (matching "^#") do (delete line),
+                    in (last line) do (delete line),
+                    in (line 3) do (delete line)
+                ] };"#
+            ),
+            expected(&["1,10s\tx\ty\t", "\\\t^#\td", "$d", "3d"])
+        );
+    }
+}
