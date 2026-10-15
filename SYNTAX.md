@@ -3,6 +3,24 @@
 Design notes for the syntax. Sections marked **(planned)** are decided but not
 yet implemented. There are no open questions at the moment.
 
+## Statements
+
+The language is not whitespace-sensitive: newlines and indentation are plain
+whitespace, and a call may span lines.
+
+- Every statement ends with `;`: expression statements and `LET` bindings, at
+  the top level and in function bodies. Declarations (`FUNCTION`, `RECORD`,
+  `ENUM`, `NAMESPACE`) need no `;`, and stray `;` between statements are
+  ignored. A missing `;` is an error (the REPL supplies the last one).
+- In a block, the last expression may omit its `;`: it is then the block's
+  value (the function's return value). With a `;` the value is discarded and
+  the block is `Unit`.
+
+```
+LET files = list file in "src";
+FUNCTION answer: Int { LET x = 41; x }
+```
+
 ## Anyfix
 
 Every call-like construct (function signatures, type names, patterns, call
@@ -43,7 +61,7 @@ FUNCTION commit (message: String): Result (Commit) Or (String) { ... }
 - Everything can be namespaced: functions, types, enums, records.
 - Outside the namespace, names are qualified. Inside the file, they resolve
   unqualified.
-- There is no `USE`; callers always qualify.
+- There is no file-level `USE`; callers qualify, or open a scope block (below).
 - `::` is right associative: `a::b::c d` is `a::(b::(c d))`. The qualifier
   applies to the whole anyfix call to its right.
 - A qualifier is only valid at the head of a call (or type). Mid-run
@@ -58,9 +76,33 @@ FUNCTION commit (message: String): Result (Commit) Or (String) { ... }
   that names the namespace.
 
 ```
-git::commit "fix bug"
-LET c: git::Commit = ...
+git::commit "fix bug";
+LET c: git::Commit = ...;
 ```
+
+### Scope blocks
+
+`ns:: { statements }` opens `ns` for the statements inside: its functions,
+variants and types are written unqualified.
+
+```
+rg:: {
+    search "error" in "src" { match (whole word), case (insensitive) };
+    search "TODO";
+}
+```
+
+- The block ends at its `}`; a `;` after it is optional. Outside it, names are
+  qualified again. It works at the top level and in function bodies; as the
+  last statement of a body, its last expression is the body's value.
+- Inside, `ns` wins over names from outside: if a call fits a function of `ns`,
+  an outer function with the same shape is not considered. Outer names
+  (including the prelude) are still reachable when `ns` has no such shape, or
+  with an explicit qualifier (`other::name`).
+- Variant values need no special rule: in `{ match (whole word) }` the variant
+  resolves because the block opened `rg`.
+- Blocks nest; the innermost opened namespace wins over the outer ones.
+- The namespace must be declared, else `unknown namespace`.
 
 ## Let bindings
 
@@ -136,7 +178,8 @@ MATCH config {
   binder cannot reuse such a name). All arms nesting into one outer variant
   are checked together: a missing or repeated inner variant is an error.
 - Outside the file's namespace, a variant value is qualified like any call:
-  `{ match (fd::glob) }`. Patterns inside the file are unqualified.
+  `{ match (fd::glob) }`, or unqualified inside a scope block
+  `fd:: { ... { match (glob) } ... }`. Patterns inside the file are unqualified.
 - A function's return type may start on the line after `:`, and the `{` on
   the line after the type.
 
@@ -354,7 +397,7 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)):
 Callers:
 
 ```
-fd::find "" in "src" { extension ["rs"], max depth 3 }
+fd::find "" in "src" { extension ["rs"], max depth 3 };
 ```
 
 Language features this relies on and that may not exist yet: `flat map (items)

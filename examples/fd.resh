@@ -73,7 +73,9 @@ FUNCTION find (pattern: String): Result (List (String)) Or (String) {
 }
 
 // Usage:
-//   fd::find "main"
-//   fd::find "" in "src" { extension ["rs", "toml"], max depth 3 }
-//   fd::find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) }
-//   fd::find "*.log" in "/var" { match (fd::glob), include hidden file, exclude ["old"] }
+//   fd::find "main";
+//   fd::find "" in "src" { extension ["rs", "toml"], max depth 3 };
+//   fd:: {
+//       find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) };
+//       find "*.log" in "/var" { match (glob), include hidden file, exclude ["old"] };
+//   }

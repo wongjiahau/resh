@@ -64,26 +64,37 @@ impl Session {
         self.interp.ck.check_bodies(pending)?;
         for item in &items {
             let Item::Stmt(stmt) = item else { continue };
-            match stmt {
-                Stmt::Let(name, e, span) => {
-                    let (ir, ty) = self.interp.ck.check(e, &mut self.globals)?;
-                    let v = self
-                        .interp
-                        .eval(&ir, &mut self.env)
-                        .map_err(|m| runtime(*span, m))?;
-                    self.globals.push((name.clone(), ty));
-                    self.env.push((name.clone(), v));
+            self.exec(stmt, on_value)?;
+        }
+        Ok(())
+    }
+
+    fn exec(&mut self, stmt: &Stmt, on_value: &mut dyn FnMut(&Interp, &Value)) -> Result<(), Diag> {
+        match stmt {
+            Stmt::Let(name, e, span) => {
+                let (ir, ty) = self.interp.ck.check(e, &mut self.globals)?;
+                let v = self
+                    .interp
+                    .eval(&ir, &mut self.env)
+                    .map_err(|m| runtime(*span, m))?;
+                self.globals.push((name.clone(), ty));
+                self.env.push((name.clone(), v));
+            }
+            Stmt::Expr(e) | Stmt::Discard(e) => {
+                let (ir, _) = self.interp.ck.check(e, &mut self.globals)?;
+                let v = self
+                    .interp
+                    .eval(&ir, &mut self.env)
+                    .map_err(|m| runtime(e.span, m))?;
+                if v != Value::Unit {
+                    on_value(&self.interp, &v);
                 }
-                Stmt::Expr(e) => {
-                    let (ir, _) = self.interp.ck.check(e, &mut self.globals)?;
-                    let v = self
-                        .interp
-                        .eval(&ir, &mut self.env)
-                        .map_err(|m| runtime(e.span, m))?;
-                    if v != Value::Unit {
-                        on_value(&self.interp, &v);
-                    }
-                }
+            }
+            Stmt::Scope(ns, inner, span) => {
+                self.interp.ck.open_scope(ns, *span)?;
+                let result = inner.iter().try_for_each(|s| self.exec(s, on_value));
+                self.interp.ck.close_scope();
+                result?;
             }
         }
         Ok(())

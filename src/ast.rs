@@ -71,6 +71,11 @@ pub enum Decl {
 pub enum Stmt {
     Let(String, Expr, Span),
     Expr(Expr),
+    /// `expr;` as the last statement of a block: evaluated, value discarded.
+    Discard(Expr),
+    /// `ns:: { stmts }`: inside, calls and types of `ns` resolve unqualified
+    /// and win over names from outside.
+    Scope(String, Vec<Stmt>, Span),
 }
 
 #[derive(Debug, Clone)]

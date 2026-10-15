@@ -10,7 +10,9 @@ pub fn parse_program(src: &str) -> Res<Vec<Item>> {
     let mut p = Parser { t: toks, p: 0 };
     let mut items: Vec<Item> = Vec::new();
     loop {
-        p.skip_nl();
+        while matches!(p.peek(), Tok::Semi) {
+            p.bump();
+        }
         match p.peek() {
             Tok::Eof => break,
             Tok::Kw(k) if k == "NAMESPACE" => {
@@ -37,8 +39,9 @@ pub fn parse_program(src: &str) -> Res<Vec<Item>> {
                 items.push(Item::Decl(p.parse_decl()?));
             }
             _ => {
-                items.push(Item::Stmt(p.parse_stmt()?));
-                p.end_of_stmt()?;
+                let stmt = p.parse_stmt()?;
+                p.end_of_stmt(&stmt)?;
+                items.push(Item::Stmt(stmt));
             }
         }
     }
@@ -72,7 +75,7 @@ fn describe(t: &Tok) -> String {
         Tok::Pipe => "`|>`".into(),
         Tok::Eq => "`=`".into(),
         Tok::Underscore => "`_`".into(),
-        Tok::Newline => "end of line".into(),
+        Tok::Semi => "`;`".into(),
         Tok::Eof => "end of input".into(),
     }
 }
@@ -90,8 +93,6 @@ enum Anyfix<S, A> {
 struct AnyfixRules {
     /// Every word must start uppercase (type names).
     capitalized: bool,
-    /// Newlines between parts are insignificant (inside delimiters).
-    skip_newlines: bool,
 }
 
 fn capitalize(w: &str) -> String {
@@ -118,11 +119,6 @@ impl Parser {
         t
     }
 
-    fn skip_nl(&mut self) {
-        while matches!(self.peek(), Tok::Newline) {
-            self.bump();
-        }
-    }
 
     fn err<T>(&self, what: &str) -> Res<T> {
         Err(Diag::new(
@@ -139,20 +135,24 @@ impl Parser {
         }
     }
 
-    fn end_of_stmt(&mut self) -> Res<()> {
+    /// Every statement ends with `;`. A scope block `ns:: { ... }` is closed by
+    /// its `}` and may omit it. Returns whether a `;` was consumed.
+    fn end_of_stmt(&mut self, stmt: &Stmt) -> Res<bool> {
         match self.peek() {
-            Tok::Newline | Tok::Eof | Tok::RBrace => Ok(()),
+            Tok::Semi => {
+                self.bump();
+                Ok(true)
+            }
+            _ if matches!(stmt, Stmt::Scope(..)) => Ok(false),
             other => Err(Diag::new(
                 self.span(),
                 format!(
-                    "unexpected {} after the end of an expression; put each statement on its own line, and wrap nested calls in parentheses",
+                    "expected `;` to end the statement, found {}; every statement ends with `;`, and nested calls need parentheses",
                     describe(other)
                 ),
             )),
         }
     }
-
-    // ---------- declarations ----------
 
     fn parse_decl(&mut self) -> Res<Decl> {
         let kw = self.bump();
@@ -179,21 +179,17 @@ impl Parser {
                 let sig = self.parse_sig(false)?;
                 let ret = if matches!(self.peek(), Tok::Colon) {
                     self.bump();
-                    self.skip_nl();
                     Some(self.parse_type()?)
                 } else {
                     None
                 };
-                self.skip_nl();
                 self.expect(Tok::LBrace, "`{` to start the function body")?;
-                self.skip_nl();
                 let body = if matches!(self.peek(), Tok::Kw(k) if k == "NATIVE") {
                     self.bump();
                     let Tok::Str(name) = self.peek().clone() else {
                         return self.err("a native function name string");
                     };
                     self.bump();
-                    self.skip_nl();
                     self.expect(Tok::RBrace, "`}`")?;
                     FnBody::Native(name)
                 } else {
@@ -206,7 +202,6 @@ impl Parser {
                 self.expect(Tok::LBrace, "`{` after the record name")?;
                 let mut fields = Vec::new();
                 loop {
-                    self.skip_nl();
                     if matches!(self.peek(), Tok::RBrace) {
                         self.bump();
                         break;
@@ -221,7 +216,6 @@ impl Parser {
                 self.expect(Tok::LBrace, "`{` after the enum name")?;
                 let mut variants = Vec::new();
                 loop {
-                    self.skip_nl();
                     if matches!(self.peek(), Tok::RBrace) {
                         self.bump();
                         break;
@@ -277,12 +271,12 @@ impl Parser {
 
     fn field_sep(&mut self) -> Res<()> {
         match self.peek() {
-            Tok::Comma | Tok::Newline => {
+            Tok::Comma => {
                 self.bump();
                 Ok(())
             }
             Tok::RBrace => Ok(()),
-            _ => self.err("`,`, a new line or `}`"),
+            _ => self.err("`,` or `}`"),
         }
     }
 
@@ -295,9 +289,6 @@ impl Parser {
         slot: &mut impl FnMut(&mut Self) -> Res<S>,
         atom: &mut impl FnMut(&mut Self) -> Res<Option<A>>,
     ) -> Res<Option<Anyfix<S, A>>> {
-        if rules.skip_newlines {
-            self.skip_nl();
-        }
         let span = self.span();
         match self.peek().clone() {
             Tok::Word(w) => {
@@ -512,23 +503,45 @@ impl Parser {
     // ---------- statements & expressions ----------
 
     /// Parses statements until the closing `}` (consumed).
+    /// A block's last expression is its value unless it ends with `;`, which
+    /// discards it.
     fn parse_block(&mut self) -> Res<Vec<Stmt>> {
         let mut stmts = Vec::new();
+        let mut terminated = false;
         loop {
-            self.skip_nl();
+            while matches!(self.peek(), Tok::Semi) {
+                self.bump();
+            }
             if matches!(self.peek(), Tok::RBrace) {
                 self.bump();
+                if terminated && let Some(Stmt::Expr(e)) = stmts.pop() {
+                    stmts.push(Stmt::Discard(e));
+                }
                 return Ok(stmts);
             }
             if matches!(self.peek(), Tok::Eof) {
                 return self.err("`}` to close the block");
             }
-            stmts.push(self.parse_stmt()?);
-            self.end_of_stmt()?;
+            let stmt = self.parse_stmt()?;
+            terminated = if matches!(self.peek(), Tok::RBrace) && !matches!(stmt, Stmt::Let(..)) {
+                false
+            } else {
+                self.end_of_stmt(&stmt)?
+            };
+            stmts.push(stmt);
         }
     }
 
     fn parse_stmt(&mut self) -> Res<Stmt> {
+        if let Tok::Word(ns) = self.peek().clone()
+            && matches!(self.t.get(self.p + 1).map(|t| &t.tok), Some(Tok::ColonColon))
+            && matches!(self.t.get(self.p + 2).map(|t| &t.tok), Some(Tok::LBrace))
+        {
+            let span = self.bump().span;
+            self.bump();
+            self.bump();
+            return Ok(Stmt::Scope(ns, self.parse_block()?, span));
+        }
         if matches!(self.peek(), Tok::Kw(k) if k == "LET") {
             let span = self.bump().span;
             let Tok::Word(name) = self.peek().clone() else {
@@ -546,7 +559,7 @@ impl Parser {
                 return self.err("`=` (variable names are a single word)");
             }
             self.bump();
-            let mut e = self.parse_pipeline(true)?;
+            let mut e = self.parse_pipeline()?;
             if let Some(ty) = ty {
                 e = Expr {
                     k: ExprKind::Ascribe(Box::new(e), ty),
@@ -555,22 +568,18 @@ impl Parser {
             }
             Ok(Stmt::Let(name, e, span))
         } else {
-            Ok(Stmt::Expr(self.parse_pipeline(true)?))
+            Ok(Stmt::Expr(self.parse_pipeline()?))
         }
     }
 
-    /// `nl`: a newline ends the expression (statement level). Inside
-    /// delimiters newlines are insignificant.
-    fn parse_pipeline(&mut self, nl: bool) -> Res<Expr> {
-        let mut e = self.parse_seq(nl)?;
+    fn parse_pipeline(&mut self) -> Res<Expr> {
+        let mut e = self.parse_seq()?;
         e = self.parse_ascription(e)?;
         loop {
             let save = self.p;
-            self.skip_nl();
             if matches!(self.peek(), Tok::Pipe) {
                 let span = self.bump().span;
-                self.skip_nl();
-                let r = self.parse_seq(nl)?;
+                let r = self.parse_seq()?;
                 let r = self.parse_ascription(r)?;
                 e = Expr {
                     k: ExprKind::Pipe(Box::new(e), Box::new(r)),
@@ -597,23 +606,16 @@ impl Parser {
         })
     }
 
-    fn parse_seq(&mut self, nl: bool) -> Res<Expr> {
-        if !nl {
-            self.skip_nl();
-        }
+    fn parse_seq(&mut self) -> Res<Expr> {
         let span = self.span();
         match self.peek() {
-            Tok::Kw(k) if k == "IF" => return self.parse_if(nl),
+            Tok::Kw(k) if k == "IF" => return self.parse_if(),
             Tok::Kw(k) if k == "MATCH" => return self.parse_match(),
             _ => {}
         }
         let quals = self.parse_qualifiers();
-        let rules = AnyfixRules {
-            skip_newlines: !nl,
-            ..Default::default()
-        };
         let mut items: Vec<SeqItem> = self
-            .parse_anyfix(rules, Self::expr_slot, Self::expr_atom)?
+            .parse_anyfix(AnyfixRules::default(), Self::expr_slot, Self::expr_atom)?
             .into_iter()
             .map(Self::seq_item)
             .collect();
@@ -646,54 +648,45 @@ impl Parser {
         Ok(e)
     }
 
-    fn parse_if(&mut self, nl: bool) -> Res<Expr> {
+    fn parse_if(&mut self) -> Res<Expr> {
         let span = self.bump().span;
-        let cond = self.parse_pipeline(false)?;
-        self.skip_nl();
+        let cond = self.parse_pipeline()?;
         if !matches!(self.peek(), Tok::Kw(k) if k == "THEN") {
             return self.err("`THEN`");
         }
         self.bump();
-        let then = self.parse_pipeline(false)?;
-        self.skip_nl();
+        let then = self.parse_pipeline()?;
         if !matches!(self.peek(), Tok::Kw(k) if k == "ELSE") {
             return self.err("`ELSE`");
         }
         self.bump();
-        let els = self.parse_pipeline_branch(nl)?;
+        let els = self.parse_pipeline()?;
         Ok(Expr {
             k: ExprKind::If(Box::new(cond), Box::new(then), Box::new(els)),
             span,
         })
     }
 
-    fn parse_pipeline_branch(&mut self, nl: bool) -> Res<Expr> {
-        self.parse_pipeline(nl)
-    }
-
     fn parse_match(&mut self) -> Res<Expr> {
         let span = self.bump().span;
         let scrut = self.single_operand("a single token or parenthesised expression after MATCH")?;
-        self.skip_nl();
         self.expect(Tok::LBrace, "`{` after the MATCH subject")?;
         let mut arms = Vec::new();
         loop {
-            self.skip_nl();
             while matches!(self.peek(), Tok::Comma) {
                 self.bump();
-                self.skip_nl();
             }
             if matches!(self.peek(), Tok::RBrace) {
                 self.bump();
                 break;
             }
             let aspan = self.span();
-            let pat = self.parse_pattern(false)?;
+            let pat = self.parse_pattern()?;
             if pat.is_empty() {
                 return self.err("a pattern");
             }
             self.expect(Tok::Arrow, "`=>`")?;
-            let body = self.parse_pipeline(true)?;
+            let body = self.parse_pipeline()?;
             arms.push(Arm {
                 pat,
                 body,
@@ -707,15 +700,12 @@ impl Parser {
     }
 
     /// A MATCH pattern: words, `(name)` binders, `_`, or a `{ … }` record pattern.
-    fn parse_pattern(&mut self, skip_newlines: bool) -> Res<Vec<PatItem>> {
+    fn parse_pattern(&mut self) -> Res<Vec<PatItem>> {
         Ok(self
             .parse_anyfix(
-                AnyfixRules {
-                    skip_newlines,
-                    ..Default::default()
-                },
+                AnyfixRules::default(),
                 |p| {
-                    let mut inner = p.parse_pattern(true)?;
+                    let mut inner = p.parse_pattern()?;
                     match inner.as_mut_slice() {
                         [] => p.err("a variable name to bind"),
                         [PatItem::Word(w)] => Ok(PatItem::Bind(std::mem::take(w))),
@@ -746,17 +736,15 @@ impl Parser {
         self.bump();
         let mut entries = Vec::new();
         loop {
-            self.skip_nl();
             if matches!(self.peek(), Tok::RBrace) {
                 self.bump();
                 return Ok(entries);
             }
-            let entry = self.parse_pattern(true)?;
+            let entry = self.parse_pattern()?;
             if entry.is_empty() {
                 return self.err("a field pattern");
             }
             entries.push(entry);
-            self.skip_nl();
             if matches!(self.peek(), Tok::Comma) {
                 self.bump();
             } else if !matches!(self.peek(), Tok::RBrace) {
@@ -802,8 +790,7 @@ impl Parser {
     }
 
     fn slot_element(&mut self) -> Res<Expr> {
-        let e = self.parse_pipeline(false)?;
-        self.skip_nl();
+        let e = self.parse_pipeline()?;
         if matches!(self.peek(), Tok::Arrow) {
             return self.lambda(e);
         }
@@ -829,9 +816,7 @@ impl Parser {
             ));
         };
         self.expect(Tok::Arrow, "`=>`")?;
-        self.skip_nl();
-        let body = self.parse_pipeline(false)?;
-        self.skip_nl();
+        let body = self.parse_pipeline()?;
         Ok(Expr {
             k: ExprKind::Lambda(name, Box::new(body)),
             span,
@@ -870,7 +855,6 @@ impl Parser {
                 self.bump();
                 let mut xs = Vec::new();
                 loop {
-                    self.skip_nl();
                     if matches!(self.peek(), Tok::RBracket) {
                         self.bump();
                         break;
@@ -885,9 +869,8 @@ impl Parser {
                             span: sspan,
                         });
                     } else {
-                        xs.push(self.parse_pipeline(false)?);
+                        xs.push(self.parse_pipeline()?);
                     }
-                    self.skip_nl();
                     if matches!(self.peek(), Tok::Comma) {
                         self.bump();
                     } else if !matches!(self.peek(), Tok::RBracket) {
@@ -900,7 +883,6 @@ impl Parser {
                 self.bump();
                 let mut fields = Vec::new();
                 loop {
-                    self.skip_nl();
                     if matches!(self.peek(), Tok::RBrace) {
                         self.bump();
                         break;
@@ -908,10 +890,7 @@ impl Parser {
                     let espan = self.span();
                     let items: Vec<SeqItem> = self
                         .parse_anyfix(
-                            AnyfixRules {
-                                skip_newlines: true,
-                                ..Default::default()
-                            },
+                            AnyfixRules::default(),
                             Self::expr_slot,
                             Self::expr_atom,
                         )?
@@ -922,7 +901,6 @@ impl Parser {
                         return self.err("a field entry");
                     }
                     fields.push(BraceEntry { items, span: espan });
-                    self.skip_nl();
                     if matches!(self.peek(), Tok::Comma) {
                         self.bump();
                     } else if !matches!(self.peek(), Tok::RBrace) {

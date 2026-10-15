@@ -50,7 +50,8 @@ pub fn run(json: bool) {
             prompt(true);
             continue;
         }
-        let src = std::mem::take(&mut buf);
+        // The REPL supplies the final `;`, so a one-line entry can omit it.
+        let src = std::mem::take(&mut buf) + ";";
         if !src.trim().is_empty() {
             let result = session.run_with(&src, &mut |interp, v| {
                 println!("{}", interp.render(v, json))

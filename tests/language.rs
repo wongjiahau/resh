@@ -39,7 +39,7 @@ FUNCTION describe (s: Shape): String {
 
 #[test]
 fn anyfix_constructors_and_match() {
-    let src = format!("{SHAPES}\ndescribe (3.0 by 4.0)\ndescribe (circle 1.0)\ndescribe empty");
+    let src = format!("{SHAPES}\ndescribe (3.0 by 4.0);\ndescribe (circle 1.0);\ndescribe empty;");
     assert_eq!(
         run(&src),
         vec![
@@ -67,10 +67,10 @@ RECORD Job {
     retries (Int DEFAULT 3),
     dry run (Boolean DEFAULT false)
 }
-LET j: Job = { name "build", dry run }
-MATCH j { { name (n), retries (_), dry run (_) } => n }
-MATCH j { { name (_), retries (r), dry run (_) } => r }
-MATCH j { { name (_), retries (_), dry run (d) } => d }
+LET j: Job = { name "build", dry run };
+MATCH j { { name (n), retries (_), dry run (_) } => n };
+MATCH j { { name (_), retries (r), dry run (_) } => r };
+MATCH j { { name (_), retries (_), dry run (d) } => d };
 "#;
     assert_eq!(
         run(src),
@@ -86,10 +86,10 @@ RECORD Person {
     age (Int),
     between (Int) and (Int)
 }
-LET p: Person = { "Ada" 's name, age 36, between 1 and 5 }
-MATCH p { { (a) 's name, age (_), between (_) and (_) } => a }
-MATCH p { { (_) 's name, age (g), between (lo) and (hi) } => g }
-MATCH p { { (_) 's name, age (_), between (lo) and (hi) } => hi }
+LET p: Person = { "Ada" 's name, age 36, between 1 and 5 };
+MATCH p { { (a) 's name, age (_), between (_) and (_) } => a };
+MATCH p { { (_) 's name, age (g), between (lo) and (hi) } => g };
+MATCH p { { (_) 's name, age (_), between (lo) and (hi) } => hi };
 "#;
     assert_eq!(
         run(src),
@@ -99,8 +99,8 @@ MATCH p { { (_) 's name, age (_), between (lo) and (hi) } => hi }
 
 #[test]
 fn pipe_requires_exactly_one_placeholder() {
-    assert!(run_err(r#"list file {} |> unwrap (_) |> count (3)"#).contains("exactly one `_`"));
-    assert!(run_err(r#"count (_)"#).contains("`_` can only be used"));
+    assert!(run_err(r#"list file {} |> unwrap (_) |> count (3);"#).contains("exactly one `_`"));
+    assert!(run_err(r#"count (_);"#).contains("`_` can only be used"));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn user_function_with_infix_signature_and_generics() {
 FUNCTION (a: List (T)) has more than (b: List (T)): Boolean {
     IF (count a) equals (count b) THEN false ELSE true
 }
-[1, 2, 3] has more than [1]
+[1, 2, 3] has more than [1];
 "#;
     // `(count a) equals (count b)` is not Int-comparable via `>`; here we only
     // check that generics unify and the call resolves.
@@ -118,7 +118,7 @@ FUNCTION (a: List (T)) has more than (b: List (T)): Boolean {
 
 #[test]
 fn unknown_name_lists_variables_in_scope() {
-    let msg = run_err("LET x = 1\ncount y");
+    let msg = run_err("LET x = 1;\ncount y;");
     assert!(msg.contains("unknown name `y`"), "{msg}");
     assert!(msg.contains("x"), "{msg}");
 }
@@ -137,7 +137,7 @@ fn overlapping_signatures_are_rejected() {
 #[test]
 fn nested_calls_need_parentheses() {
     // `count list file {}` is not a single call: arguments are single tokens.
-    let msg = run_err("count list file {}");
+    let msg = run_err("count list file {};");
     assert!(msg.contains("no function matches"), "{msg}");
 }
 
@@ -156,7 +156,7 @@ FUNCTION sum (t: Triple): Int { 3 }
 #[test]
 fn overload_is_chosen_by_argument_types() {
     let src = format!(
-        "{OVERLOADS}\ndescribe 1\ndescribe true\ndescribe [\"a\"]\ndescribe []\ndescribe {{ items [1] }}"
+        "{OVERLOADS}\ndescribe 1;\ndescribe true;\ndescribe [\"a\"];\ndescribe [];\ndescribe {{ items [1] }};"
     );
     let want: Vec<Value> = ["int", "boolean", "list", "list", "bag"]
         .iter()
@@ -167,7 +167,7 @@ fn overload_is_chosen_by_argument_types() {
 
 #[test]
 fn failed_overload_lists_argument_types_and_candidates() {
-    let msg = run_err(&format!("{OVERLOADS}\ndescribe \"hi\""));
+    let msg = run_err(&format!("{OVERLOADS}\ndescribe \"hi\";"));
     assert!(msg.contains("no overload of `describe <arg>`"), "{msg}");
     assert!(msg.contains("argument types (String)"), "{msg}");
     assert!(
@@ -179,7 +179,7 @@ fn failed_overload_lists_argument_types_and_candidates() {
 
 #[test]
 fn record_literal_picks_the_only_record_it_fits() {
-    let src = format!("{OVERLOADS}\nsum {{ left 1, right 2 }}\nsum {{ left 1, right 2, extra 3 }}");
+    let src = format!("{OVERLOADS}\nsum {{ left 1, right 2 }};\nsum {{ left 1, right 2, extra 3 }};");
     assert_eq!(run(&src), vec![Value::Int(1), Value::Int(3)]);
 }
 
@@ -191,20 +191,20 @@ RECORD Banana { x (Int) }
 FUNCTION f (a: Apple): Int { 1 }
 FUNCTION f (b: Banana): Int { 2 }
 "#;
-    let msg = run_err(&format!("{src}\nf {{ x 1 }}"));
+    let msg = run_err(&format!("{src};\nf {{ x 1 }};"));
     assert!(msg.contains("ambiguous call"), "{msg}");
     assert!(msg.contains("{ ... } : Record Name"), "{msg}");
     assert_eq!(
-        run(&format!("{src}\nf ({{ x 1 }} : Banana)")),
+        run(&format!("{src};\nf ({{ x 1 }} : Banana);")),
         vec![Value::Int(2)]
     );
 }
 
 #[test]
 fn bare_record_literal_has_no_type_of_its_own() {
-    let msg = run_err("LET x = { a 1 }");
+    let msg = run_err("LET x = { a 1 };");
     assert!(msg.contains("annotate it"), "{msg}");
-    let msg = run_err("RECORD Apple { x (Int) }\nLET x = { y 1 } : Apple");
+    let msg = run_err("RECORD Apple { x (Int) }\nLET x = { y 1 } : Apple;");
     assert!(msg.contains("has no field `y (Int)`"), "{msg}");
     assert!(msg.contains("its fields are: x (Int)"), "{msg}");
 }
@@ -214,14 +214,14 @@ fn omitted_fields_need_a_default() {
     let decl = "RECORD Job { name (String), retries (Int DEFAULT 3) }\n";
     let get = "FUNCTION retries (j: Job): Int { MATCH j { { name (_), retries (r) } => r } }\n";
     assert_eq!(
-        run(&format!("{decl}{get}retries {{ name \"b\" }}")),
+        run(&format!("{decl}{get}retries {{ name \"b\" }};")),
         vec![Value::Int(3)]
     );
     assert_eq!(
-        run(&format!("{decl}{get}retries {{ name \"b\", retries 9 }}")),
+        run(&format!("{decl}{get}retries {{ name \"b\", retries 9 }};")),
         vec![Value::Int(9)]
     );
-    let msg = run_err(&format!("{decl}{get}retries {{ retries 9 }}"));
+    let msg = run_err(&format!("{decl}{get}retries {{ retries 9 }};"));
     assert!(
         msg.contains("missing required field `name (String)`"),
         "{msg}"
@@ -231,11 +231,11 @@ fn omitted_fields_need_a_default() {
 #[test]
 fn no_coercions_and_empty_values_fit_anywhere() {
     // A String is not a Path-like thing: functions just take String.
-    run("read file \"nope.txt\"");
+    run("read file \"nope.txt\";");
     // `none` and `[]` are subtypes of every Option / List.
-    run("count []");
-    run("LET x = IF true THEN (some 1) ELSE none\nx");
-    let msg = run_err("IF true THEN 1 ELSE \"a\"");
+    run("count [];");
+    run("LET x = IF true THEN (some 1) ELSE none;\nx;");
+    let msg = run_err("IF true THEN 1 ELSE \"a\";");
     assert!(msg.contains("IF branches must have the same type"), "{msg}");
 }
 
@@ -247,9 +247,9 @@ fn file_roundtrip() {
     let b = dir.join("b.txt");
     let src = format!(
         r#"
-write "hello" to file {a:?}
-move {a:?} to {b:?}
-read file {b:?}
+write "hello" to file {a:?};
+move {a:?} to {b:?};
+read file {b:?};
 "#
     );
     let vs = run(&src);
@@ -270,7 +270,7 @@ fn list_file_has_ls_parity_options() {
     std::fs::write(dir.join("sub").join("deep.txt"), "d").unwrap();
     let d = format!("{:?}", dir.to_string_lossy());
     let names = |opts: &str| -> Vec<String> {
-        let src = format!("list file in {d} {opts} |> unwrap (_)");
+        let src = format!("list file in {d} {opts} |> unwrap (_);");
         let Value::List(xs) = run(&src).pop().unwrap() else {
             panic!("not a list")
         };
@@ -293,7 +293,7 @@ fn list_file_has_ls_parity_options() {
         ["a.rs", "big.txt", "sub", "deep.txt"]
     );
     assert_eq!(names("{ directory itself }").len(), 1);
-    assert_eq!(render("human size of 2048"), "\"2.0K\"");
+    assert_eq!(render("human size of 2048;"), "\"2.0K\"");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -364,7 +364,7 @@ mod qualifiers {
     }
 
     fn check_err(src: &str) -> Diag {
-        Session::new().run(src).expect_err("expected an error")
+        Session::new().run(src).expect_err("expected an error;")
     }
 
     #[test]
@@ -393,7 +393,7 @@ mod qualifiers {
     #[test]
     fn qualified_function_call() {
         assert_eq!(
-            shape(&only_expr(r#"git::commit "x""#)),
+            shape(&only_expr(r#"git::commit "x";"#)),
             r#"git::(commit "x")"#
         );
     }
@@ -401,24 +401,24 @@ mod qualifiers {
     #[test]
     fn qualifier_covers_the_whole_call_to_its_right() {
         assert_eq!(
-            shape(&only_expr(r#"fd::find "" in "src" {}"#)),
+            shape(&only_expr(r#"fd::find "" in "src" {};"#)),
             r#"fd::(find "" in "src" {})"#
         );
     }
 
     #[test]
     fn qualifiers_are_right_associative() {
-        assert_eq!(shape(&only_expr("a::b::c d")), "a::(b::(c d))");
+        assert_eq!(shape(&only_expr("a::b::c d;")), "a::(b::(c d))");
     }
 
     #[test]
     fn qualified_infix_call_puts_the_qualifier_first() {
-        assert_eq!(shape(&only_expr("fd::(x) argument")), "fd::(x argument)");
+        assert_eq!(shape(&only_expr("fd::(x) argument;")), "fd::(x argument)");
     }
 
     #[test]
     fn qualified_type_in_let_annotation() {
-        let (value, ty) = only_let_ascription("LET c: git::Commit = make commit");
+        let (value, ty) = only_let_ascription("LET c: git::Commit = make commit;");
         assert_eq!(ty.qualifiers, vec!["git".to_string()]);
         assert_eq!(ty.name, "Commit");
         assert!(ty.args.is_empty());
@@ -427,7 +427,7 @@ mod qualifiers {
 
     #[test]
     fn qualified_type_chain_inside_a_type_slot() {
-        let (_, ty) = only_let_ascription("LET c: List (a::b::Commit) = x");
+        let (_, ty) = only_let_ascription("LET c: List (a::b::Commit) = x;");
         assert_eq!(ty.name, "List _");
         assert_eq!(
             ty.args[0].qualifiers,
@@ -447,9 +447,9 @@ mod qualifiers {
 
     #[test]
     fn qualifier_must_come_first_in_a_call() {
-        let msg = parse_err("a b::c d");
+        let msg = parse_err("a b::c d;");
         assert!(msg.contains("`b::` qualifies a whole call"), "{msg}");
-        let msg = parse_err("(x) fd::argument");
+        let msg = parse_err("(x) fd::argument;");
         assert!(msg.contains("`fd::` qualifies a whole call"), "{msg}");
         let msg = parse_err("FUNCTION git::commit (m: String): Unit { m }");
         assert!(msg.contains("must come first"), "{msg}");
@@ -457,24 +457,24 @@ mod qualifiers {
 
     #[test]
     fn qualifier_needs_a_call_after_it() {
-        assert!(parse_err("a::").contains("a call after the `::` qualifier"));
+        assert!(parse_err("a::;").contains("a call after the `::` qualifier"));
     }
 
     #[test]
     fn single_colon_still_means_ascription_and_annotation() {
-        let (_, ty) = only_let_ascription("LET x: Int = 1");
+        let (_, ty) = only_let_ascription("LET x: Int = 1;");
         assert!(ty.qualifiers.is_empty());
         assert_eq!(ty.name, "Int");
         assert_eq!(
-            Session::new().run("LET x: Int = 1\nx").unwrap(),
+            Session::new().run("LET x: Int = 1;\nx;").unwrap(),
             vec![resh::Value::Int(1)]
         );
-        assert!(!check_err("LET x: String = 1").msg.is_empty());
+        assert!(!check_err("LET x: String = 1;").msg.is_empty());
     }
 
     #[test]
     fn checker_reports_unknown_namespace() {
-        let d = check_err(r#"git::commit "x""#);
+        let d = check_err(r#"git::commit "x";"#);
         assert!(
             d.msg
                 .contains("unknown namespace `git`; declared namespaces: none"),
@@ -524,27 +524,27 @@ FUNCTION find (pattern: String): Int { (helper) equals 41 |> IF _ THEN count [pa
     fn other_file_calls_namespaced_function_qualified() {
         let mut s = session_with_fd();
         assert_eq!(
-            s.run(r#"fd::find "a" in "b""#).unwrap(),
+            s.run(r#"fd::find "a" in "b";"#).unwrap(),
             vec![Value::Str("ab".into())]
         );
-        assert_eq!(s.run(r#"fd::find "a""#).unwrap(), vec![Value::Int(1)]);
+        assert_eq!(s.run(r#"fd::find "a";"#).unwrap(), vec![Value::Int(1)]);
     }
 
     #[test]
     fn unqualified_call_from_outside_is_a_clear_error() {
         let mut s = session_with_fd();
-        let msg = err(&mut s, r#"find "a" in "b""#);
+        let msg = err(&mut s, r#"find "a" in "b";"#);
         assert!(msg.contains("declared in namespace `fd`"), "{msg}");
         assert!(msg.contains(r#"`fd::find "#), "{msg}");
         // `helper` has no parameters: same hint for a bare word.
-        let msg = err(&mut s, "helper");
+        let msg = err(&mut s, "helper;");
         assert!(msg.contains("declared in namespace `fd`"), "{msg}");
     }
 
     #[test]
     fn names_inside_the_file_resolve_unqualified_and_qualified() {
         let mut s = Session::new();
-        let src = format!("{FD}\nfind \"a\"\nfd::find \"a\"");
+        let src = format!("{FD}\nfind \"a\";\nfd::find \"a\";");
         assert_eq!(s.run(&src).unwrap(), vec![Value::Int(1), Value::Int(1)]);
     }
 
@@ -553,9 +553,9 @@ FUNCTION find (pattern: String): Int { (helper) equals 41 |> IF _ THEN count [pa
         let mut s = session_with_fd();
         let src = r#"
 FUNCTION show (m: fd::Mode): Int { 1 }
-LET m: fd::Mode = fd::regex
-show m
-fd::name m
+LET m: fd::Mode = fd::regex;
+show m;
+fd::name m;
 "#;
         assert_eq!(
             s.run(src).unwrap(),
@@ -568,7 +568,7 @@ fd::name m
     #[test]
     fn unknown_namespace_lists_the_declared_ones() {
         let mut s = session_with_fd();
-        let msg = err(&mut s, r#"git::find "a""#);
+        let msg = err(&mut s, r#"git::find "a";"#);
         assert!(msg.contains("unknown namespace `git`"), "{msg}");
         assert!(msg.contains("declared namespaces: fd"), "{msg}");
     }
@@ -576,7 +576,7 @@ fd::name m
     #[test]
     fn qualified_call_only_sees_that_namespace() {
         let mut s = session_with_fd();
-        let msg = err(&mut s, r#"fd::count [1]"#);
+        let msg = err(&mut s, r#"fd::count [1];"#);
         assert!(msg.contains("no function matches"), "{msg}");
         assert!(msg.contains("in namespace `fd`"), "{msg}");
     }
@@ -584,7 +584,7 @@ fd::name m
     #[test]
     fn namespaces_do_not_nest() {
         let mut s = session_with_fd();
-        let msg = err(&mut s, r#"fd::git::find "a""#);
+        let msg = err(&mut s, r#"fd::git::find "a";"#);
         assert!(msg.contains("namespaces are not nested"), "{msg}");
     }
 
@@ -606,7 +606,7 @@ fd::name m
         let mut s = Session::new();
         s.run("// header\n\nNAMESPACE fd\nFUNCTION one: Int { 1 }")
             .unwrap();
-        assert_eq!(s.run("fd::one").unwrap(), vec![Value::Int(1)]);
+        assert_eq!(s.run("fd::one;").unwrap(), vec![Value::Int(1)]);
     }
 
     #[test]
@@ -615,7 +615,7 @@ fd::name m
         s.run("NAMESPACE a\nFUNCTION one: Int { 1 }").unwrap();
         s.run("NAMESPACE b\nFUNCTION one: Int { 2 }").unwrap();
         assert_eq!(
-            s.run("a::one\nb::one").unwrap(),
+            s.run("a::one;\nb::one;").unwrap(),
             vec![Value::Int(1), Value::Int(2)]
         );
     }
@@ -671,29 +671,29 @@ FUNCTION host name (c: Server Config): String {
 
     #[test]
     fn partial_literal_uses_the_defaults_of_omitted_fields() {
-        assert_eq!(server("port number { port 443 }"), vec![Value::Int(443)]);
+        assert_eq!(server("port number { port 443 };"), vec![Value::Int(443)]);
         assert_eq!(
-            server("host name { port 443 }"),
+            server("host name { port 443 };"),
             vec![Value::Str("localhost".into())]
         );
         assert_eq!(
-            server("host name { host \"example.com\" }"),
+            server("host name { host \"example.com\" };"),
             vec![Value::Str("example.com".into())]
         );
     }
 
     #[test]
     fn empty_literal_is_every_default() {
-        assert_eq!(server("port number {}"), vec![Value::Int(8080)]);
-        assert_eq!(server("host name {}"), vec![Value::Str("localhost".into())]);
+        assert_eq!(server("port number {};"), vec![Value::Int(8080)]);
+        assert_eq!(server("host name {};"), vec![Value::Str("localhost".into())]);
     }
 
     #[test]
     fn entry_order_is_free_and_annotation_names_the_record() {
         let src = r#"
-LET c: Server Config = { port 1, host "h" }
-MATCH c { { host (h), port (p) } => p }
-MATCH c { { port (p), host (h) } => h }
+LET c: Server Config = { port 1, host "h" };
+MATCH c { { host (h), port (p) } => p };
+MATCH c { { port (p), host (h) } => h };
 "#;
         assert_eq!(server(src), vec![Value::Int(1), Value::Str("h".into())]);
     }
@@ -701,8 +701,8 @@ MATCH c { { port (p), host (h) } => h }
     #[test]
     fn single_case_match_destructures_every_field() {
         let src = r#"
-LET c: Server Config = { port 443 }
-MATCH c { { host (h), port (p) } => [h] }
+LET c: Server Config = { port 443 };
+MATCH c { { host (h), port (p) } => [h] };
 "#;
         assert_eq!(
             server(src),
@@ -714,7 +714,7 @@ MATCH c { { host (h), port (p) } => [h] }
 
     #[test]
     fn unknown_field_lists_the_record_fields() {
-        let msg = server_err("port number { prot 443 }");
+        let msg = server_err("port number { prot 443 };");
         assert!(msg.contains("has no field `prot (Int)`"), "{msg}");
         assert!(
             msg.contains("its fields are: host (String), port (Int)"),
@@ -724,7 +724,7 @@ MATCH c { { host (h), port (p) } => [h] }
 
     #[test]
     fn slot_value_of_the_wrong_type_names_field_expected_and_found() {
-        let msg = server_err("port number { port \"443\" }");
+        let msg = server_err("port number { port \"443\" };");
         assert!(
             msg.contains("field `port (Int)` of `Server Config` expects Int, found String"),
             "{msg}"
@@ -733,21 +733,21 @@ MATCH c { { host (h), port (p) } => [h] }
 
     #[test]
     fn a_field_given_twice_is_an_error() {
-        let msg = server_err("port number { port 1, port 2 }");
+        let msg = server_err("port number { port 1, port 2 };");
         assert!(msg.contains("field `port (Int)` is given twice"), "{msg}");
     }
 
     #[test]
     fn omitting_a_field_without_default_is_an_error() {
         let src =
-            "RECORD Job { name (String), retries (Int DEFAULT 3) }\nLET j: Job = { retries 1 }";
+            "RECORD Job { name (String), retries (Int DEFAULT 3) }\nLET j: Job = { retries 1 };";
         let msg = err(src);
         assert!(
             msg.contains("missing required field `name (String)`"),
             "{msg}"
         );
         // One slot without a default is enough, even when its sibling has one.
-        let src = "RECORD Rec { between (Int DEFAULT 1) and (Int) }\nLET r: Rec = {}";
+        let src = "RECORD Rec { between (Int DEFAULT 1) and (Int) }\nLET r: Rec = {};";
         let msg = err(src);
         assert!(
             msg.contains("missing required field `between (Int) and (Int)`"),
@@ -757,15 +757,15 @@ MATCH c { { host (h), port (p) } => [h] }
 
     #[test]
     fn bare_field_name_is_true_only_for_a_boolean_field() {
-        let msg = err("RECORD Rec { depth (Int DEFAULT 1) }\nLET r: Rec = { depth }");
+        let msg = err("RECORD Rec { depth (Int DEFAULT 1) }\nLET r: Rec = { depth };");
         assert!(msg.contains("has no field `depth`"), "{msg}");
-        let src = "RECORD Rec { verbose (Boolean DEFAULT false) }\nLET r: Rec = { verbose }\nMATCH r { { verbose (v) } => v }";
+        let src = "RECORD Rec { verbose (Boolean DEFAULT false) }\nLET r: Rec = { verbose };\nMATCH r { { verbose (v) } => v };";
         assert_eq!(run(src), vec![Value::Bool(true)]);
         // The explicit form is the same field.
-        let src = "RECORD Rec { verbose (Boolean DEFAULT true) }\nLET r: Rec = { verbose false }\nMATCH r { { verbose (v) } => v }";
+        let src = "RECORD Rec { verbose (Boolean DEFAULT true) }\nLET r: Rec = { verbose false };\nMATCH r { { verbose (v) } => v };";
         assert_eq!(run(src), vec![Value::Bool(false)]);
         let msg = err(
-            "RECORD Rec { verbose (Boolean DEFAULT true) }\nLET r: Rec = { verbose, verbose false }",
+            "RECORD Rec { verbose (Boolean DEFAULT true) }\nLET r: Rec = { verbose, verbose false };",
         );
         assert!(msg.contains("is given twice"), "{msg}");
     }
@@ -774,10 +774,10 @@ MATCH c { { host (h), port (p) } => [h] }
     fn every_slot_of_a_field_has_its_own_default() {
         let src = r#"
 RECORD Rec { between (Int DEFAULT 1) and (Int DEFAULT 9) }
-LET r: Rec = {}
-MATCH r { { between (lo) and (hi) } => hi }
-LET s: Rec = { between 2 and 3 }
-MATCH s { { between (lo) and (hi) } => lo }
+LET r: Rec = {};
+MATCH r { { between (lo) and (hi) } => hi };
+LET s: Rec = { between 2 and 3 };
+MATCH s { { between (lo) and (hi) } => lo };
 "#;
         assert_eq!(run(src), vec![Value::Int(9), Value::Int(2)]);
     }
@@ -787,10 +787,10 @@ MATCH s { { between (lo) and (hi) } => lo }
         let src = r#"
 RECORD Inner { n (Int DEFAULT 7) }
 RECORD Outer { inner (Inner DEFAULT {}), tag (String) }
-LET o: Outer = { tag "t" }
-MATCH o { { inner (i), tag (_) } => MATCH i { { n (n) } => n } }
-LET p: Outer = { inner { n 1 }, tag "t" }
-MATCH p { { inner (i), tag (_) } => MATCH i { { n (n) } => n } }
+LET o: Outer = { tag "t" };
+MATCH o { { inner (i), tag (_) } => MATCH i { { n (n) } => n } };
+LET p: Outer = { inner { n 1 }, tag "t" };
+MATCH p { { inner (i), tag (_) } => MATCH i { { n (n) } => n } };
 "#;
         assert_eq!(run(src), vec![Value::Int(7), Value::Int(1)]);
     }
@@ -800,8 +800,8 @@ MATCH p { { inner (i), tag (_) } => MATCH i { { n (n) } => n } }
         let src = r#"
 RECORD Rec { n (Int DEFAULT forty two) }
 FUNCTION forty two: Int { 42 }
-LET r: Rec = {}
-MATCH r { { n (n) } => n }
+LET r: Rec = {};
+MATCH r { { n (n) } => n };
 "#;
         assert_eq!(run(src), vec![Value::Int(42)]);
     }
@@ -842,18 +842,18 @@ MATCH r { { n (n) } => n }
     fn key_value_form_and_optional_fields_are_gone() {
         assert!(!err("RECORD Rec { a: Int }").is_empty());
         assert!(!err("RECORD Rec { a? : Int }").is_empty());
-        let msg = err("RECORD Rec { a (Int) }\nLET r: Rec = { a: 1 }");
+        let msg = err("RECORD Rec { a (Int) }\nLET r: Rec = { a: 1 };");
         assert!(!msg.is_empty(), "{msg}");
         // No `Name { ... }` constructor either.
-        let msg = err("RECORD Rec { a (Int) }\nR { a 1 }");
+        let msg = err("RECORD Rec { a (Int) }\nR { a 1 };");
         assert!(msg.contains("no function matches"), "{msg}");
     }
 
     #[test]
     fn records_have_no_accessor_functions() {
-        let msg = server_err("LET c: Server Config = {}\nport c");
+        let msg = server_err("LET c: Server Config = {};\nport c;");
         assert!(msg.contains("no function matches `port c`"), "{msg}");
-        let msg = server_err("LET c: Server Config = {}\nhost c");
+        let msg = server_err("LET c: Server Config = {};\nhost c;");
         assert!(msg.contains("no function matches"), "{msg}");
     }
 
@@ -861,18 +861,18 @@ MATCH r { { n (n) } => n }
 
     #[test]
     fn destructuring_names_every_field_and_only_known_ones() {
-        let msg = server_err("LET c: Server Config = {}\nMATCH c { { host (h) } => h }");
+        let msg = server_err("LET c: Server Config = {};\nMATCH c { { host (h) } => h };");
         assert!(
             msg.contains("must list every field; missing: port (Int)"),
             "{msg}"
         );
         let msg = server_err(
-            "LET c: Server Config = {}\nMATCH c { { host (h), port (p), tls (t) } => h }",
+            "LET c: Server Config = {};\nMATCH c { { host (h), port (p), tls (t) } => h };",
         );
         assert!(msg.contains("has no field pattern `tls _`"), "{msg}");
         assert!(msg.contains("host (String), port (Int)"), "{msg}");
         let msg = server_err(
-            "LET c: Server Config = {}\nMATCH c { { host (h), host (g), port (p) } => h }",
+            "LET c: Server Config = {};\nMATCH c { { host (h), host (g), port (p) } => h };",
         );
         assert!(msg.contains("is listed twice"), "{msg}");
     }
@@ -880,13 +880,13 @@ MATCH r { { n (n) } => n }
     #[test]
     fn destructuring_takes_exactly_one_record_arm() {
         let msg = server_err(
-            "LET c: Server Config = {}\nMATCH c { { host (h), port (p) } => h, { host (h), port (p) } => h }",
+            "LET c: Server Config = {};\nMATCH c { { host (h), port (p) } => h, { host (h), port (p) } => h };",
         );
         assert!(msg.contains("single-case MATCH, found 2 arms"), "{msg}");
-        let msg = server_err("LET c: Server Config = {}\nMATCH c { _ => 1 }");
+        let msg = server_err("LET c: Server Config = {};\nMATCH c { _ => 1 };");
         assert!(msg.contains("pattern must be a record pattern"), "{msg}");
         let msg =
-            server_err("LET c: Server Config = {}\nMATCH c { { host (h), port (p) _ } => h }");
+            server_err("LET c: Server Config = {};\nMATCH c { { host (h), port (p) _ } => h };");
         assert!(msg.contains("words and `(name)` binders only"), "{msg}");
     }
 
@@ -899,7 +899,7 @@ MATCH r { { n (n) } => n }
         assert!(msg.contains("declared to return Int"), "{msg}");
         assert!(msg.contains("String"), "{msg}");
         // `(_)` ignores a slot and binds nothing.
-        let msg = server_err("LET c: Server Config = {}\nMATCH c { { host (_), port (_) } => _ }");
+        let msg = server_err("LET c: Server Config = {};\nMATCH c { { host (_), port (_) } => _ };");
         assert!(msg.contains("`_` can only be used"), "{msg}");
     }
 
@@ -949,7 +949,7 @@ MATCH r { { n (n) } => n }
 
     #[test]
     fn literal_entries_are_anyfix_phrases() {
-        let items = parse_program("{ port 443, between (1 mb) and 5, verbose, }").unwrap();
+        let items = parse_program("{ port 443, between (1 mb) and 5, verbose, };").unwrap();
         let [Item::Stmt(resh::ast::Stmt::Expr(e))] = items.as_slice() else {
             panic!("expected one expression");
         };
@@ -967,7 +967,7 @@ MATCH r { { n (n) } => n }
         let mut s = Session::new();
         let vs = s
             .run(&format!(
-                "{SERVER}\nLET c: Server Config = {{ port 443 }}\nc"
+                "{SERVER}\nLET c: Server Config = {{ port 443 }};\nc;"
             ))
             .unwrap();
         assert_eq!(s.render(&vs[0], false), "{ host \"localhost\", port 443 }");
@@ -976,7 +976,7 @@ MATCH r { { n (n) } => n }
             "{\"host\":\"localhost\",\"port\":443}"
         );
         let vs = s
-            .run("RECORD Rec { between (Int) and (Int), flag (Boolean) }\nLET r: Rec = { between 1 and 2, flag }\nr")
+            .run("RECORD Rec { between (Int) and (Int), flag (Boolean) }\nLET r: Rec = { between 1 and 2, flag };\nr;")
             .unwrap();
         assert_eq!(s.render(&vs[0], false), "{ between 1 and 2, flag (true) }");
         assert_eq!(
@@ -1005,7 +1005,7 @@ MATCH r { { n (n) } => n }
             "{msg}"
         );
         // List Options: every field has a DEFAULT, so `{}` and partial literals fit.
-        let msg = err("LET o: List Options = { sort by 1 }");
+        let msg = err("LET o: List Options = { sort by 1 };");
         assert!(
             msg.contains(
                 "field `sort by (Sort Key)` of `List Options` expects Sort Key, found Int"
@@ -1014,7 +1014,7 @@ MATCH r { { n (n) } => n }
         );
         assert!(
             Session::new()
-                .run("LET o: List Options = { reverse, sort by (size) }")
+                .run("LET o: List Options = { reverse, sort by (size) };")
                 .is_ok()
         );
     }
@@ -1028,13 +1028,13 @@ RECORD Banana { y (Int DEFAULT 1) }
 FUNCTION f (a: Apple): Int { 1 }
 FUNCTION f (b: Banana): Int { 2 }
 "#;
-    let msg = run_err(&format!("{src}\nf {{ z 1 }}"));
+    let msg = run_err(&format!("{src};\nf {{ z 1 }};"));
     assert!(msg.contains("no overload of `f <arg>`"), "{msg}");
     assert!(msg.contains("record literal { z (Int) }"), "{msg}");
     assert!(msg.contains("`Apple` fields: x (Int), ripe (Boolean)"), "{msg}");
     assert!(msg.contains("`Banana` fields: y (Int) (optional)"), "{msg}");
     // `{}` fits only Banana, whose fields are all optional.
-    assert_eq!(run(&format!("{src}\nf {{}}")), vec![Value::Int(2)]);
+    assert_eq!(run(&format!("{src};\nf {{}};")), vec![Value::Int(2)]);
 
     let all_default = r#"
 RECORD Alpha { x (Int DEFAULT 1) }
@@ -1042,7 +1042,7 @@ RECORD Beta { y (Int DEFAULT 1) }
 FUNCTION g (a: Alpha): Int { 1 }
 FUNCTION g (b: Beta): Int { 2 }
 "#;
-    let msg = run_err(&format!("{all_default}\ng {{}}"));
+    let msg = run_err(&format!("{all_default};\ng {{}};"));
     assert!(msg.contains("ambiguous call"), "{msg}");
     assert!(msg.contains("`Alpha` fields: x (Int) (optional)"), "{msg}");
     assert!(msg.contains("`Beta` fields: y (Int) (optional)"), "{msg}");
@@ -1060,15 +1060,13 @@ mod sets {
             "{ include hidden file }",
             "{}",
         ] {
-            run(&format!("{src}pick {lit}"));
+            run(&format!("{src}pick {lit};"));
         }
     }
 
     #[test]
     fn duplicate_variant_names_both_positions() {
-        let src = "ENUM Find Option { max depth (n: Int), include hidden file }\n\
-                   FUNCTION pick (options: Set (Find Option)): Int { 1 }\n\
-                   pick { max depth 1, max depth 2 }";
+        let src = "ENUM Find Option { max depth (n: Int), include hidden file }\nFUNCTION pick (options: Set (Find Option)): Int { 1 }\npick { max depth 1, max depth 2 };";
         let msg = run_err(src);
         assert!(msg.contains("`max depth (Int)` is given twice"), "{msg}");
         assert!(msg.contains("first at 3:8"), "{msg}");
@@ -1077,9 +1075,7 @@ mod sets {
 
     #[test]
     fn unknown_variant_lists_the_variants() {
-        let src = "ENUM Find Option { max depth (n: Int), include hidden file }\n\
-                   FUNCTION pick (options: Set (Find Option)): Int { 1 }\n\
-                   pick { depth 1 }";
+        let src = "ENUM Find Option { max depth (n: Int), include hidden file }\nFUNCTION pick (options: Set (Find Option)): Int { 1 }\npick { depth 1 };";
         let msg = run_err(src);
         assert!(msg.contains("has no variant `depth (Int)`"), "{msg}");
         assert!(msg.contains("max depth (n: Int)"), "{msg}");
@@ -1093,9 +1089,9 @@ mod sets {
                    RECORD Config { port (Int DEFAULT 80) }\n\
                    FUNCTION f (c: Config): Int { 1 }\n\
                    FUNCTION f (s: Set (Flag)): Int { 2 }\n";
-        assert_eq!(run(&format!("{src}f {{ port 1 }}")), vec![Value::Int(1)]);
-        assert_eq!(run(&format!("{src}f {{ loud }}")), vec![Value::Int(2)]);
-        let msg = run_err(&format!("{src}f {{}}"));
+        assert_eq!(run(&format!("{src}f {{ port 1 }};")), vec![Value::Int(1)]);
+        assert_eq!(run(&format!("{src}f {{ loud }};")), vec![Value::Int(2)]);
+        let msg = run_err(&format!("{src}f {{}};"));
         assert!(msg.contains("ambiguous call"), "{msg}");
     }
 
@@ -1116,12 +1112,12 @@ mod lambdas {
     #[test]
     fn flat_map_with_a_lambda_checks_and_evaluates() {
         assert_eq!(
-            run("LET xs = [1, 2, 3]\nflat map (xs) with ((x) => [x, x])"),
+            run("LET xs = [1, 2, 3];\nflat map (xs) with ((x) => [x, x]);"),
             vec![ints(&[1, 1, 2, 2, 3, 3])]
         );
         // The result type comes from the lambda body.
         assert_eq!(
-            run("flat map ([\"a\"]) with ((s) => [s, \"!\"])"),
+            run("flat map ([\"a\"]) with ((s) => [s, \"!\"]);"),
             vec![Value::List(vec![Value::Str("a".into()), Value::Str("!".into())])]
         );
     }
@@ -1129,7 +1125,7 @@ mod lambdas {
     #[test]
     fn lambda_captures_variables_in_scope() {
         assert_eq!(
-            run("LET k = 7\nflat map ([1, 2]) with ((x) => [x, k])"),
+            run("LET k = 7;\nflat map ([1, 2]) with ((x) => [x, k]);"),
             vec![ints(&[1, 7, 2, 7])]
         );
     }
@@ -1137,7 +1133,7 @@ mod lambdas {
     #[test]
     fn lambda_parameter_type_comes_from_the_earlier_argument() {
         // `x` is an Int, so it cannot be joined as a String.
-        let msg = run_err("flat map ([1]) with ((x) => [join (x) with \"a\"])");
+        let msg = run_err("flat map ([1]) with ((x) => [join (x) with \"a\"]);");
         // (`join` is overloaded, so the message lists its candidates.)
         assert!(msg.contains("join <arg> with <arg>"), "{msg}");
         assert!(msg.contains("expects String, found Int"), "{msg}");
@@ -1147,8 +1143,7 @@ mod lambdas {
 
     #[test]
     fn lambda_before_its_parameter_type_is_known_is_an_error() {
-        let src = "FUNCTION apply (f: Function (T) To (T)) to (x: T): T { x }\n\
-                   apply ((y) => y) to 1";
+        let src = "FUNCTION apply (f: Function (T) To (T)) to (x: T): T { x }\napply ((y) => y) to 1;";
         let msg = run_err(src);
         assert!(msg.contains("not known yet"), "{msg}");
         assert!(msg.contains("move the lambda after it"), "{msg}");
@@ -1156,15 +1151,15 @@ mod lambdas {
 
     #[test]
     fn bare_lambda_has_no_type_and_non_functions_reject_it() {
-        let msg = run_err("LET f = ((x) => x)");
+        let msg = run_err("LET f = ((x) => x);");
         assert!(msg.contains("no type of its own"), "{msg}");
-        let msg = run_err("count ((x) => x)");
+        let msg = run_err("count ((x) => x);");
         assert!(msg.contains("lambda"), "{msg}");
     }
 
     #[test]
     fn lambda_needs_exactly_one_parameter_name() {
-        let msg = run_err("flat map ([1]) with ((x y) => [x])");
+        let msg = run_err("flat map ([1]) with ((x y) => [x]);");
         assert!(msg.contains("exactly one parameter name"), "{msg}");
     }
 }
@@ -1179,69 +1174,63 @@ mod tuples_and_spread {
     #[test]
     fn spread_splices_lists_into_a_list_literal() {
         assert_eq!(
-            run("LET a = [\"1\", \"2\"]\nLET b = [\"3\"]\n[...a, \"x\", ...b]"),
+            run("LET a = [\"1\", \"2\"];\nLET b = [\"3\"];\n[...a, \"x\", ...b];"),
             vec![strs(&["1", "2", "x", "3"])]
         );
         // The operand may be a parenthesized call, and `[]` spreads to nothing.
         assert_eq!(
-            run("[...(flat map ([\"a\"]) with ((s) => [s, s])), ...[]]"),
+            run("[...(flat map ([\"a\"]) with ((s) => [s, s])), ...[]];"),
             vec![strs(&["a", "a"])]
         );
     }
 
     #[test]
     fn spread_needs_a_list_and_matching_element_types() {
-        let msg = run_err("[...1]");
+        let msg = run_err("[...1];");
         assert!(msg.contains("splices a list"), "{msg}");
-        let msg = run_err("[1, ...[\"a\"]]");
+        let msg = run_err("[1, ...[\"a\"]];");
         assert!(msg.contains("must share one type"), "{msg}");
         // Outside a list literal `...` does not parse.
-        let msg = run_err("LET x = ...[1]");
+        let msg = run_err("LET x = ...[1];");
         assert!(msg.contains("found `...`"), "{msg}");
     }
 
     #[test]
     fn tuple_value_has_a_tuple_type_and_renders() {
         assert_eq!(
-            run("LET t = (\"fd\", [\"a\"])\nt"),
+            run("LET t = (\"fd\", [\"a\"]);\nt;"),
             vec![Value::Tuple(vec![Value::Str("fd".into()), strs(&["a"])])]
         );
-        assert_eq!(render("(1, \"x\")"), "(1, \"x\")");
+        assert_eq!(render("(1, \"x\");"), "(1, \"x\")");
     }
 
     #[test]
     fn function_takes_a_tuple_parameter() {
-        let src = "FUNCTION argv ((command: String, args: List (String))): List (String) {\n\
-                   [command, ...args]\n}\n\
-                   argv (\"fd\", [\"-H\", \"x\"])\n\
-                   LET extra = [\"y\"]\n\
-                   argv (\"ls\", [...extra, \"z\"])";
+        let src = "FUNCTION argv ((command: String, args: List (String))): List (String) {\n[command, ...args]\n}\nargv (\"fd\", [\"-H\", \"x\"]);\nLET extra = [\"y\"];\nargv (\"ls\", [...extra, \"z\"]);";
         assert_eq!(
             run(src),
             vec![strs(&["fd", "-H", "x"]), strs(&["ls", "y", "z"])]
         );
         // A tuple written inside its own slot parentheses is the same value.
-        let src = "FUNCTION first ((a: Int, b: Int)): Int { a }\nfirst ((7, 8))";
+        let src = "FUNCTION first ((a: Int, b: Int)): Int { a }\nfirst ((7, 8));";
         assert_eq!(run(src), vec![Value::Int(7)]);
     }
 
     #[test]
     fn tuple_parameter_mismatches_are_reported() {
         let def = "FUNCTION first ((a: Int, b: String)): Int { a }\n";
-        let msg = run_err(&format!("{def}first (1, 2)"));
+        let msg = run_err(&format!("{def}first (1, 2);"));
         assert!(msg.contains("(a: Int, b: String)"), "{msg}");
         assert!(msg.contains("found (Int, Int)"), "{msg}");
-        let msg = run_err(&format!("{def}first (1, \"x\", 3)"));
+        let msg = run_err(&format!("{def}first (1, \"x\", 3);"));
         assert!(msg.contains("found (Int, String, Int)"), "{msg}");
-        let msg = run_err(&format!("{def}first 1"));
+        let msg = run_err(&format!("{def}first 1;"));
         assert!(msg.contains("found Int"), "{msg}");
     }
 
     #[test]
     fn tuple_parameters_overload_by_shape() {
-        let src = "FUNCTION pick ((a: Int, b: Int)): String { \"ints\" }\n\
-                   FUNCTION pick ((a: String, b: Int)): String { \"mixed\" }\n\
-                   pick (1, 2)\npick (\"x\", 2)";
+        let src = "FUNCTION pick ((a: Int, b: Int)): String { \"ints\" }\nFUNCTION pick ((a: String, b: Int)): String { \"mixed\" }\npick (1, 2);\npick (\"x\", 2);";
         assert_eq!(
             run(src),
             vec![Value::Str("ints".into()), Value::Str("mixed".into())]
@@ -1262,11 +1251,7 @@ mod tuples_and_spread {
 
     #[test]
     fn the_spec_example_wrapper_shape_works() {
-        let src = "FUNCTION exec ((command: String, args: List (String))): List (String) {\n\
-                   [command, ...args]\n}\n\
-                   FUNCTION wrap (pattern: String) in (dir: String): List (String) {\n\
-                   exec (\"fd\", [...[\"--hidden\"], pattern, dir])\n}\n\
-                   wrap \"x\" in \"src\"";
+        let src = "FUNCTION exec ((command: String, args: List (String))): List (String) {\n[command, ...args]\n}\nFUNCTION wrap (pattern: String) in (dir: String): List (String) {\nexec (\"fd\", [...[\"--hidden\"], pattern, dir])\n}\nwrap \"x\" in \"src\";";
         assert_eq!(run(src), vec![strs(&["fd", "--hidden", "x", "src"])]);
     }
 }
@@ -1279,8 +1264,7 @@ mod prelude_functions {
     #[test]
     fn flat_map_over_a_set_returns_a_list() {
         let src = format!(
-            "{COLORS}FUNCTION twice (cs: Set (Color)): List (Color) {{ flat map (cs) with ((c) => [c, c]) }}\n\
-             twice {{ red, green }}"
+            "{COLORS}FUNCTION twice (cs: Set (Color)): List (Color) {{ flat map (cs) with ((c) => [c, c]) }}\ntwice {{ red, green }};"
         );
         assert_eq!(render(&src), "[red, red, green, green]");
     }
@@ -1296,64 +1280,63 @@ mod prelude_functions {
 
     #[test]
     fn flat_map_on_a_non_collection_is_an_error() {
-        let msg = run_err("flat map (1) with ((x) => [x])");
+        let msg = run_err("flat map (1) with ((x) => [x]);");
         assert!(msg.contains("flat map"), "{msg}");
     }
 
     #[test]
     fn int_to_string() {
-        assert_eq!(run("(42) to string"), vec![Value::Str("42".into())]);
+        assert_eq!(run("(42) to string;"), vec![Value::Str("42".into())]);
         
     }
 
     #[test]
     fn float_to_string() {
-        assert_eq!(run("(1.5) to string"), vec![Value::Str("1.5".into())]);
+        assert_eq!(run("(1.5) to string;"), vec![Value::Str("1.5".into())]);
     }
 
     #[test]
     fn to_string_rejects_other_types() {
-        let msg = run_err("(\"a\") to string");
+        let msg = run_err("(\"a\") to string;");
         assert!(msg.contains("to string"), "{msg}");
     }
 
     #[test]
     fn map_result_applies_to_ok() {
-        assert_eq!(render("map (ok 1) with ((n) => (n) to string)"), "ok (\"1\")");
+        assert_eq!(render("map (ok 1) with ((n) => (n) to string);"), "ok (\"1\")");
     }
 
     #[test]
     fn map_result_keeps_error() {
-        let src = "LET r = read file \"/definitely/not/here\"\n\
-                   map (r) with ((s) => count ((s) lines))";
+        let src = "LET r = read file \"/definitely/not/here\";\nmap (r) with ((s) => count ((s) lines));";
         let out = render(src);
         assert!(out.starts_with("error"), "{out}");
     }
 
     #[test]
     fn map_result_needs_a_result() {
-        let msg = run_err("map ([1]) with ((n) => n)");
+        let msg = run_err("map ([1]) with ((n) => n);");
         assert!(msg.contains("map"), "{msg}");
     }
 
     #[test]
     fn join_strings() {
-        assert_eq!(run("join (\"a\") with (\"b\")"), vec![Value::Str("ab".into())]);
+        assert_eq!(run("join (\"a\") with (\"b\");"), vec![Value::Str("ab".into())]);
     }
 
     #[test]
     fn join_lists() {
         assert_eq!(
-            run("join ([1, 2]) with ([3])"),
+            run("join ([1, 2]) with ([3]);"),
             vec![Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])]
         );
     }
 
     #[test]
     fn join_mismatched_types_is_an_error() {
-        let msg = run_err("join ([1]) with ([\"a\"])");
+        let msg = run_err("join ([1]) with ([\"a\"]);");
         assert!(msg.contains("join"), "{msg}");
-        let msg = run_err("join (\"a\") with ([\"a\"])");
+        let msg = run_err("join (\"a\") with ([\"a\"]);");
         assert!(msg.contains("join"), "{msg}");
     }
 }
@@ -1392,14 +1375,14 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)): I
     #[test]
     fn size_at_least_one_mb_type_checks() {
         let v = session()
-            .run(r#"fd::find "" in "." { size at least (1 mb) }"#)
+            .run(r#"fd::find "" in "." { size at least (1 mb) };"#)
             .unwrap_or_else(|d| panic!("{d}"));
         assert_eq!(v, vec![Value::Int(1)]);
     }
 
     #[test]
     fn size_at_least_five_days_is_a_type_error() {
-        let msg = match session().run(r#"fd::find "" in "." { size at least (5 days) }"#) {
+        let msg = match session().run(r#"fd::find "" in "." { size at least (5 days) };"#) {
             Ok(v) => panic!("expected an error, got {v:?}"),
             Err(d) => d.msg,
         };
@@ -1409,49 +1392,49 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)): I
     #[test]
     fn duration_units_fit_duration_slots() {
         session()
-            .run(r#"fd::find "" in "." { changed within (2 hours), max depth 1 }"#)
+            .run(r#"fd::find "" in "." { changed within (2 hours), max depth 1 };"#)
             .unwrap_or_else(|d| panic!("{d}"));
         session()
-            .run(r#"fd::find "" in "." { changed within ((3 days) ago) }"#)
+            .run(r#"fd::find "" in "." { changed within ((3 days) ago) };"#)
             .unwrap_or_else(|d| panic!("{d}"));
     }
 
     #[test]
     fn size_accessor_gives_bytes() {
-        assert_eq!(eval("(1 kb) bytes"), Value::Int(1_000));
-        assert_eq!(eval("(2 mb) bytes"), Value::Int(2_000_000));
-        assert_eq!(eval("(3 gb) bytes"), Value::Int(3_000_000_000));
+        assert_eq!(eval("(1 kb) bytes;"), Value::Int(1_000));
+        assert_eq!(eval("(2 mb) bytes;"), Value::Int(2_000_000));
+        assert_eq!(eval("(3 gb) bytes;"), Value::Int(3_000_000_000));
     }
 
     #[test]
     fn duration_accessor_gives_seconds() {
-        assert_eq!(eval("(90 seconds) seconds"), Value::Int(90));
-        assert_eq!(eval("(2 minutes) seconds"), Value::Int(120));
-        assert_eq!(eval("(1 hours) seconds"), Value::Int(3_600));
-        assert_eq!(eval("(5 days) seconds"), Value::Int(432_000));
-        assert_eq!(eval("((5 days) ago) seconds"), Value::Int(432_000));
+        assert_eq!(eval("(90 seconds) seconds;"), Value::Int(90));
+        assert_eq!(eval("(2 minutes) seconds;"), Value::Int(120));
+        assert_eq!(eval("(1 hours) seconds;"), Value::Int(3_600));
+        assert_eq!(eval("(5 days) seconds;"), Value::Int(432_000));
+        assert_eq!(eval("((5 days) ago) seconds;"), Value::Int(432_000));
     }
 
     #[test]
     fn accessor_name_is_resolved_by_argument_type() {
         // `seconds` is both a constructor (Int) and an accessor (Duration).
-        assert_eq!(eval("((10 seconds) seconds) to string"), Value::Str("10".into()));
+        assert_eq!(eval("((10 seconds) seconds) to string;"), Value::Str("10".into()));
     }
 
     #[test]
     fn wrong_unit_argument_is_a_type_error() {
-        let msg = match Session::new().run("(1 mb) seconds") {
+        let msg = match Session::new().run("(1 mb) seconds;") {
             Ok(v) => panic!("expected an error, got {v:?}"),
             Err(d) => d.msg,
         };
         assert!(msg.contains("seconds") && msg.contains("Size"), "{msg}");
-        let msg = match Session::new().run("(1 days) bytes") {
+        let msg = match Session::new().run("(1 days) bytes;") {
             Ok(v) => panic!("expected an error, got {v:?}"),
             Err(d) => d.msg,
         };
         assert!(msg.contains("bytes") && msg.contains("Duration"), "{msg}");
-        assert!(Session::new().run("(\"a\") mb").is_err());
-        assert!(Session::new().run("(1 mb) ago").is_err());
+        assert!(Session::new().run("(\"a\") mb;").is_err());
+        assert!(Session::new().run("(1 mb) ago;").is_err());
     }
 }
 
@@ -1477,34 +1460,34 @@ mod run_primitive {
 
     #[test]
     fn stdout_is_ok() {
-        assert_eq!(run(r#"run ("echo", ["hello", "world"])"#), vec![ok_str("hello world\n")]);
-        assert_eq!(run(r#"run ("true", [])"#), vec![ok_str("")]);
+        assert_eq!(run(r#"run ("echo", ["hello", "world"]);"#), vec![ok_str("hello world\n")]);
+        assert_eq!(run(r#"run ("true", []);"#), vec![ok_str("")]);
     }
 
     #[test]
     fn failing_command_gives_stderr_and_exit_code() {
-        let e = err_text(r#"run ("sh", ["-c", "echo boom >&2; exit 3"])"#);
+        let e = err_text(r#"run ("sh", ["-c", "echo boom >&2; exit 3"]);"#);
         assert_eq!(e, "boom\nexit code 3");
-        assert_eq!(err_text(r#"run ("false", [])"#), "exit code 1");
+        assert_eq!(err_text(r#"run ("false", []);"#), "exit code 1");
     }
 
     #[test]
     fn missing_command_is_err() {
-        let e = err_text(r#"run ("resh-no-such-command-xyz", [])"#);
+        let e = err_text(r#"run ("resh-no-such-command-xyz", []);"#);
         assert!(e.starts_with("cannot run resh-no-such-command-xyz: "), "{e}");
     }
 
     #[test]
     fn shell_metacharacters_are_passed_literally() {
-        let src = r#"run ("echo", ["a;b", "$HOME", "*", "`x`", "$(y)"])"#;
+        let src = r#"run ("echo", ["a;b", "$HOME", "*", "`x`", "$(y)"]);"#;
         assert_eq!(run(src), vec![ok_str("a;b $HOME * `x` $(y)\n")]);
     }
 
     #[test]
     fn argument_types_are_checked() {
-        let e = run_err(r#"run ("echo", [1, 2])"#);
+        let e = run_err(r#"run ("echo", [1, 2]);"#);
         assert!(e.contains("run"), "{e}");
-        let e = run_err(r#"run ("echo")"#);
+        let e = run_err(r#"run ("echo");"#);
         assert!(e.contains("run"), "{e}");
     }
 
@@ -1517,14 +1500,14 @@ mod run_primitive {
             seen.borrow_mut().push((c.to_string(), a.to_vec()));
             Ok("mocked".into())
         }));
-        let vs = s.run(r#"run ("fd", ["--hidden", "x"])"#).unwrap();
+        let vs = s.run(r#"run ("fd", ["--hidden", "x"]);"#).unwrap();
         assert_eq!(vs, vec![ok_str("mocked")]);
         assert_eq!(
             *calls.borrow(),
             vec![("fd".to_string(), vec!["--hidden".to_string(), "x".to_string()])]
         );
         s.set_runner(Box::new(|_, _| Err("nope".into())));
-        let vs = s.run(r#"run ("fd", [])"#).unwrap();
+        let vs = s.run(r#"run ("fd", []);"#).unwrap();
         assert_eq!(
             vs,
             vec![Value::Variant("Result".into(), 1, vec![Value::Str("nope".into())])]
@@ -1575,13 +1558,13 @@ mod fd_example {
 
     #[test]
     fn usage_plain() {
-        assert_eq!(argv(r#"fd::find "main""#), strs(&["--", "main", "."]));
+        assert_eq!(argv(r#"fd::find "main";"#), strs(&["--", "main", "."]));
     }
 
     #[test]
     fn usage_extension_and_depth() {
         assert_eq!(
-            argv(r#"fd::find "" in "src" { extension ["rs", "toml"], max depth 3 }"#),
+            argv(r#"fd::find "" in "src" { extension ["rs", "toml"], max depth 3 };"#),
             strs(&["--extension", "rs", "--extension", "toml", "--max-depth", "3", "--", "", "src"])
         );
     }
@@ -1589,7 +1572,7 @@ mod fd_example {
     #[test]
     fn usage_kind_size_duration() {
         assert_eq!(
-            argv(r#"fd::find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) }"#),
+            argv(r#"fd::find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) };"#),
             strs(&[
                 "--type", "file", "--size", "+1000000b", "--changed-within", "604800s", "--", "test", "."
             ])
@@ -1599,7 +1582,15 @@ mod fd_example {
     #[test]
     fn usage_glob_hidden_exclude() {
         assert_eq!(
-            argv(r#"fd::find "*.log" in "/var" { match (fd::glob), include hidden file, exclude ["old"] }"#),
+            argv(r#"fd::find "*.log" in "/var" { match (fd::glob), include hidden file, exclude ["old"] };"#),
+            strs(&["--glob", "--hidden", "--exclude", "old", "--", "*.log", "/var"])
+        );
+    }
+
+    #[test]
+    fn scope_block_takes_unqualified_variants() {
+        assert_eq!(
+            argv(r#"fd:: { find "*.log" in "/var" { match (glob), include hidden file, exclude ["old"] }; }"#),
             strs(&["--glob", "--hidden", "--exclude", "old", "--", "*.log", "/var"])
         );
     }
@@ -1607,7 +1598,7 @@ mod fd_example {
     #[test]
     fn result_is_lines_of_stdout() {
         let (mut s, _) = session(Ok("a.rs\nb.rs\n"));
-        let v = s.run(r#"fd::find "x""#).unwrap();
+        let v = s.run(r#"fd::find "x";"#).unwrap();
         let list = Value::List(vec![Value::Str("a.rs".into()), Value::Str("b.rs".into())]);
         assert_eq!(v, vec![Value::Variant("Result".into(), 0, vec![list])]);
     }
@@ -1615,20 +1606,20 @@ mod fd_example {
     #[test]
     fn error_is_passed_through() {
         let (mut s, _) = session(Err("boom"));
-        let v = s.run(r#"fd::find "x""#).unwrap();
+        let v = s.run(r#"fd::find "x";"#).unwrap();
         assert_eq!(v, vec![Value::Variant("Result".into(), 1, vec![Value::Str("boom".into())])]);
     }
 
     #[test]
     fn bad_calls_are_type_errors() {
         let (mut s, _) = session(Ok(""));
-        let e = s.run(r#"fd::find "" in "." { max depth 1, max depth 2 }"#).unwrap_err();
+        let e = s.run(r#"fd::find "" in "." { max depth 1, max depth 2 };"#).unwrap_err();
         assert!(e.msg.contains("max depth"), "{}", e.msg);
-        let e = s.run(r#"fd::find "" in "." { case (fd::sensitive), case (fd::insensitive) }"#).unwrap_err();
+        let e = s.run(r#"fd::find "" in "." { case (fd::sensitive), case (fd::insensitive) };"#).unwrap_err();
         assert!(e.msg.contains("case"), "{}", e.msg);
-        let e = s.run(r#"fd::find "" in "." { size at least (5 days) }"#).unwrap_err();
+        let e = s.run(r#"fd::find "" in "." { size at least (5 days) };"#).unwrap_err();
         assert!(e.msg.contains("Size"), "{}", e.msg);
-        let e = s.run(r#"find "x""#).unwrap_err();
+        let e = s.run(r#"find "x";"#).unwrap_err();
         assert!(e.msg.contains("fd::"), "{}", e.msg);
     }
 
@@ -1639,5 +1630,184 @@ mod fd_example {
             .run("ENUM Wrap { w (Entry Kind) }\nFUNCTION f (x: Wrap): Int { MATCH x { w (file) => 1, w (directory) => 2 } }")
             .unwrap_err();
         assert!(e.msg.contains("non-exhaustive") && e.msg.contains("symlink"), "{}", e.msg);
+    }
+}
+
+// ---------- examples/rg.resh end to end ----------
+
+mod rg_example {
+    use resh::{Session, Value};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    const RG: &str = include_str!("../examples/rg.resh");
+    const BASE: [&str; 3] = ["--no-heading", "--line-number", "--column"];
+
+    type Calls = Rc<RefCell<Vec<(String, Vec<String>)>>>;
+
+    fn session(reply: Result<&'static str, &'static str>) -> (Session, Calls) {
+        let calls: Calls = Rc::default();
+        let seen = calls.clone();
+        let mut s = Session::new();
+        s.set_runner(Box::new(move |c, a| {
+            seen.borrow_mut().push((c.to_string(), a.to_vec()));
+            reply.map(String::from).map_err(String::from)
+        }));
+        s.run(RG).unwrap_or_else(|d| panic!("rg.resh failed: {d}"));
+        (s, calls)
+    }
+
+    fn argv(src: &str) -> Vec<String> {
+        let (mut s, calls) = session(Ok(""));
+        s.run(src).unwrap_or_else(|d| panic!("{d}"));
+        let calls = calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "rg");
+        calls[0].1.clone()
+    }
+
+    fn expected(mid: &[&str], tail: &[&str]) -> Vec<String> {
+        BASE.iter().chain(mid).chain(["--"].iter()).chain(tail).map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn usage_plain() {
+        assert_eq!(argv(r#"rg::search "TODO";"#), expected(&[], &["TODO", "."]));
+    }
+
+    #[test]
+    fn usage_type_and_count() {
+        assert_eq!(
+            argv(r#"rg::search "fn main" in "src" { file type ["rust"], max count 1 };"#),
+            expected(&["--type", "rust", "--max-count", "1"], &["fn main", "src"])
+        );
+    }
+
+    #[test]
+    fn usage_word_case_context() {
+        assert_eq!(
+            argv(r#"rg::search "error" in "." { match (rg::whole word), case (rg::insensitive), context 2 };"#),
+            expected(&["--word-regexp", "--ignore-case", "--context", "2"], &["error", "."])
+        );
+    }
+
+    #[test]
+    fn usage_hidden_glob_size() {
+        assert_eq!(
+            argv(r#"rg::search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size (1 mb) };"#),
+            expected(
+                &["--hidden", "--glob", "!target", "--glob", "!*.lock", "--max-filesize", "1000000"],
+                &["secret", "."]
+            )
+        );
+    }
+
+    #[test]
+    fn result_is_lines_of_stdout() {
+        let (mut s, _) = session(Ok("a.rs:1:1:x\nb.rs:2:3:x\n"));
+        let v = s.run(r#"rg::search "x";"#).unwrap();
+        let list = Value::List(vec![Value::Str("a.rs:1:1:x".into()), Value::Str("b.rs:2:3:x".into())]);
+        assert_eq!(v, vec![Value::Variant("Result".into(), 0, vec![list])]);
+    }
+
+    #[test]
+    fn error_is_passed_through() {
+        let (mut s, _) = session(Err("no matches"));
+        let v = s.run(r#"rg::search "x";"#).unwrap();
+        assert_eq!(v, vec![Value::Variant("Result".into(), 1, vec![Value::Str("no matches".into())])]);
+    }
+
+    #[test]
+    fn scope_block_drops_every_qualifier() {
+        assert_eq!(
+            argv(
+                r#"rg:: {
+                    search "error" in "." { match (whole word), case (insensitive), context 2 };
+                }"#
+            ),
+            expected(&["--word-regexp", "--ignore-case", "--context", "2"], &["error", "."])
+        );
+    }
+
+    #[test]
+    fn scope_block_ends_with_its_brace() {
+        let (mut s, _) = session(Ok(""));
+        s.run(r#"rg:: { search "x"; }"#).unwrap();
+        let e = s.run(r#"search "x";"#).unwrap_err();
+        assert!(e.msg.contains("rg::"), "{}", e.msg);
+        let e = s.run(r#"search "x" in "." { match (whole word) };"#).unwrap_err();
+        assert!(e.msg.contains("rg::"), "{}", e.msg);
+    }
+
+    #[test]
+    fn bad_calls_are_type_errors() {
+        let (mut s, _) = session(Ok(""));
+        let e = s.run(r#"rg::search "" in "." { max count 1, max count 2 };"#).unwrap_err();
+        assert!(e.msg.contains("max count"), "{}", e.msg);
+        let e = s.run(r#"rg::search "" in "." { max file size (5 days) };"#).unwrap_err();
+        assert!(e.msg.contains("Size"), "{}", e.msg);
+        let e = s.run(r#"search "x";"#).unwrap_err();
+        assert!(e.msg.contains("rg::"), "{}", e.msg);
+    }
+}
+
+// ---------- `;` and `ns:: { ... }` ----------
+
+mod statements {
+    use super::*;
+
+    #[test]
+    fn newlines_are_whitespace() {
+        assert_eq!(run("count\n[1,\n 2]\n;"), vec![Value::Int(2)]);
+        assert_eq!(run("count [1, 2]; count [3];"), vec![Value::Int(2), Value::Int(1)]);
+    }
+
+    #[test]
+    fn every_statement_needs_a_semicolon() {
+        for src in ["count [1]", "LET x = 1\nLET y = 2;", "LET x = 1;\nLET y = 2"] {
+            let msg = run_err(src);
+            assert!(msg.contains("expected `;`"), "{src}: {msg}");
+        }
+    }
+
+    #[test]
+    fn declarations_need_no_semicolon_and_stray_ones_are_ignored() {
+        assert_eq!(run("FUNCTION one: Int { 1 }\n;;one;"), vec![Value::Int(1)]);
+    }
+
+    #[test]
+    fn last_expression_of_a_body_is_its_value_unless_terminated() {
+        assert_eq!(run("FUNCTION f: Int { LET x = 4; x }\nf;"), vec![Value::Int(4)]);
+        let msg = run_err("FUNCTION f: Int { LET x = 4; x; }");
+        assert!(msg.contains("Int") && msg.contains("Unit"), "{msg}");
+    }
+
+    const ZZ: &str = "NAMESPACE zz\nFUNCTION count (xs: List (Int)): Int { 99 }";
+
+    #[test]
+    fn scope_block_resolves_unqualified_and_namespace_wins() {
+        let mut s = Session::new();
+        s.run(ZZ).unwrap();
+        assert_eq!(s.run("zz:: { count [1]; }").unwrap(), vec![Value::Int(99)]);
+        assert_eq!(s.run("count [1];").unwrap(), vec![Value::Int(1)]);
+        assert_eq!(s.run("zz::count [1];").unwrap(), vec![Value::Int(99)]);
+        // Names the namespace lacks still come from the prelude.
+        assert_eq!(s.run("zz:: { count [1, 2, 3]; }").unwrap(), vec![Value::Int(99)]);
+        assert_eq!(s.run("zz:: { [1] |> count (_); }").unwrap(), vec![Value::Int(99)]);
+        assert_eq!(s.run("zz:: { (5) to string; }").unwrap(), vec![Value::Str("5".into())]);
+    }
+
+    #[test]
+    fn scope_block_inside_a_function_body_is_its_value() {
+        let mut s = Session::new();
+        s.run(ZZ).unwrap();
+        let v = s.run("FUNCTION f: Int { zz:: { count [1] } }\nf;").unwrap();
+        assert_eq!(v, vec![Value::Int(99)]);
+    }
+
+    #[test]
+    fn scope_block_names_a_declared_namespace() {
+        let msg = run_err("nope:: { count [1]; }");
+        assert!(msg.contains("unknown namespace `nope`"), "{msg}");
     }
 }

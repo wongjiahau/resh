@@ -53,7 +53,8 @@ pub enum Tok {
     Pipe,
     Eq,
     Underscore,
-    Newline,
+    /// `;`, the statement terminator. Newlines are plain whitespace.
+    Semi,
     Eof,
 }
 
@@ -127,12 +128,12 @@ pub fn lex(src: &str) -> Res<Vec<Token>> {
         };
         let mut push = |tok: Tok| out.push(Token { tok, span });
         match c {
-            ' ' | '\t' | '\r' => {
+            ' ' | '\t' | '\r' | '\n' => {
                 lx.bump();
             }
-            '\n' | ';' => {
+            ';' => {
                 lx.bump();
-                push(Tok::Newline);
+                push(Tok::Semi);
             }
             '/' if lx.peek2() == Some('/') => {
                 while let Some(ch) = lx.peek() {

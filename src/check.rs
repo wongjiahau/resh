@@ -8,6 +8,7 @@
 //! differ in parameter types (overloading); the arguments are inferred once
 //! and the overload is chosen by testing `argument type <: parameter type`.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -332,6 +333,8 @@ pub struct Checker {
     /// and its unqualified calls and types resolve in it (plus the prelude).
     cur_ns: Option<String>,
     namespaces: HashSet<String>,
+    /// Namespaces opened by enclosing `ns:: { ... }` blocks, outermost first.
+    open: RefCell<Vec<String>>,
 }
 
 pub fn label(parts: &[PartT]) -> String {
@@ -424,6 +427,7 @@ impl Checker {
             records: HashMap::new(),
             cur_ns: None,
             namespaces: HashSet::new(),
+            open: RefCell::new(Vec::new()),
         };
         let t = Type::Param("T".into());
         let e = Type::Param("E".into());
@@ -541,7 +545,10 @@ impl Checker {
             n => match self
                 .cur_ns
                 .as_ref()
-                .and_then(|ns| self.named_ty(&format!("{ns}::{n}")))
+                .into_iter()
+                .chain(self.open.borrow().iter())
+                .rev()
+                .find_map(|ns| self.named_ty(&format!("{ns}::{n}")))
                 .or_else(|| self.named_ty(n))
             {
                 Some(ty) => arity(0, ty),
@@ -1136,6 +1143,20 @@ impl Checker {
                     irs.push(ir);
                     last = t;
                 }
+                Stmt::Discard(e) => {
+                    let (ir, _) = self.check(e, sc)?;
+                    irs.push(ir);
+                    irs.push(Ir::Lit(Value::Unit));
+                    last = Type::Unit;
+                }
+                Stmt::Scope(ns, inner, span) => {
+                    self.open_scope(ns, *span)?;
+                    let checked = self.block(inner, sc);
+                    self.close_scope();
+                    let (ir, t) = checked?;
+                    irs.push(ir);
+                    last = t;
+                }
             }
         }
         sc.truncate(mark);
@@ -1686,8 +1707,23 @@ impl Checker {
     fn visible(&self, d: &FnDef, qual: Option<&str>) -> bool {
         match qual {
             Some(q) => d.ns.as_deref() == Some(q),
-            None => d.ns.is_none() || d.ns == self.cur_ns,
+            None => {
+                d.ns.is_none()
+                    || d.ns == self.cur_ns
+                    || d.ns.as_ref().is_some_and(|n| self.open.borrow().contains(n))
+            }
         }
+    }
+
+    /// Enters an `ns:: { ... }` block.
+    pub fn open_scope(&self, ns: &str, span: Span) -> Res<()> {
+        self.known_namespace(ns, span)?;
+        self.open.borrow_mut().push(ns.to_string());
+        Ok(())
+    }
+
+    pub fn close_scope(&self) {
+        self.open.borrow_mut().pop();
     }
 
     fn seq(
@@ -1707,11 +1743,23 @@ impl Checker {
                 return Ok((Ir::Var(w.clone()), t.clone()));
             }
         }
-        let cands: Vec<usize> = (0..self.defs.len())
+        let mut cands: Vec<usize> = (0..self.defs.len())
             .filter(|&i| {
                 self.visible(&self.defs[i], qual) && Self::matches(&self.defs[i].parts, items)
             })
             .collect();
+        // Inside `ns:: { ... }`, the opened namespaces win over names from outside.
+        if qual.is_none() {
+            let open = self.open.borrow();
+            let inner: Vec<usize> = cands
+                .iter()
+                .copied()
+                .filter(|&i| self.defs[i].ns.as_ref().is_some_and(|n| open.contains(n)))
+                .collect();
+            if !inner.is_empty() {
+                cands = inner;
+            }
+        }
         if cands.is_empty() {
             return Err(self.no_match(items, span, sc, qual));
         }
