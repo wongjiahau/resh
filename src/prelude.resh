@@ -13,6 +13,9 @@ RECORD List Options {
     sort by (Sort Key DEFAULT name)
 }
 
+/// A fallible result whose error is a message.
+TYPE Result (T) = Result (T) Or (String)
+
 ENUM Entry Kind { file, directory, symlink }
 
 /// Every field `ls -l -i -s` can show; times are Unix seconds, `size` is bytes (0 for non-files).
@@ -34,15 +37,15 @@ RECORD Entry {
     link target (Option (String))
 }
 
-FUNCTION list file: Result (List (Entry)) Or (String) { NATIVE "list_default" }
-FUNCTION list file in (dir: String): Result (List (Entry)) Or (String) { NATIVE "list_in_default" }
-FUNCTION list file (options: List Options): Result (List (Entry)) Or (String) { NATIVE "list_file" }
-FUNCTION list file in (dir: String) (options: List Options): Result (List (Entry)) Or (String) { NATIVE "list_file_in" }
-FUNCTION read file (path: String): Result (String) Or (String) { NATIVE "read_file" }
-FUNCTION write (text: String) to file (path: String): Result (Unit) Or (String) { NATIVE "write_file" }
-FUNCTION move (from: String) to (to: String): Result (Unit) Or (String) { NATIVE "move_path" }
+FUNCTION list file: Result (List (Entry)) { NATIVE "list_default" }
+FUNCTION list file in (dir: String): Result (List (Entry)) { NATIVE "list_in_default" }
+FUNCTION list file (options: List Options): Result (List (Entry)) { NATIVE "list_file" }
+FUNCTION list file in (dir: String) (options: List Options): Result (List (Entry)) { NATIVE "list_file_in" }
+FUNCTION read file (path: String): Result (String) { NATIVE "read_file" }
+FUNCTION write (text: String) to file (path: String): Result (Unit) { NATIVE "write_file" }
+FUNCTION move (from: String) to (to: String): Result (Unit) { NATIVE "move_path" }
 
-FUNCTION run ((command: String, args: List (String))): Result (String) Or (String) { NATIVE "run" }
+FUNCTION run ((command: String, args: List (String))): Result (String) { NATIVE "run" }
 FUNCTION print (value: T): Unit { NATIVE "print" }
 FUNCTION count (items: List (T)): Int { NATIVE "count" }
 FUNCTION filter (items: List (Entry)) by extension (extension: String): List (Entry) { NATIVE "filter_ext" }

@@ -69,6 +69,7 @@ pub const KEYWORDS: &[&str] = &[
     "FUNCTION",
     "RECORD",
     "ENUM",
+    "TYPE",
     "NAMESPACE",
     "MATCH",
     "LET",

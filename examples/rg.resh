@@ -54,7 +54,7 @@ FUNCTION (option: Search Option) argument: List (String) {
 }
 
 FUNCTION search (pattern: String) in (dir: String) (options: Set (Search Option)):
-    Result (List (String)) Or (String)
+    Result (List (String))
 {
     run ("rg", [
         "--no-heading", "--line-number", "--column",
@@ -64,11 +64,11 @@ FUNCTION search (pattern: String) in (dir: String) (options: Set (Search Option)
         |> map (_) with ((text) => (text) lines)
 }
 
-FUNCTION search (pattern: String) in (dir: String): Result (List (String)) Or (String) {
+FUNCTION search (pattern: String) in (dir: String): Result (List (String)) {
     search pattern in dir {}
 }
 
-FUNCTION search (pattern: String): Result (List (String)) Or (String) {
+FUNCTION search (pattern: String): Result (List (String)) {
     search pattern in "." {}
 }
 

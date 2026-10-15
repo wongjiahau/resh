@@ -49,7 +49,7 @@ FUNCTION (step: Step) script: String {
     }
 }
 
-FUNCTION preview (path: String) with (steps: List (Step)): Result (String) Or (String) {
+FUNCTION preview (path: String) with (steps: List (Step)): Result (String) {
     run ("sed", ["-E", ...(flat map (steps) with ((s) => ["-e", (s) script])), path])
 }
 

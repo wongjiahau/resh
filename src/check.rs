@@ -66,6 +66,9 @@ impl fmt::Display for Type {
             Type::Lambda => write!(f, "lambda"),
             Type::Record(n) => write!(f, "{n}"),
             Type::Enum(n, args) if args.is_empty() => write!(f, "{n}"),
+            Type::Enum(n, args) if n == "Result" && args.len() == 2 && args[1] == Type::Str => {
+                write!(f, "Result ({})", args[0])
+            }
             Type::Enum(n, args) if n == "Result" && args.len() == 2 => {
                 write!(f, "Result ({}) Or ({})", args[0], args[1])
             }
@@ -336,6 +339,8 @@ pub struct Checker {
     pub defs: Vec<FnDef>,
     pub enums: HashMap<String, EnumDef>,
     pub records: HashMap<String, RecordDef>,
+    /// Type aliases by qualified pattern name (`Result _`): parameter names and target.
+    aliases: HashMap<String, (Vec<String>, TyExpr)>,
     /// The file being checked: its declarations are added to this namespace,
     /// and its unqualified calls and types resolve in it (plus the prelude).
     cur_ns: Option<String>,
@@ -481,6 +486,7 @@ impl Checker {
             defs: vec![],
             enums: HashMap::new(),
             records: HashMap::new(),
+            aliases: HashMap::new(),
             cur_ns: None,
             namespaces: HashSet::new(),
             open: RefCell::new(Vec::new()),
@@ -601,6 +607,13 @@ impl Checker {
             n if n.len() == 1 && n.chars().all(|c| c.is_ascii_uppercase()) => {
                 Ok(Type::Param(n.to_string()))
             }
+            n if self.find_alias(n).is_some() => {
+                let (params, target) = self.find_alias(n).unwrap();
+                arity(params.len(), Type::Never)?;
+                let body = self.resolve_ty(&target)?;
+                let map: HashMap<String, Type> = params.into_iter().zip(args).collect();
+                Ok(subst(&body, &map, true))
+            }
             n => match self
                 .cur_ns
                 .as_ref()
@@ -630,6 +643,18 @@ impl Checker {
             Some(ns) => format!("{ns}::{name}"),
             None => name.to_string(),
         }
+    }
+
+    /// The alias called `name` (`Result _`), looked up like a named type.
+    fn find_alias(&self, name: &str) -> Option<(Vec<String>, TyExpr)> {
+        self.cur_ns
+            .as_ref()
+            .into_iter()
+            .chain(self.open.borrow().iter())
+            .rev()
+            .find_map(|ns| self.aliases.get(&format!("{ns}::{name}")))
+            .or_else(|| self.aliases.get(name))
+            .cloned()
     }
 
     fn named_ty(&self, key: &str) -> Option<Type> {
@@ -879,6 +904,24 @@ impl Checker {
                         },
                     );
                 }
+                Decl::Alias { pattern, target, span } => {
+                    let mut params = Vec::new();
+                    for a in &pattern.args {
+                        let single = a.name.len() == 1 && a.name.chars().all(|c| c.is_ascii_uppercase());
+                        if !single || !a.args.is_empty() || !a.qualifiers.is_empty() {
+                            return Err(Diag::new(
+                                a.span,
+                                "an alias parameter is a single capital letter, e.g. `TYPE Result (T) = ...`",
+                            ));
+                        }
+                        params.push(a.name.clone());
+                    }
+                    let key = self.qualify(&pattern.name);
+                    if self.aliases.contains_key(&key) {
+                        return Err(Diag::new(*span, format!("alias `{}` is already defined", pattern.name)));
+                    }
+                    self.aliases.insert(key, (params, target.clone()));
+                }
                 _ => {}
             }
         }
@@ -921,7 +964,7 @@ impl Checker {
                     }
                     self.enums.get_mut(&key).unwrap().variants = vds;
                 }
-                Decl::Namespace { .. } => {}
+                Decl::Namespace { .. } | Decl::Alias { .. } => {}
                 Decl::Function {
                     sig,
                     ret,

@@ -51,7 +51,7 @@ NAMESPACE git
 
 RECORD Commit { hash (String), message (String) }
 
-FUNCTION commit (message: String): Result (Commit) Or (String) { ... }
+FUNCTION commit (message: String): Result (Commit) { ... }
 ```
 
 - `NAMESPACE name` applies file-wide: it must come first in the file, and every
@@ -108,6 +108,16 @@ rg:: {
 
 `LET name = value` binds a single-word name. A type may be stated with
 `LET name: Type = value`, which means `LET name = (value : Type)`.
+
+## Type aliases
+
+`TYPE Result (T) = Result (T) Or (String)` gives a shorter name to a type. The
+left side is an anyfix pattern whose slots are single capital letters; the right
+side is any type, which may use those letters. `Result (_)` and `Result (_) Or (_)`
+are different identifiers, so both exist: the prelude declares the first as the
+common case where the error is a message. An alias is interchangeable with what
+it stands for, and a type that prints as `Result (T) Or (String)` is shown as
+`Result (T)`.
 
 ## Records
 
@@ -357,7 +367,7 @@ Wrappers around existing CLI tools are written in resh itself, on top of a
 single primitive:
 
 ```
-FUNCTION run ((command: String, args: List (String))): Result (String) Or (String) { NATIVE "run" }
+FUNCTION run ((command: String, args: List (String))): Result (String) { NATIVE "run" }
 ```
 
 Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
@@ -396,7 +406,7 @@ FUNCTION (option: Find Option) argument: List (String) {
 }
 
 FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)):
-    Result (List (String)) Or (String)
+    Result (List (String))
 {
     run ("fd", [...(flat map (options) with ((o) => (o) argument)), pattern, dir])
         |> map (_) with ((text) => (text) lines)

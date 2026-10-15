@@ -41,7 +41,7 @@ pub fn parse_program(src: &str) -> Res<Vec<Item>> {
                 }
                 items.push(Item::Decl(decl));
             }
-            Tok::Kw(k) if k == "FUNCTION" || k == "RECORD" || k == "ENUM" => {
+            Tok::Kw(k) if k == "FUNCTION" || k == "RECORD" || k == "ENUM" || k == "TYPE" => {
                 items.push(Item::Decl(p.parse_decl()?));
             }
             _ => {
@@ -250,6 +250,17 @@ impl Parser {
                     variants,
                     span,
                     doc,
+                })
+            }
+            "TYPE" => {
+                let span = self.span();
+                let pattern = self.parse_type()?;
+                self.expect(Tok::Eq, "`=` after the alias name")?;
+                let target = self.parse_type()?;
+                Ok(Decl::Alias {
+                    pattern,
+                    target,
+                    span,
                 })
             }
             _ => unreachable!(),

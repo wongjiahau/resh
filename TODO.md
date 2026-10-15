@@ -82,7 +82,7 @@ Ground rules (see CLAUDE.md and README.md):
   `{ size at least (5 days) }` is a type error.
 
 - [x] **10. `run` primitive.**
-  `run ((command: String, args: List (String))): Result (String) Or (String)`.
+  `run ((command: String, args: List (String))): Result (String)`.
   Stdout is `Ok`; stderr plus exit code is `Err`. Never invoke a shell; pass
   argv directly.
   *Done when:* a test runs a real harmless command and one failing command.

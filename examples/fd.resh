@@ -58,17 +58,17 @@ FUNCTION (size: Size) bytes text: String { join ((size bytes) to string) with "b
 FUNCTION (duration: Duration) seconds text: String { join ((duration seconds) to string) with "s" }
 
 FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)):
-    Result (List (String)) Or (String)
+    Result (List (String))
 {
     run ("fd", [...(flat map (options) with ((o) => (o) argument)), "--", pattern, dir])
         |> map (_) with ((text) => (text) lines)
 }
 
-FUNCTION find (pattern: String) in (dir: String): Result (List (String)) Or (String) {
+FUNCTION find (pattern: String) in (dir: String): Result (List (String)) {
     find pattern in dir {}
 }
 
-FUNCTION find (pattern: String): Result (List (String)) Or (String) {
+FUNCTION find (pattern: String): Result (List (String)) {
     find pattern in "." {}
 }
 

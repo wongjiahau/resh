@@ -2083,7 +2083,7 @@ mod symbols {
             .expect("list file in");
         assert_eq!(
             list.ret.as_deref(),
-            Some("Result (List (Entry)) Or (String)")
+            Some("Result (List (Entry))")
         );
         assert!(syms.iter().any(|x| x.name == "Option (T)"));
         assert!(syms.iter().any(|x| x.name == "Result (T) Or (E)"));

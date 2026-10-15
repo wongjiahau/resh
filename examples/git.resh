@@ -68,17 +68,17 @@ FUNCTION (option: Diff Option) argument: List (String) {
 
 FUNCTION (duration: Duration) seconds text: String { (duration seconds) to string }
 
-FUNCTION status (options: Set (Status Option)): Result (List (String)) Or (String) {
+FUNCTION status (options: Set (Status Option)): Result (List (String)) {
     run ("git", ["status", "--porcelain=v1", ...(flat map (options) with ((o) => (o) argument))])
         |> map (_) with ((text) => (text) lines)
 }
 
-FUNCTION status: Result (List (String)) Or (String) {
+FUNCTION status: Result (List (String)) {
     status {}
 }
 
 FUNCTION log (options: Set (Log Option)) touching (paths: List (String)):
-    Result (List (String)) Or (String)
+    Result (List (String))
 {
     run ("git", [
         "log", "--format=%h %s",
@@ -88,23 +88,23 @@ FUNCTION log (options: Set (Log Option)) touching (paths: List (String)):
         |> map (_) with ((text) => (text) lines)
 }
 
-FUNCTION log (options: Set (Log Option)): Result (List (String)) Or (String) {
+FUNCTION log (options: Set (Log Option)): Result (List (String)) {
     log options touching []
 }
 
-FUNCTION log: Result (List (String)) Or (String) {
+FUNCTION log: Result (List (String)) {
     log {} touching []
 }
 
-FUNCTION diff (options: Set (Diff Option)) touching (paths: List (String)): Result (String) Or (String) {
+FUNCTION diff (options: Set (Diff Option)) touching (paths: List (String)): Result (String) {
     run ("git", ["diff", ...(flat map (options) with ((o) => (o) argument)), "--", ...paths])
 }
 
-FUNCTION diff (options: Set (Diff Option)): Result (String) Or (String) {
+FUNCTION diff (options: Set (Diff Option)): Result (String) {
     diff options touching []
 }
 
-FUNCTION diff: Result (String) Or (String) {
+FUNCTION diff: Result (String) {
     diff {} touching []
 }
 
