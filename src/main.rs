@@ -126,7 +126,9 @@ fn main() {
             if raw {
                 let (ok, text) = interp.raw(v);
                 if ok {
-                    println!("{text}");
+                    if !text.is_empty() {
+                        println!("{text}");
+                    }
                 } else {
                     eprintln!("{text}");
                     failed = true;

@@ -18,6 +18,8 @@ pub const NATIVES: &[&str] = &[
     "read_file",
     "write_file",
     "move_path",
+    "change_dir",
+    "current_dir",
     "print",
     "count",
     "filter_ext",
@@ -299,6 +301,14 @@ impl Interp {
                     as_str(&a[1])
                 )),
             }),
+            "change_dir" => Ok(match std::env::set_current_dir(as_str(&a[0])) {
+                Ok(()) => ok(Value::Unit),
+                Err(e) => err(format!("cannot change directory to {}: {e}", as_str(&a[0]))),
+            }),
+            "current_dir" => Ok(match std::env::current_dir() {
+                Ok(d) => ok(Value::Str(d.display().to_string())),
+                Err(e) => err(format!("cannot read the current directory: {e}")),
+            }),
             "run" => {
                 let Value::Tuple(parts) = &a[0] else {
                     return Err("run: expected a (command, args) tuple".into());
@@ -456,6 +466,7 @@ impl Interp {
         }
         let text = match v {
             Value::Str(s) => s.clone(),
+            Value::Unit => String::new(),
             Value::List(xs) if xs.iter().all(|x| matches!(x, Value::Str(_))) => xs
                 .iter()
                 .map(|x| self.raw(x).1)

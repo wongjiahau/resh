@@ -427,6 +427,36 @@ fn seq_text(items: &[SeqItem]) -> String {
         .join(" ")
 }
 
+/// The call as written, with literal arguments shown (`"a" 3 (f x)`), for
+/// diagnostics that must let the reader see exactly what was parsed.
+fn seq_source(items: &[SeqItem]) -> String {
+    items
+        .iter()
+        .map(|i| match i {
+            SeqItem::Word(w, _) => w.clone(),
+            SeqItem::Atom(e) => expr_source(e),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn expr_source(e: &Expr) -> String {
+    match &e.k {
+        ExprKind::Str(s) => format!("{s:?}"),
+        ExprKind::Int(n) => n.to_string(),
+        ExprKind::Float(f) => f.to_string(),
+        ExprKind::Placeholder => "_".to_string(),
+        ExprKind::Seq(items) => match items.as_slice() {
+            [SeqItem::Word(w, _)] => w.clone(),
+            _ => format!("({})", seq_source(items)),
+        },
+        ExprKind::Qualified(q, inner) => format!("{q}::{}", expr_source(inner)),
+        ExprKind::List(_) => "[...]".to_string(),
+        ExprKind::Brace(_) => "{...}".to_string(),
+        _ => "(...)".to_string(),
+    }
+}
+
 fn count_placeholders(e: &Expr) -> usize {
     match &e.k {
         ExprKind::Placeholder => 1,
@@ -904,10 +934,15 @@ impl Checker {
                         },
                     );
                 }
-                Decl::Alias { pattern, target, span } => {
+                Decl::Alias {
+                    pattern,
+                    target,
+                    span,
+                } => {
                     let mut params = Vec::new();
                     for a in &pattern.args {
-                        let single = a.name.len() == 1 && a.name.chars().all(|c| c.is_ascii_uppercase());
+                        let single =
+                            a.name.len() == 1 && a.name.chars().all(|c| c.is_ascii_uppercase());
                         if !single || !a.args.is_empty() || !a.qualifiers.is_empty() {
                             return Err(Diag::new(
                                 a.span,
@@ -918,7 +953,10 @@ impl Checker {
                     }
                     let key = self.qualify(&pattern.name);
                     if self.aliases.contains_key(&key) {
-                        return Err(Diag::new(*span, format!("alias `{}` is already defined", pattern.name)));
+                        return Err(Diag::new(
+                            *span,
+                            format!("alias `{}` is already defined", pattern.name),
+                        ));
                     }
                     self.aliases.insert(key, (params, target.clone()));
                 }
@@ -1708,7 +1746,13 @@ impl Checker {
     /// words and slots for an enum. Slots hold binders, `(_)`, or nested
     /// patterns, to any depth. Binders are appended to `binds` in the order
     /// the matcher binds them.
-    fn resolve(&self, ty: &Type, items: &[PatItem], span: Span, binds: &mut Vec<(String, Type)>) -> Res<Pat> {
+    fn resolve(
+        &self,
+        ty: &Type,
+        items: &[PatItem],
+        span: Span,
+        binds: &mut Vec<(String, Type)>,
+    ) -> Res<Pat> {
         match (ty, items) {
             (Type::Record(rn), [PatItem::Record(entries)]) => {
                 self.resolve_record(rn, entries, span, binds)
@@ -1727,21 +1771,30 @@ impl Checker {
             (Type::Enum(..), _) => self.resolve_variant(ty, items, span, binds),
             _ => Err(Diag::new(
                 span,
-                format!("this slot has type {ty}, which is not an enum or record, so it cannot hold a nested pattern; use a `(name)` binder or `(_)`"),
+                format!(
+                    "this slot has type {ty}, which is not an enum or record, so it cannot hold a nested pattern; use a `(name)` binder or `(_)`"
+                ),
             )),
         }
     }
 
-    fn resolve_slot(&self, slot: &Type, item: &PatItem, span: Span, binds: &mut Vec<(String, Type)>) -> Res<Pat> {
+    fn resolve_slot(
+        &self,
+        slot: &Type,
+        item: &PatItem,
+        span: Span,
+        binds: &mut Vec<(String, Type)>,
+    ) -> Res<Pat> {
         Ok(match item {
             PatItem::Bind(n) if n == "_" => Pat::Any(None),
             PatItem::Bind(n) => {
                 // A lone word naming a nullary variant of the slot's enum is
                 // that variant, not a binder.
                 let nullary = match slot {
-                    Type::Enum(se, _) => self.enums[se].variants.iter().position(
-                        |v| matches!(v.parts.as_slice(), [PartT::Word(w)] if w == n),
-                    ),
+                    Type::Enum(se, _) => self.enums[se]
+                        .variants
+                        .iter()
+                        .position(|v| matches!(v.parts.as_slice(), [PartT::Word(w)] if w == n)),
                     _ => None,
                 };
                 match nullary {
@@ -2204,10 +2257,23 @@ impl Checker {
             .collect();
         cands.truncate(6);
         let scope = qual.map_or(String::new(), |q| format!(" in namespace `{q}`"));
-        let mut msg = format!("no function matches `{}`{scope}.", seq_text(items));
+        let mut msg = format!("no function matches `{}`{scope}.", seq_source(items));
         msg.push_str(
             " Each argument must be a single token, a quoted string, or a parenthesised call.",
         );
+        if words.is_empty() {
+            msg.push_str(&format!(
+                " This is {} arguments side by side with no function name between them. \
+                 To make a list write `[a, b]`; to combine two strings use `join (a) with (b)`; \
+                 otherwise put the function's name words between the arguments.",
+                items.len()
+            ));
+        } else {
+            msg.push_str(&format!(
+                " The function words used are: {}. Run `:symbols` in the REPL (or `resh libs show <name>`) to see declared signatures.",
+                words.join(", ")
+            ));
+        }
         if !cands.is_empty() {
             msg.push_str(&format!(" Similar signatures: {}", cands.join(" | ")));
         }
@@ -2226,6 +2292,9 @@ mod strip_qualifier_tests {
             "find (root: String) with (options: Options)"
         );
         assert_eq!(strip_qualifier("List (fd::Entry)", "fd::"), "List (Entry)");
-        assert_eq!(strip_qualifier("xfd::T and a::fd::T", "fd::"), "xfd::T and a::fd::T");
+        assert_eq!(
+            strip_qualifier("xfd::T and a::fd::T", "fd::"),
+            "xfd::T and a::fd::T"
+        );
     }
 }

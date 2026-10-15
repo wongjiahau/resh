@@ -41,6 +41,9 @@ FUNCTION list file: Result (List (Entry)) { NATIVE "list_default" }
 FUNCTION list file in (dir: String): Result (List (Entry)) { NATIVE "list_in_default" }
 FUNCTION list file (options: List Options): Result (List (Entry)) { NATIVE "list_file" }
 FUNCTION list file in (dir: String) (options: List Options): Result (List (Entry)) { NATIVE "list_file_in" }
+/// Sets the directory that `run` (and so every wrapper) and the file functions use from now on.
+FUNCTION change directory to (path: String): Result (Unit) { NATIVE "change_dir" }
+FUNCTION current directory: Result (String) { NATIVE "current_dir" }
 FUNCTION read file (path: String): Result (String) { NATIVE "read_file" }
 FUNCTION write (text: String) to file (path: String): Result (Unit) { NATIVE "write_file" }
 FUNCTION move (from: String) to (to: String): Result (Unit) { NATIVE "move_path" }

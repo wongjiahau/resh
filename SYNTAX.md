@@ -491,9 +491,10 @@ that maps each option to argv, and one function per command that calls `run`.
 with `resh check name.resh`, then use it with `IMPORT name;`. `resh skill install`
 installs a Claude Code skill that writes wrappers for you.
 
-Wrappers run the tool in resh's current directory, so change directory before
-starting `resh` (or give the wrapper a directory parameter, as `fd::find ... in
-(dir)` does).
+Wrappers run the tool in resh's current directory. Change it with
+`change directory to "/path";` (it stays changed for the rest of the session);
+`current directory;` returns it. A wrapper may also take a directory parameter,
+as `fd::find ... in (dir)` does.
 
 ## Inspecting symbols
 

@@ -114,3 +114,25 @@ fn raw_unwraps_results_and_unescapes_strings() {
     assert_eq!(seen[0], (true, "a\nb\n".to_string()));
     assert_eq!(seen[1], (true, "a\nb".to_string()));
 }
+
+#[test]
+fn adjacent_arguments_error_shows_the_arguments_and_how_to_fix() {
+    let err = session().run("IMPORT git;\ngit::log { max count 1 } touching (\"a\" \"b\");").unwrap_err();
+    assert!(err.msg.contains("`\"a\" \"b\"`"), "{}", err.msg);
+    assert!(err.msg.contains("no function name between them"), "{}", err.msg);
+}
+
+#[test]
+fn change_directory_affects_current_directory() {
+    let dir = std::env::temp_dir().join(format!("resh-cd-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    let mut s = session();
+    let src = format!("change directory to \"{}\";\ncurrent directory;", dir.display());
+    let out = s.run(&src).unwrap();
+    assert_eq!(s.render(&out[1], false), format!("ok ({:?})", dir.display().to_string()));
+    let err = s.run("change directory to \"/no/such/dir\";\n").unwrap();
+    assert!(s.render(&err[0], false).contains("cannot change directory to /no/such/dir"));
+    std::env::set_current_dir(std::env::temp_dir()).unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
