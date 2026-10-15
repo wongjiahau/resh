@@ -2411,3 +2411,15 @@ mod sed_example {
         );
     }
 }
+
+#[test]
+fn unknown_variable_suggests_closest_name() {
+    let msg = run_err("LET counter = 1;\ncount (countr);");
+    assert!(msg.contains("Did you mean: `counter`"), "{msg}");
+}
+
+#[test]
+fn unknown_function_word_suggests_closest_word() {
+    let msg = run_err("[1, 2] cout;");
+    assert!(msg.contains("For `cout`:") && msg.contains("`count"), "{msg}");
+}

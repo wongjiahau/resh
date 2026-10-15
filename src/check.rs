@@ -2198,6 +2198,26 @@ impl Checker {
         }
     }
 
+    /// Declarations in any namespace with a word close to `w`, with their edit distance.
+    fn similar_defs(&self, w: &str, nullary_only: bool) -> Vec<(usize, String)> {
+        self.defs
+            .iter()
+            .filter(|d| !nullary_only || d.parts.len() == 1)
+            .filter_map(|d| {
+                let dist = d
+                    .parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        PartT::Word(x) => near(w, x),
+                        _ => None,
+                    })
+                    .min()?;
+                let l = label(&d.parts);
+                Some((dist, d.ns.as_ref().map_or(l.clone(), |ns| format!("{ns}::{l}"))))
+            })
+            .collect()
+    }
+
     fn no_match(&self, items: &[SeqItem], span: Span, sc: &Scope, qual: Option<&str>) -> Diag {
         // The call exists, but in a namespace the file did not qualify.
         if qual.is_none()
@@ -2222,10 +2242,16 @@ impl Checker {
                 .map(|(n, _)| n.as_str())
                 .filter(|n| *n != "_")
                 .collect();
+            let mut scored: Vec<(usize, String)> = vars
+                .iter()
+                .filter_map(|v| near(w, v).map(|d| (d, v.to_string())))
+                .collect();
+            scored.extend(self.similar_defs(w, true));
+            let hint = top_matches(scored);
             return Diag::new(
                 *s,
                 format!(
-                    "unknown name `{w}`: it is not a variable in scope ({}) and not a function without parameters",
+                    "unknown name `{w}`: it is not a variable in scope ({}) and not a function without parameters.{hint}",
                     if vars.is_empty() {
                         "none".to_string()
                     } else {
@@ -2274,11 +2300,50 @@ impl Checker {
                 words.join(", ")
             ));
         }
+        for w in &words {
+            let hint = top_matches(self.similar_defs(w, false));
+            if !hint.is_empty() && !self.defs.iter().any(|d| d.parts.iter().any(|p| matches!(p, PartT::Word(x) if x == w))) {
+                msg.push_str(&format!(" For `{w}`:{hint}"));
+            }
+        }
         if !cands.is_empty() {
             msg.push_str(&format!(" Similar signatures: {}", cands.join(" | ")));
         }
         Diag::new(span, msg)
     }
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let sub = prev[j] + usize::from(ca != *cb);
+            cur.push(sub.min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// The edit distance from `target` to `candidate`, if near enough to be a plausible typo.
+fn near(target: &str, candidate: &str) -> Option<usize> {
+    let max = (target.chars().count() / 2).max(2);
+    let d = edit_distance(&target.to_lowercase(), &candidate.to_lowercase());
+    (d <= max).then_some(d)
+}
+
+/// Formats the ten best-scoring distinct candidates as ` Did you mean: a, b, c?`.
+fn top_matches(mut scored: Vec<(usize, String)>) -> String {
+    scored.sort();
+    scored.dedup_by(|a, b| a.1 == b.1);
+    scored.truncate(10);
+    if scored.is_empty() {
+        return String::new();
+    }
+    let names: Vec<String> = scored.into_iter().map(|(_, n)| format!("`{n}`")).collect();
+    format!(" Did you mean: {}?", names.join(", "))
 }
 
 #[cfg(test)]
