@@ -58,6 +58,9 @@ FUNCTION map (result: Result (T) Or (E)) with (f: Function (T) To (U)): Result (
 FUNCTION (n: Int) to string: String { NATIVE "int_to_string" }
 FUNCTION (n: Float) to string: String { NATIVE "float_to_string" }
 FUNCTION (text: String) lines: List (String) { NATIVE "lines_of" }
+FUNCTION (text: String) split on (separator: String) at most (parts: Int): List (String) { NATIVE "split_on" }
+FUNCTION (items: List (T)) item (index: Int): T { NATIVE "item_at" }
+FUNCTION (text: String) to int: Result (Int) { NATIVE "string_to_int" }
 FUNCTION join (a: String) with (b: String): String { NATIVE "join_with" }
 FUNCTION join (a: List (T)) with (b: List (T)): List (T) { NATIVE "join_with" }
 FUNCTION (a: T) equals (b: T): Boolean { NATIVE "equals" }

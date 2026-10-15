@@ -24,6 +24,9 @@ pub const NATIVES: &[&str] = &[
     "count",
     "filter_ext",
     "lines_of",
+    "split_on",
+    "item_at",
+    "string_to_int",
     "join_with",
     "equals",
     "unwrap",
@@ -354,6 +357,27 @@ impl Interp {
                     .map(|l| Value::Str(l.to_string()))
                     .collect(),
             )),
+            "split_on" => match &a[2] {
+                Value::Int(n) if *n > 0 => Ok(Value::List(
+                    as_str(&a[0])
+                        .splitn(*n as usize, as_str(&a[1]))
+                        .map(|p| Value::Str(p.to_string()))
+                        .collect(),
+                )),
+                _ => Err("split: the number of parts must be positive".into()),
+            },
+            "item_at" => match (&a[0], &a[1]) {
+                (Value::List(xs), Value::Int(i)) => usize::try_from(*i)
+                    .ok()
+                    .and_then(|i| xs.get(i))
+                    .cloned()
+                    .ok_or_else(|| format!("item {i} is out of range for {} items", xs.len())),
+                _ => Err("item: not a list and an Int".into()),
+            },
+            "string_to_int" => Ok(match as_str(&a[0]).trim().parse() {
+                Ok(n) => ok(Value::Int(n)),
+                Err(_) => err(format!("`{}` is not an Int", as_str(&a[0]))),
+            }),
             "join_with" => match (&a[0], &a[1]) {
                 (Value::List(x), Value::List(y)) => {
                     Ok(Value::List(x.iter().chain(y).cloned().collect()))

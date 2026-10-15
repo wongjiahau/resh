@@ -1771,6 +1771,25 @@ mod rg_example {
     }
 
     #[test]
+    fn matches_are_typed_and_context_lines_are_dropped() {
+        let (mut s, _) = session(Ok(
+            "a.rs-1-ctx: with:colons\na.rs:2:5:let x: i32 = 1;\n--\nb.rs:10:1:fn main() {}\n",
+        ));
+        let out = s.run(r#"rg::search "x";"#).unwrap();
+        let shown = s.render(&out[0], false);
+        assert!(shown.contains("line 2,") && shown.contains("column 5,"), "{shown}");
+        assert!(shown.contains("let x: i32 = 1;"), "{shown}");
+        assert!(shown.contains("b.rs") && !shown.contains("ctx"), "{shown}");
+    }
+
+    #[test]
+    fn search_raw_keeps_every_line() {
+        let (mut s, _) = session(Ok("a.rs-1-ctx\na.rs:2:5:x\n"));
+        let out = s.run(r#"rg::search raw "x" in "." {};"#).unwrap();
+        assert!(s.render(&out[0], false).contains("a.rs-1-ctx"));
+    }
+
+    #[test]
     fn usage_plain() {
         assert_eq!(argv(r#"rg::search "TODO";"#), expected(&[], &["TODO", "."]));
     }
@@ -1818,13 +1837,21 @@ mod rg_example {
     }
 
     #[test]
-    fn result_is_lines_of_stdout() {
+    fn result_is_typed_matches() {
         let (mut s, _) = session(Ok("a.rs:1:1:x\nb.rs:2:3:x\n"));
         let v = s.run(r#"rg::search "x";"#).unwrap();
-        let list = Value::List(vec![
-            Value::Str("a.rs:1:1:x".into()),
-            Value::Str("b.rs:2:3:x".into()),
-        ]);
+        let m = |p: &str, l: i64, c: i64| {
+            Value::Record(
+                "rg::Match".into(),
+                vec![
+                    Value::Str(p.into()),
+                    Value::Int(l),
+                    Value::Int(c),
+                    Value::Str("x".into()),
+                ],
+            )
+        };
+        let list = Value::List(vec![m("a.rs", 1, 1), m("b.rs", 2, 3)]);
         assert_eq!(v, vec![Value::Variant("Result".into(), 0, vec![list])]);
     }
 
