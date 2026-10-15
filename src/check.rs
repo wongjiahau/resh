@@ -202,7 +202,10 @@ impl PartT {
             PartT::Tuple(cs) => Some((
                 format!(
                     "({})",
-                    cs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
+                    cs.iter()
+                        .map(|(n, _)| n.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 Type::Tuple(cs.iter().map(|(_, t)| t.clone()).collect()),
             )),
@@ -231,6 +234,8 @@ pub struct FnDef {
     pub parts: Vec<PartT>,
     pub ret: Type,
     pub kind: FnKind,
+    /// The `//` comment lines directly above the declaration, if any.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -243,6 +248,8 @@ pub struct VariantDef {
 pub struct EnumDef {
     pub params: Vec<String>,
     pub variants: Vec<VariantDef>,
+    /// The `//` comment lines directly above the declaration, if any.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -286,6 +293,8 @@ impl FieldDef {
 #[derive(Debug, Clone)]
 pub struct RecordDef {
     pub fields: Vec<FieldDef>,
+    /// The `//` comment lines directly above the declaration, if any.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -335,6 +344,38 @@ pub struct Checker {
     namespaces: HashSet<String>,
     /// Namespaces opened by enclosing `ns:: { ... }` blocks, outermost first.
     open: RefCell<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymbolKind {
+    Record,
+    Enum,
+    Function,
+}
+
+/// A record field or an enum variant.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Member {
+    /// `port (Int)` for a field, `file` or `link (target: String)` for a variant.
+    pub signature: String,
+    /// Per slot of a record field, its `DEFAULT` as text when it is a literal
+    /// or a plain variant (`None` when it has none or is not renderable).
+    /// Empty for variants.
+    pub default: Vec<Option<String>>,
+}
+
+/// One entry of `Checker::symbols`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Symbol {
+    pub kind: SymbolKind,
+    /// Record: `List Options`. Enum with parameters: `Option (T)`.
+    /// Function: its signature, `find (root: String) with (options: fd::Options)`.
+    pub name: String,
+    pub doc: Option<String>,
+    /// Record fields or enum variants; empty for functions.
+    pub members: Vec<Member>,
+    /// The return type of a function (`List (Entry)`); `None` for types.
+    pub ret: Option<String>,
 }
 
 pub fn label(parts: &[PartT]) -> String {
@@ -447,6 +488,7 @@ impl Checker {
                             enum_name: name.to_string(),
                             idx,
                         },
+                        doc: None,
                     });
                     variants.push(VariantDef { parts, fn_id: id });
                 }
@@ -455,6 +497,7 @@ impl Checker {
                     EnumDef {
                         params: params.iter().map(|s| s.to_string()).collect(),
                         variants,
+                        doc: None,
                     },
                 );
             };
@@ -529,9 +572,10 @@ impl Checker {
                 Type::Function(Box::new(args[0].clone()), Box::new(args[1].clone())),
             ),
             "Set _" => match args.first() {
-                Some(Type::Enum(..) | Type::Param(_) | Type::Never) | None => {
-                    arity(1, Type::Set(Box::new(args.first().cloned().unwrap_or(Type::Never))))
-                }
+                Some(Type::Enum(..) | Type::Param(_) | Type::Never) | None => arity(
+                    1,
+                    Type::Set(Box::new(args.first().cloned().unwrap_or(Type::Never))),
+                ),
                 Some(other) => Err(Diag::new(
                     t.span,
                     format!("`Set` holds the variants of an enum, found {other}"),
@@ -583,22 +627,126 @@ impl Checker {
         }
     }
 
+    fn unknown_namespace_message(&self, q: &str) -> String {
+        let mut known: Vec<&str> = self.namespaces.iter().map(String::as_str).collect();
+        known.sort();
+        format!(
+            "unknown namespace `{q}`; declared namespaces: {}",
+            if known.is_empty() {
+                "none".to_string()
+            } else {
+                known.join(", ")
+            }
+        )
+    }
+
+    /// Declared namespaces, sorted.
+    pub fn namespace_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.namespaces.iter().cloned().collect();
+        names.sort();
+        names
+    }
+
     fn known_namespace(&self, q: &str, span: Span) -> Res<()> {
         if self.namespaces.contains(q) {
             return Ok(());
         }
-        let known: Vec<&str> = self.namespaces.iter().map(String::as_str).collect();
-        Err(Diag::new(
-            span,
-            format!(
-                "unknown namespace `{q}`; declared namespaces: {}",
-                if known.is_empty() {
-                    "none".to_string()
-                } else {
-                    known.join(", ")
-                }
-            ),
-        ))
+        Err(Diag::new(span, self.unknown_namespace_message(q)))
+    }
+
+    /// Every symbol declared directly in a namespace (`None` is the global one:
+    /// the prelude, built-ins and files without a `NAMESPACE`). Records and
+    /// enums come first, sorted by name, then functions in declaration order.
+    pub fn symbols(&self, ns: Option<&str>) -> Result<Vec<Symbol>, String> {
+        if let Some(q) = ns
+            && !self.namespaces.contains(q)
+        {
+            return Err(self.unknown_namespace_message(q));
+        }
+        let prefix = ns.map(|n| format!("{n}::")).unwrap_or_default();
+        // A key belongs to the namespace when it is `ns::Name` (or has no `::`
+        // for the global namespace).
+        let local = |key: &str| -> Option<String> {
+            match ns {
+                Some(_) => key.strip_prefix(&prefix).map(str::to_string),
+                None => (!key.contains("::")).then(|| key.to_string()),
+            }
+        };
+        let mut types: Vec<Symbol> = Vec::new();
+        for (key, r) in &self.records {
+            let Some(name) = local(key) else { continue };
+            let members = r
+                .fields
+                .iter()
+                .map(|f| Member {
+                    signature: f.signature(),
+                    default: f
+                        .slots
+                        .iter()
+                        .map(|s| s.default.as_ref().and_then(|d| self.default_text(d)))
+                        .collect(),
+                })
+                .collect();
+            types.push(Symbol {
+                kind: SymbolKind::Record,
+                name,
+                doc: r.doc.clone(),
+                members,
+                ret: None,
+            });
+        }
+        for (key, e) in &self.enums {
+            let Some(base) = local(key) else { continue };
+            let name = match (base.as_str(), e.params.as_slice()) {
+                ("Result", [t, u]) => format!("Result ({t}) Or ({u})"),
+                (_, ps) => ps
+                    .iter()
+                    .fold(base.clone(), |acc, p| format!("{acc} ({p})")),
+            };
+            types.push(Symbol {
+                kind: SymbolKind::Enum,
+                name,
+                doc: e.doc.clone(),
+                members: e
+                    .variants
+                    .iter()
+                    .map(|v| Member {
+                        signature: label(&v.parts),
+                        default: Vec::new(),
+                    })
+                    .collect(),
+                ret: None,
+            });
+        }
+        types.sort_by(|a, b| a.name.cmp(&b.name));
+        let fns = self
+            .defs
+            .iter()
+            .filter(|d| d.ns.as_deref() == ns && !matches!(d.kind, FnKind::Variant { .. }))
+            .map(|d| Symbol {
+                kind: SymbolKind::Function,
+                name: label(&d.parts),
+                doc: d.doc.clone(),
+                members: Vec::new(),
+                ret: Some(d.ret.to_string()),
+            });
+        types.extend(fns);
+        Ok(types)
+    }
+
+    /// A field default as source text: a literal, or a variant without arguments.
+    fn default_text(&self, ir: &Ir) -> Option<String> {
+        match ir {
+            Ir::Lit(Value::Int(n)) => Some(n.to_string()),
+            Ir::Lit(Value::Float(x)) => Some(x.to_string()),
+            Ir::Lit(Value::Bool(b)) => Some(b.to_string()),
+            Ir::Lit(Value::Str(s)) => Some(format!("{s:?}")),
+            Ir::Call(id, args) if args.is_empty() => match &self.defs.get(*id)?.kind {
+                FnKind::Variant { .. } => Some(label(&self.defs[*id].parts)),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn mk_parts(&self, sig: &SigAst) -> Res<Vec<PartT>> {
@@ -663,6 +811,7 @@ impl Checker {
             parts,
             ret,
             kind,
+            doc: None,
         });
         Ok(self.defs.len() - 1)
     }
@@ -678,12 +827,22 @@ impl Checker {
     pub fn declare<'a>(&mut self, decls: &[&'a Decl]) -> Res<Vec<(usize, &'a FnBody, Span)>> {
         for d in decls {
             match d {
-                Decl::Record { name, span, .. } => {
+                Decl::Record {
+                    name, span, doc, ..
+                } => {
                     let key = self.qualify(name);
                     self.type_name_free(&key, *span)?;
-                    self.records.insert(key, RecordDef { fields: vec![] });
+                    self.records.insert(
+                        key,
+                        RecordDef {
+                            fields: vec![],
+                            doc: doc.clone(),
+                        },
+                    );
                 }
-                Decl::Enum { name, span, .. } => {
+                Decl::Enum {
+                    name, span, doc, ..
+                } => {
                     let key = self.qualify(name);
                     self.type_name_free(&key, *span)?;
                     self.enums.insert(
@@ -691,6 +850,7 @@ impl Checker {
                         EnumDef {
                             params: vec![],
                             variants: vec![],
+                            doc: doc.clone(),
                         },
                     );
                 }
@@ -737,7 +897,12 @@ impl Checker {
                     self.enums.get_mut(&key).unwrap().variants = vds;
                 }
                 Decl::Namespace { .. } => {}
-                Decl::Function { sig, ret, body } => {
+                Decl::Function {
+                    sig,
+                    ret,
+                    body,
+                    doc,
+                } => {
                     let parts = self.mk_parts(sig)?;
                     let rt = match ret {
                         Some(t) => self.resolve_ty(t)?,
@@ -760,6 +925,7 @@ impl Checker {
                         FnBody::Block(_) => FnKind::User { params, body: None },
                     };
                     let id = self.add_def(parts, rt, kind, sig.span)?;
+                    self.defs[id].doc = doc.clone();
                     if let FnBody::Block(_) = body {
                         pending.push((id, body, sig.span));
                     }
@@ -957,7 +1123,12 @@ impl Checker {
                     })
                     .collect::<Vec<_>>()
                     .join(" ");
-                k == key && v.parts.iter().filter(|p| matches!(p, PartT::Param(..))).count() == slot_values
+                k == key
+                    && v.parts
+                        .iter()
+                        .filter(|p| matches!(p, PartT::Param(..)))
+                        .count()
+                        == slot_values
             })
             .map(|(i, v)| (i, v.fn_id))
     }
@@ -980,7 +1151,9 @@ impl Checker {
                     known.join(", ")
                 ));
             };
-            let FnKind::Variant { .. } = self.defs[fid].kind else { continue };
+            let FnKind::Variant { .. } = self.defs[fid].kind else {
+                continue;
+            };
             let slots = self.defs[fid].parts.iter().filter_map(|p| match p {
                 PartT::Param(_, t) => Some(t),
                 PartT::Word(_) | PartT::Tuple(_) => None,
@@ -1054,7 +1227,9 @@ impl Checker {
                 .iter()
                 .zip(tys)
                 .map(|((k, irs), (_, ts))| {
-                    let (_, fid) = self.variant_for(e, k, irs.len()).expect("checked by `fits`");
+                    let (_, fid) = self
+                        .variant_for(e, k, irs.len())
+                        .expect("checked by `fits`");
                     let slots = self.defs[fid].parts.iter().filter_map(|p| match p {
                         PartT::Param(_, t) => Some(t),
                         PartT::Word(_) | PartT::Tuple(_) => None,
@@ -1494,12 +1669,14 @@ impl Checker {
             })?;
             for (i, (p, q)) in ed.variants[vi].parts.iter().zip(&arm.pat).enumerate() {
                 match (p, q) {
-                    (PartT::Param(..), PatItem::Nested(items)) => return Some((vi, i, items.clone())),
+                    (PartT::Param(..), PatItem::Nested(items)) => {
+                        return Some((vi, i, items.clone()));
+                    }
                     (PartT::Param(_, ty), PatItem::Bind(name)) if name != "_" => {
                         if let Type::Enum(en, _) = subst(ty, pmap, false)
-                            && self.enums[&en].variants.iter().any(|v| {
-                                matches!(v.parts.as_slice(), [PartT::Word(w)] if w == name)
-                            })
+                            && self.enums[&en].variants.iter().any(
+                                |v| matches!(v.parts.as_slice(), [PartT::Word(w)] if w == name),
+                            )
                         {
                             return Some((vi, i, vec![PatItem::Word(name.clone())]));
                         }
@@ -1710,7 +1887,9 @@ impl Checker {
             None => {
                 d.ns.is_none()
                     || d.ns == self.cur_ns
-                    || d.ns.as_ref().is_some_and(|n| self.open.borrow().contains(n))
+                    || d.ns
+                        .as_ref()
+                        .is_some_and(|n| self.open.borrow().contains(n))
             }
         }
     }
@@ -1821,7 +2000,10 @@ impl Checker {
                             failures.push(Diag::new(
                                 body.span,
                                 self.mismatch(
-                                    &format!("the body of the lambda for `{pname}` of `{}`", label(&def.parts)),
+                                    &format!(
+                                        "the body of the lambda for `{pname}` of `{}`",
+                                        label(&def.parts)
+                                    ),
                                     &subst(ret, &map, true),
                                     &bt,
                                 ),

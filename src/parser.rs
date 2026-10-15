@@ -2,12 +2,18 @@
 //! flat sequence of words and single-token atoms (`SeqItem`). The checker
 //! matches that sequence against declared signatures.
 
+use std::collections::HashMap;
+
 use crate::ast::*;
-use crate::lexer::{Diag, Res, Span, Tok, Token, lex};
+use crate::lexer::{Diag, Res, Span, Tok, Token, lex_with_docs};
 
 pub fn parse_program(src: &str) -> Res<Vec<Item>> {
-    let toks = lex(src)?;
-    let mut p = Parser { t: toks, p: 0 };
+    let (toks, docs) = lex_with_docs(src)?;
+    let mut p = Parser {
+        t: toks,
+        p: 0,
+        docs,
+    };
     let mut items: Vec<Item> = Vec::new();
     loop {
         while matches!(p.peek(), Tok::Semi) {
@@ -51,6 +57,8 @@ pub fn parse_program(src: &str) -> Res<Vec<Item>> {
 struct Parser {
     t: Vec<Token>,
     p: usize,
+    /// Doc comments by the line of the token they sit above.
+    docs: HashMap<usize, String>,
 }
 
 fn describe(t: &Tok) -> String {
@@ -119,7 +127,6 @@ impl Parser {
         t
     }
 
-
     fn err<T>(&self, what: &str) -> Res<T> {
         Err(Diag::new(
             self.span(),
@@ -156,6 +163,7 @@ impl Parser {
 
     fn parse_decl(&mut self) -> Res<Decl> {
         let kw = self.bump();
+        let doc = self.docs.get(&kw.span.line).cloned();
         let Tok::Kw(kw_name) = kw.tok else {
             unreachable!()
         };
@@ -195,7 +203,12 @@ impl Parser {
                 } else {
                     FnBody::Block(self.parse_block()?)
                 };
-                Ok(Decl::Function { sig, ret, body })
+                Ok(Decl::Function {
+                    sig,
+                    ret,
+                    body,
+                    doc,
+                })
             }
             "RECORD" => {
                 let (name, span) = self.parse_decl_name()?;
@@ -209,7 +222,12 @@ impl Parser {
                     fields.push(self.parse_field()?);
                     self.field_sep()?;
                 }
-                Ok(Decl::Record { name, fields, span })
+                Ok(Decl::Record {
+                    name,
+                    fields,
+                    span,
+                    doc,
+                })
             }
             "ENUM" => {
                 let (name, span) = self.parse_decl_name()?;
@@ -231,6 +249,7 @@ impl Parser {
                     name,
                     variants,
                     span,
+                    doc,
                 })
             }
             _ => unreachable!(),
@@ -534,7 +553,10 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> Res<Stmt> {
         if let Tok::Word(ns) = self.peek().clone()
-            && matches!(self.t.get(self.p + 1).map(|t| &t.tok), Some(Tok::ColonColon))
+            && matches!(
+                self.t.get(self.p + 1).map(|t| &t.tok),
+                Some(Tok::ColonColon)
+            )
             && matches!(self.t.get(self.p + 2).map(|t| &t.tok), Some(Tok::LBrace))
         {
             let span = self.bump().span;
@@ -669,7 +691,8 @@ impl Parser {
 
     fn parse_match(&mut self) -> Res<Expr> {
         let span = self.bump().span;
-        let scrut = self.single_operand("a single token or parenthesised expression after MATCH")?;
+        let scrut =
+            self.single_operand("a single token or parenthesised expression after MATCH")?;
         self.expect(Tok::LBrace, "`{` after the MATCH subject")?;
         let mut arms = Vec::new();
         loop {
@@ -861,9 +884,8 @@ impl Parser {
                     }
                     if matches!(self.peek(), Tok::Ellipsis) {
                         let sspan = self.bump().span;
-                        let operand = self.single_operand(
-                            "a single token or parenthesised list after `...`",
-                        )?;
+                        let operand = self
+                            .single_operand("a single token or parenthesised list after `...`")?;
                         xs.push(Expr {
                             k: ExprKind::Spread(Box::new(operand)),
                             span: sspan,
@@ -889,11 +911,7 @@ impl Parser {
                     }
                     let espan = self.span();
                     let items: Vec<SeqItem> = self
-                        .parse_anyfix(
-                            AnyfixRules::default(),
-                            Self::expr_slot,
-                            Self::expr_atom,
-                        )?
+                        .parse_anyfix(AnyfixRules::default(), Self::expr_slot, Self::expr_atom)?
                         .into_iter()
                         .map(Self::seq_item)
                         .collect();

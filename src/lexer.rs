@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -114,6 +115,16 @@ fn word_char(c: char) -> bool {
 }
 
 pub fn lex(src: &str) -> Res<Vec<Token>> {
+    lex_with_docs(src).map(|(toks, _)| toks)
+}
+
+/// Like `lex`, and also returns doc comments: a run of `//` lines, each alone
+/// on its line, directly above a token (no blank line between), keyed by that
+/// token's line. The parser attaches them to the declaration starting there.
+pub fn lex_with_docs(src: &str) -> Res<(Vec<Token>, HashMap<usize, String>)> {
+    let mut docs: HashMap<usize, String> = HashMap::new();
+    let mut run: Vec<String> = Vec::new();
+    let mut run_end = 0usize;
     let mut lx = Lx {
         c: src.chars().collect(),
         i: 0,
@@ -126,6 +137,13 @@ pub fn lex(src: &str) -> Res<Vec<Token>> {
             line: lx.line,
             col: lx.col,
         };
+        let is_comment = c == '/' && lx.peek2() == Some('/');
+        if !is_comment && !c.is_whitespace() {
+            if !run.is_empty() && span.line == run_end + 1 {
+                docs.insert(span.line, run.join("\n"));
+            }
+            run.clear();
+        }
         let mut push = |tok: Tok| out.push(Token { tok, span });
         match c {
             ' ' | '\t' | '\r' | '\n' => {
@@ -136,11 +154,24 @@ pub fn lex(src: &str) -> Res<Vec<Token>> {
                 push(Tok::Semi);
             }
             '/' if lx.peek2() == Some('/') => {
+                lx.bump();
+                lx.bump();
+                let mut text = String::new();
                 while let Some(ch) = lx.peek() {
                     if ch == '\n' {
                         break;
                     }
+                    text.push(ch);
                     lx.bump();
+                }
+                let alone = out.last().is_none_or(|t| t.span.line != span.line);
+                if !alone || (!run.is_empty() && span.line != run_end + 1) {
+                    run.clear();
+                }
+                if alone {
+                    let text = text.strip_prefix(' ').unwrap_or(&text);
+                    run.push(text.trim_end().to_string());
+                    run_end = span.line;
                 }
             }
             '(' => {
@@ -187,7 +218,10 @@ pub fn lex(src: &str) -> Res<Vec<Token>> {
                     lx.bump();
                     push(Tok::Ellipsis);
                 } else {
-                    return Err(Diag::new(span, "unexpected `.`; list spread is written `...`"));
+                    return Err(Diag::new(
+                        span,
+                        "unexpected `.`; list spread is written `...`",
+                    ));
                 }
             }
             '?' => {
@@ -302,5 +336,5 @@ pub fn lex(src: &str) -> Res<Vec<Token>> {
             col: lx.col,
         },
     });
-    Ok(out)
+    Ok((out, docs))
 }

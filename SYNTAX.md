@@ -403,6 +403,38 @@ fd::find "" in "src" { extension ["rs"], max depth 3 };
 Language features this relies on and that may not exist yet: `flat map (items)
 with (f)` over sets, `(n) to string` and `map (result) with (f)`.
 
+## Inspecting symbols
+
+In the REPL, `:symbols` lists the available namespaces (`prelude` is the
+built-in one), and `:symbols <namespace>` lists that namespace's records, enums
+and functions with their signatures. Start `resh --json` for one JSON
+object instead of text. An unknown namespace is an error on stderr that lists
+the declared ones.
+
+`//` comment lines directly above a `FUNCTION`, `RECORD` or `ENUM` (no blank
+line between) are its docs, and `:symbols` shows them. In the REPL a
+comment-only line waits for the declaration below it. `NAMESPACE` applies per
+REPL entry, so put it on the same line as the declaration:
+`NAMESPACE demo; ENUM Mode { fast, slow }`.
+
+```
+resh> NAMESPACE demo; ENUM Mode { fast, slow }
+resh> :symbols
+namespaces
+  prelude
+  demo
+resh> :symbols demo
+demo
+  enum    Mode
+            fast
+            slow
+```
+
+```
+$ printf 'NAMESPACE demo; ENUM Mode { fast, slow }\n:symbols demo\n' | resh --json
+{"namespace":"demo","symbols":[{"kind":"enum","name":"Mode","doc":null,"members":[{"signature":"fast","defaults":[]},{"signature":"slow","defaults":[]}],"returns":null}]}
+```
+
 ## Naming conventions
 
 See `CLAUDE.md`: no "of" in names; type names are title case.

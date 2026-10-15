@@ -14,7 +14,10 @@ pub struct TyExpr {
 #[derive(Debug, Clone)]
 pub enum Part {
     Word(String),
-    Param { name: String, ty: Option<TyExpr> },
+    Param {
+        name: String,
+        ty: Option<TyExpr>,
+    },
     /// `((name: Type, name: Type))`: one tuple parameter with a binder per component.
     Tuple(Vec<(String, TyExpr)>),
 }
@@ -54,16 +57,19 @@ pub enum Decl {
         sig: SigAst,
         ret: Option<TyExpr>,
         body: FnBody,
+        doc: Option<String>,
     },
     Record {
         name: String,
         fields: Vec<FieldAst>,
         span: Span,
+        doc: Option<String>,
     },
     Enum {
         name: String,
         variants: Vec<SigAst>,
         span: Span,
+        doc: Option<String>,
     },
 }
 

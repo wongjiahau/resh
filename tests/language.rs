@@ -179,7 +179,8 @@ fn failed_overload_lists_argument_types_and_candidates() {
 
 #[test]
 fn record_literal_picks_the_only_record_it_fits() {
-    let src = format!("{OVERLOADS}\nsum {{ left 1, right 2 }};\nsum {{ left 1, right 2, extra 3 }};");
+    let src =
+        format!("{OVERLOADS}\nsum {{ left 1, right 2 }};\nsum {{ left 1, right 2, extra 3 }};");
     assert_eq!(run(&src), vec![Value::Int(1), Value::Int(3)]);
 }
 
@@ -685,7 +686,10 @@ FUNCTION host name (c: Server Config): String {
     #[test]
     fn empty_literal_is_every_default() {
         assert_eq!(server("port number {};"), vec![Value::Int(8080)]);
-        assert_eq!(server("host name {};"), vec![Value::Str("localhost".into())]);
+        assert_eq!(
+            server("host name {};"),
+            vec![Value::Str("localhost".into())]
+        );
     }
 
     #[test]
@@ -899,7 +903,8 @@ MATCH r { { n (n) } => n };
         assert!(msg.contains("declared to return Int"), "{msg}");
         assert!(msg.contains("String"), "{msg}");
         // `(_)` ignores a slot and binds nothing.
-        let msg = server_err("LET c: Server Config = {};\nMATCH c { { host (_), port (_) } => _ };");
+        let msg =
+            server_err("LET c: Server Config = {};\nMATCH c { { host (_), port (_) } => _ };");
         assert!(msg.contains("`_` can only be used"), "{msg}");
     }
 
@@ -1031,7 +1036,10 @@ FUNCTION f (b: Banana): Int { 2 }
     let msg = run_err(&format!("{src};\nf {{ z 1 }};"));
     assert!(msg.contains("no overload of `f <arg>`"), "{msg}");
     assert!(msg.contains("record literal { z (Int) }"), "{msg}");
-    assert!(msg.contains("`Apple` fields: x (Int), ripe (Boolean)"), "{msg}");
+    assert!(
+        msg.contains("`Apple` fields: x (Int), ripe (Boolean)"),
+        "{msg}"
+    );
     assert!(msg.contains("`Banana` fields: y (Int) (optional)"), "{msg}");
     // `{}` fits only Banana, whose fields are all optional.
     assert_eq!(run(&format!("{src};\nf {{}};")), vec![Value::Int(2)]);
@@ -1118,7 +1126,10 @@ mod lambdas {
         // The result type comes from the lambda body.
         assert_eq!(
             run("flat map ([\"a\"]) with ((s) => [s, \"!\"]);"),
-            vec![Value::List(vec![Value::Str("a".into()), Value::Str("!".into())])]
+            vec![Value::List(vec![
+                Value::Str("a".into()),
+                Value::Str("!".into())
+            ])]
         );
     }
 
@@ -1143,7 +1154,8 @@ mod lambdas {
 
     #[test]
     fn lambda_before_its_parameter_type_is_known_is_an_error() {
-        let src = "FUNCTION apply (f: Function (T) To (T)) to (x: T): T { x }\napply ((y) => y) to 1;";
+        let src =
+            "FUNCTION apply (f: Function (T) To (T)) to (x: T): T { x }\napply ((y) => y) to 1;";
         let msg = run_err(src);
         assert!(msg.contains("not known yet"), "{msg}");
         assert!(msg.contains("move the lambda after it"), "{msg}");
@@ -1287,7 +1299,6 @@ mod prelude_functions {
     #[test]
     fn int_to_string() {
         assert_eq!(run("(42) to string;"), vec![Value::Str("42".into())]);
-        
     }
 
     #[test]
@@ -1303,12 +1314,16 @@ mod prelude_functions {
 
     #[test]
     fn map_result_applies_to_ok() {
-        assert_eq!(render("map (ok 1) with ((n) => (n) to string);"), "ok (\"1\")");
+        assert_eq!(
+            render("map (ok 1) with ((n) => (n) to string);"),
+            "ok (\"1\")"
+        );
     }
 
     #[test]
     fn map_result_keeps_error() {
-        let src = "LET r = read file \"/definitely/not/here\";\nmap (r) with ((s) => count ((s) lines));";
+        let src =
+            "LET r = read file \"/definitely/not/here\";\nmap (r) with ((s) => count ((s) lines));";
         let out = render(src);
         assert!(out.starts_with("error"), "{out}");
     }
@@ -1321,14 +1336,21 @@ mod prelude_functions {
 
     #[test]
     fn join_strings() {
-        assert_eq!(run("join (\"a\") with (\"b\");"), vec![Value::Str("ab".into())]);
+        assert_eq!(
+            run("join (\"a\") with (\"b\");"),
+            vec![Value::Str("ab".into())]
+        );
     }
 
     #[test]
     fn join_lists() {
         assert_eq!(
             run("join ([1, 2]) with ([3]);"),
-            vec![Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)])]
+            vec![Value::List(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3)
+            ])]
         );
     }
 
@@ -1418,7 +1440,10 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)): I
     #[test]
     fn accessor_name_is_resolved_by_argument_type() {
         // `seconds` is both a constructor (Int) and an accessor (Duration).
-        assert_eq!(eval("((10 seconds) seconds) to string;"), Value::Str("10".into()));
+        assert_eq!(
+            eval("((10 seconds) seconds) to string;"),
+            Value::Str("10".into())
+        );
     }
 
     #[test]
@@ -1460,7 +1485,10 @@ mod run_primitive {
 
     #[test]
     fn stdout_is_ok() {
-        assert_eq!(run(r#"run ("echo", ["hello", "world"]);"#), vec![ok_str("hello world\n")]);
+        assert_eq!(
+            run(r#"run ("echo", ["hello", "world"]);"#),
+            vec![ok_str("hello world\n")]
+        );
         assert_eq!(run(r#"run ("true", []);"#), vec![ok_str("")]);
     }
 
@@ -1474,7 +1502,10 @@ mod run_primitive {
     #[test]
     fn missing_command_is_err() {
         let e = err_text(r#"run ("resh-no-such-command-xyz", []);"#);
-        assert!(e.starts_with("cannot run resh-no-such-command-xyz: "), "{e}");
+        assert!(
+            e.starts_with("cannot run resh-no-such-command-xyz: "),
+            "{e}"
+        );
     }
 
     #[test]
@@ -1504,13 +1535,20 @@ mod run_primitive {
         assert_eq!(vs, vec![ok_str("mocked")]);
         assert_eq!(
             *calls.borrow(),
-            vec![("fd".to_string(), vec!["--hidden".to_string(), "x".to_string()])]
+            vec![(
+                "fd".to_string(),
+                vec!["--hidden".to_string(), "x".to_string()]
+            )]
         );
         s.set_runner(Box::new(|_, _| Err("nope".into())));
         let vs = s.run(r#"run ("fd", []);"#).unwrap();
         assert_eq!(
             vs,
-            vec![Value::Variant("Result".into(), 1, vec![Value::Str("nope".into())])]
+            vec![Value::Variant(
+                "Result".into(),
+                1,
+                vec![Value::Str("nope".into())]
+            )]
         );
     }
 }
@@ -1565,16 +1603,36 @@ mod fd_example {
     fn usage_extension_and_depth() {
         assert_eq!(
             argv(r#"fd::find "" in "src" { extension ["rs", "toml"], max depth 3 };"#),
-            strs(&["--extension", "rs", "--extension", "toml", "--max-depth", "3", "--", "", "src"])
+            strs(&[
+                "--extension",
+                "rs",
+                "--extension",
+                "toml",
+                "--max-depth",
+                "3",
+                "--",
+                "",
+                "src"
+            ])
         );
     }
 
     #[test]
     fn usage_kind_size_duration() {
         assert_eq!(
-            argv(r#"fd::find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) };"#),
+            argv(
+                r#"fd::find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) };"#
+            ),
             strs(&[
-                "--type", "file", "--size", "+1000000b", "--changed-within", "604800s", "--", "test", "."
+                "--type",
+                "file",
+                "--size",
+                "+1000000b",
+                "--changed-within",
+                "604800s",
+                "--",
+                "test",
+                "."
             ])
         );
     }
@@ -1582,16 +1640,36 @@ mod fd_example {
     #[test]
     fn usage_glob_hidden_exclude() {
         assert_eq!(
-            argv(r#"fd::find "*.log" in "/var" { match (fd::glob), include hidden file, exclude ["old"] };"#),
-            strs(&["--glob", "--hidden", "--exclude", "old", "--", "*.log", "/var"])
+            argv(
+                r#"fd::find "*.log" in "/var" { match (fd::glob), include hidden file, exclude ["old"] };"#
+            ),
+            strs(&[
+                "--glob",
+                "--hidden",
+                "--exclude",
+                "old",
+                "--",
+                "*.log",
+                "/var"
+            ])
         );
     }
 
     #[test]
     fn scope_block_takes_unqualified_variants() {
         assert_eq!(
-            argv(r#"fd:: { find "*.log" in "/var" { match (glob), include hidden file, exclude ["old"] }; }"#),
-            strs(&["--glob", "--hidden", "--exclude", "old", "--", "*.log", "/var"])
+            argv(
+                r#"fd:: { find "*.log" in "/var" { match (glob), include hidden file, exclude ["old"] }; }"#
+            ),
+            strs(&[
+                "--glob",
+                "--hidden",
+                "--exclude",
+                "old",
+                "--",
+                "*.log",
+                "/var"
+            ])
         );
     }
 
@@ -1607,17 +1685,30 @@ mod fd_example {
     fn error_is_passed_through() {
         let (mut s, _) = session(Err("boom"));
         let v = s.run(r#"fd::find "x";"#).unwrap();
-        assert_eq!(v, vec![Value::Variant("Result".into(), 1, vec![Value::Str("boom".into())])]);
+        assert_eq!(
+            v,
+            vec![Value::Variant(
+                "Result".into(),
+                1,
+                vec![Value::Str("boom".into())]
+            )]
+        );
     }
 
     #[test]
     fn bad_calls_are_type_errors() {
         let (mut s, _) = session(Ok(""));
-        let e = s.run(r#"fd::find "" in "." { max depth 1, max depth 2 };"#).unwrap_err();
+        let e = s
+            .run(r#"fd::find "" in "." { max depth 1, max depth 2 };"#)
+            .unwrap_err();
         assert!(e.msg.contains("max depth"), "{}", e.msg);
-        let e = s.run(r#"fd::find "" in "." { case (fd::sensitive), case (fd::insensitive) };"#).unwrap_err();
+        let e = s
+            .run(r#"fd::find "" in "." { case (fd::sensitive), case (fd::insensitive) };"#)
+            .unwrap_err();
         assert!(e.msg.contains("case"), "{}", e.msg);
-        let e = s.run(r#"fd::find "" in "." { size at least (5 days) };"#).unwrap_err();
+        let e = s
+            .run(r#"fd::find "" in "." { size at least (5 days) };"#)
+            .unwrap_err();
         assert!(e.msg.contains("Size"), "{}", e.msg);
         let e = s.run(r#"find "x";"#).unwrap_err();
         assert!(e.msg.contains("fd::"), "{}", e.msg);
@@ -1629,7 +1720,11 @@ mod fd_example {
         let e = s
             .run("ENUM Wrap { w (Entry Kind) }\nFUNCTION f (x: Wrap): Int { MATCH x { w (file) => 1, w (directory) => 2 } }")
             .unwrap_err();
-        assert!(e.msg.contains("non-exhaustive") && e.msg.contains("symlink"), "{}", e.msg);
+        assert!(
+            e.msg.contains("non-exhaustive") && e.msg.contains("symlink"),
+            "{}",
+            e.msg
+        );
     }
 }
 
@@ -1667,7 +1762,12 @@ mod rg_example {
     }
 
     fn expected(mid: &[&str], tail: &[&str]) -> Vec<String> {
-        BASE.iter().chain(mid).chain(["--"].iter()).chain(tail).map(|s| s.to_string()).collect()
+        BASE.iter()
+            .chain(mid)
+            .chain(["--"].iter())
+            .chain(tail)
+            .map(|s| s.to_string())
+            .collect()
     }
 
     #[test]
@@ -1686,17 +1786,32 @@ mod rg_example {
     #[test]
     fn usage_word_case_context() {
         assert_eq!(
-            argv(r#"rg::search "error" in "." { match (rg::whole word), case (rg::insensitive), context 2 };"#),
-            expected(&["--word-regexp", "--ignore-case", "--context", "2"], &["error", "."])
+            argv(
+                r#"rg::search "error" in "." { match (rg::whole word), case (rg::insensitive), context 2 };"#
+            ),
+            expected(
+                &["--word-regexp", "--ignore-case", "--context", "2"],
+                &["error", "."]
+            )
         );
     }
 
     #[test]
     fn usage_hidden_glob_size() {
         assert_eq!(
-            argv(r#"rg::search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size (1 mb) };"#),
+            argv(
+                r#"rg::search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size (1 mb) };"#
+            ),
             expected(
-                &["--hidden", "--glob", "!target", "--glob", "!*.lock", "--max-filesize", "1000000"],
+                &[
+                    "--hidden",
+                    "--glob",
+                    "!target",
+                    "--glob",
+                    "!*.lock",
+                    "--max-filesize",
+                    "1000000"
+                ],
                 &["secret", "."]
             )
         );
@@ -1706,7 +1821,10 @@ mod rg_example {
     fn result_is_lines_of_stdout() {
         let (mut s, _) = session(Ok("a.rs:1:1:x\nb.rs:2:3:x\n"));
         let v = s.run(r#"rg::search "x";"#).unwrap();
-        let list = Value::List(vec![Value::Str("a.rs:1:1:x".into()), Value::Str("b.rs:2:3:x".into())]);
+        let list = Value::List(vec![
+            Value::Str("a.rs:1:1:x".into()),
+            Value::Str("b.rs:2:3:x".into()),
+        ]);
         assert_eq!(v, vec![Value::Variant("Result".into(), 0, vec![list])]);
     }
 
@@ -1714,7 +1832,14 @@ mod rg_example {
     fn error_is_passed_through() {
         let (mut s, _) = session(Err("no matches"));
         let v = s.run(r#"rg::search "x";"#).unwrap();
-        assert_eq!(v, vec![Value::Variant("Result".into(), 1, vec![Value::Str("no matches".into())])]);
+        assert_eq!(
+            v,
+            vec![Value::Variant(
+                "Result".into(),
+                1,
+                vec![Value::Str("no matches".into())]
+            )]
+        );
     }
 
     #[test]
@@ -1725,7 +1850,10 @@ mod rg_example {
                     search "error" in "." { match (whole word), case (insensitive), context 2 };
                 }"#
             ),
-            expected(&["--word-regexp", "--ignore-case", "--context", "2"], &["error", "."])
+            expected(
+                &["--word-regexp", "--ignore-case", "--context", "2"],
+                &["error", "."]
+            )
         );
     }
 
@@ -1735,16 +1863,22 @@ mod rg_example {
         s.run(r#"rg:: { search "x"; }"#).unwrap();
         let e = s.run(r#"search "x";"#).unwrap_err();
         assert!(e.msg.contains("rg::"), "{}", e.msg);
-        let e = s.run(r#"search "x" in "." { match (whole word) };"#).unwrap_err();
+        let e = s
+            .run(r#"search "x" in "." { match (whole word) };"#)
+            .unwrap_err();
         assert!(e.msg.contains("rg::"), "{}", e.msg);
     }
 
     #[test]
     fn bad_calls_are_type_errors() {
         let (mut s, _) = session(Ok(""));
-        let e = s.run(r#"rg::search "" in "." { max count 1, max count 2 };"#).unwrap_err();
+        let e = s
+            .run(r#"rg::search "" in "." { max count 1, max count 2 };"#)
+            .unwrap_err();
         assert!(e.msg.contains("max count"), "{}", e.msg);
-        let e = s.run(r#"rg::search "" in "." { max file size (5 days) };"#).unwrap_err();
+        let e = s
+            .run(r#"rg::search "" in "." { max file size (5 days) };"#)
+            .unwrap_err();
         assert!(e.msg.contains("Size"), "{}", e.msg);
         let e = s.run(r#"search "x";"#).unwrap_err();
         assert!(e.msg.contains("rg::"), "{}", e.msg);
@@ -1759,12 +1893,19 @@ mod statements {
     #[test]
     fn newlines_are_whitespace() {
         assert_eq!(run("count\n[1,\n 2]\n;"), vec![Value::Int(2)]);
-        assert_eq!(run("count [1, 2]; count [3];"), vec![Value::Int(2), Value::Int(1)]);
+        assert_eq!(
+            run("count [1, 2]; count [3];"),
+            vec![Value::Int(2), Value::Int(1)]
+        );
     }
 
     #[test]
     fn every_statement_needs_a_semicolon() {
-        for src in ["count [1]", "LET x = 1\nLET y = 2;", "LET x = 1;\nLET y = 2"] {
+        for src in [
+            "count [1]",
+            "LET x = 1\nLET y = 2;",
+            "LET x = 1;\nLET y = 2",
+        ] {
             let msg = run_err(src);
             assert!(msg.contains("expected `;`"), "{src}: {msg}");
         }
@@ -1777,7 +1918,10 @@ mod statements {
 
     #[test]
     fn last_expression_of_a_body_is_its_value_unless_terminated() {
-        assert_eq!(run("FUNCTION f: Int { LET x = 4; x }\nf;"), vec![Value::Int(4)]);
+        assert_eq!(
+            run("FUNCTION f: Int { LET x = 4; x }\nf;"),
+            vec![Value::Int(4)]
+        );
         let msg = run_err("FUNCTION f: Int { LET x = 4; x; }");
         assert!(msg.contains("Int") && msg.contains("Unit"), "{msg}");
     }
@@ -1792,9 +1936,18 @@ mod statements {
         assert_eq!(s.run("count [1];").unwrap(), vec![Value::Int(1)]);
         assert_eq!(s.run("zz::count [1];").unwrap(), vec![Value::Int(99)]);
         // Names the namespace lacks still come from the prelude.
-        assert_eq!(s.run("zz:: { count [1, 2, 3]; }").unwrap(), vec![Value::Int(99)]);
-        assert_eq!(s.run("zz:: { [1] |> count (_); }").unwrap(), vec![Value::Int(99)]);
-        assert_eq!(s.run("zz:: { (5) to string; }").unwrap(), vec![Value::Str("5".into())]);
+        assert_eq!(
+            s.run("zz:: { count [1, 2, 3]; }").unwrap(),
+            vec![Value::Int(99)]
+        );
+        assert_eq!(
+            s.run("zz:: { [1] |> count (_); }").unwrap(),
+            vec![Value::Int(99)]
+        );
+        assert_eq!(
+            s.run("zz:: { (5) to string; }").unwrap(),
+            vec![Value::Str("5".into())]
+        );
     }
 
     #[test]
@@ -1809,5 +1962,245 @@ mod statements {
     fn scope_block_names_a_declared_namespace() {
         let msg = run_err("nope:: { count [1]; }");
         assert!(msg.contains("unknown namespace `nope`"), "{msg}");
+    }
+}
+
+// ---------- doc comments ----------
+
+mod docs {
+    use resh::Session;
+
+    const SRC: &str = "\
+// Adds one.
+// Second line.
+FUNCTION bump (n: Int): Int { n }
+
+// Detached by a blank line.
+
+FUNCTION lonely: Int { 1 }
+
+x = 1; // trailing
+FUNCTION trailing_above: Int { 2 }
+
+// A shape.
+RECORD Dot Doc { x (Int) }
+
+// Colours.
+ENUM Hue Doc { red, blue }
+
+FUNCTION plain: Int { 3 }
+";
+
+    fn doc_of_fn(s: &Session, word: &str) -> Option<String> {
+        s.interp
+            .ck
+            .defs
+            .iter()
+            .find(|d| matches!(d.parts.first(), Some(resh::check::PartT::Word(w)) if w == word))
+            .unwrap_or_else(|| panic!("no function {word}"))
+            .doc
+            .clone()
+    }
+
+    #[test]
+    fn doc_comments_attach_to_declarations() {
+        let mut s = Session::new();
+        let src = SRC.replace("x = 1; // trailing\n", "LET x = 1; // trailing\n");
+        s.run(&src).unwrap();
+        assert_eq!(
+            doc_of_fn(&s, "bump").as_deref(),
+            Some("Adds one.\nSecond line.")
+        );
+        assert_eq!(doc_of_fn(&s, "lonely"), None);
+        assert_eq!(doc_of_fn(&s, "trailing_above"), None);
+        assert_eq!(doc_of_fn(&s, "plain"), None);
+        assert_eq!(
+            s.interp.ck.records["Dot Doc"].doc.as_deref(),
+            Some("A shape.")
+        );
+        assert_eq!(
+            s.interp.ck.enums["Hue Doc"].doc.as_deref(),
+            Some("Colours.")
+        );
+    }
+
+    #[test]
+    fn prelude_docs_are_captured() {
+        let s = Session::new();
+        let doc = s.interp.ck.records["List Options"]
+            .doc
+            .as_deref()
+            .unwrap_or("");
+        assert!(doc.starts_with("Mirrors `ls`"), "{doc}");
+    }
+}
+
+// ---------- symbols ----------
+
+mod symbols {
+    use resh::Session;
+    use resh::check::SymbolKind;
+
+    #[test]
+    fn global_listing_has_sort_key_and_list_options() {
+        let s = Session::new();
+        let syms = s.symbols(None).unwrap();
+        let sort = syms
+            .iter()
+            .find(|x| x.kind == SymbolKind::Enum && x.name == "Sort Key")
+            .expect("Sort Key");
+        let variants: Vec<&str> = sort.members.iter().map(|m| m.signature.as_str()).collect();
+        assert_eq!(
+            variants,
+            ["name", "size", "modified time", "extension", "unsorted"]
+        );
+        let opts = syms
+            .iter()
+            .find(|x| x.kind == SymbolKind::Record && x.name == "List Options")
+            .expect("List Options");
+        assert!(opts.doc.as_deref().unwrap().contains("Mirrors `ls`"));
+        let sort_by = opts.members.last().unwrap();
+        assert_eq!(sort_by.signature, "sort by (Sort Key)");
+        assert_eq!(sort_by.default, [Some("name".to_string())]);
+        assert_eq!(opts.members[0].default, [Some("false".to_string())]);
+        let first_fn = syms
+            .iter()
+            .position(|x| x.kind == SymbolKind::Function)
+            .unwrap();
+        assert!(
+            syms[..first_fn]
+                .iter()
+                .all(|x| x.kind != SymbolKind::Function)
+        );
+        assert!(
+            syms[first_fn..]
+                .iter()
+                .all(|x| x.kind == SymbolKind::Function)
+        );
+        let list = syms
+            .iter()
+            .find(|x| x.name == "list file in (dir: String) (options: List Options)")
+            .expect("list file in");
+        assert_eq!(
+            list.ret.as_deref(),
+            Some("Result (List (Entry)) Or (String)")
+        );
+        assert!(syms.iter().any(|x| x.name == "Option (T)"));
+        assert!(syms.iter().any(|x| x.name == "Result (T) Or (E)"));
+    }
+
+    #[test]
+    fn namespaced_listing() {
+        let mut s = Session::new();
+        s.run(
+            "NAMESPACE fd\n// Search mode.\nENUM Mode { regex, glob }\n// Knobs.\nRECORD Options { port (Int DEFAULT 8080) }\n// Finds.\nFUNCTION find (root: String) with (options: Options): Int { 1 }\n",
+        )
+        .unwrap();
+        let syms = s.symbols(Some("fd")).unwrap();
+        let shown: Vec<(SymbolKind, &str)> =
+            syms.iter().map(|x| (x.kind, x.name.as_str())).collect();
+        assert_eq!(
+            shown,
+            [
+                (SymbolKind::Enum, "Mode"),
+                (SymbolKind::Record, "Options"),
+                (
+                    SymbolKind::Function,
+                    "find (root: String) with (options: fd::Options)"
+                ),
+            ]
+        );
+        assert_eq!(syms[0].doc.as_deref(), Some("Search mode."));
+        assert_eq!(syms[1].members[0].signature, "port (Int)");
+        assert_eq!(syms[1].members[0].default, [Some("8080".to_string())]);
+        assert_eq!(syms[2].ret.as_deref(), Some("Int"));
+        assert!(!s.symbols(None).unwrap().iter().any(|x| x.name == "Mode"));
+    }
+
+    #[test]
+    fn unknown_namespace() {
+        let mut s = Session::new();
+        assert_eq!(
+            s.symbols(Some("x")).unwrap_err(),
+            "unknown namespace `x`; declared namespaces: none"
+        );
+        s.run("NAMESPACE b\nFUNCTION f: Int { 1 }").unwrap();
+        s.run("NAMESPACE a\nFUNCTION g: Int { 1 }").unwrap();
+        assert_eq!(
+            s.symbols(Some("x")).unwrap_err(),
+            "unknown namespace `x`; declared namespaces: a, b"
+        );
+    }
+}
+
+mod symbols_cli {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    /// Runs the real binary with `input` on stdin; returns (stdout, stderr).
+    fn repl(args: &[&str], input: &str) -> (String, String) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_resh"))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        (
+            String::from_utf8(out.stdout).unwrap(),
+            String::from_utf8(out.stderr).unwrap(),
+        )
+    }
+
+    // `NAMESPACE` is per REPL entry, so the declaration shares its entry.
+    const DECL: &str = "NAMESPACE demo; ENUM Mode { fast, slow }\n";
+
+    #[test]
+    fn text_listing_for_a_namespace() {
+        let (out, _) = repl(&[], &format!("{DECL}:symbols demo\n"));
+        assert_eq!(
+            out,
+            "demo\n  enum    Mode\n            fast\n            slow\n"
+        );
+    }
+
+    #[test]
+    fn json_listing_for_a_namespace() {
+        let (out, _) = repl(&["--json"], &format!("{DECL}:symbols demo\n"));
+        assert!(out.starts_with(
+            "{\"namespace\":\"demo\",\"symbols\":[{\"kind\":\"enum\",\"name\":\"Mode\""
+        ));
+        assert!(out.contains("\"signature\":\"fast\"") && out.contains("\"signature\":\"slow\""));
+    }
+
+    #[test]
+    fn bare_symbols_lists_namespaces() {
+        let (out, _) = repl(&[], &format!("{DECL}:symbols\n"));
+        assert_eq!(out, "namespaces\n  prelude\n  demo\n");
+        let (out, _) = repl(&["--json"], &format!("{DECL}:symbols\n"));
+        assert_eq!(out, "{\"namespaces\":[\"prelude\",\"demo\"]}\n");
+    }
+
+    #[test]
+    fn unknown_namespace_goes_to_stderr() {
+        let (out, err) = repl(&[], &format!("{DECL}:symbols nope\n"));
+        assert_eq!(out, "");
+        assert!(
+            err.contains("unknown namespace `nope`") && err.contains("demo"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn doc_comment_lines_are_one_entry_with_their_declaration() {
+        let (out, _) = repl(&[], "// A point.\nRECORD Pt { x (Int) }\n:symbols prelude\n");
+        assert!(out.contains("  // A point.\n  record  Pt\n"), "{out}");
     }
 }

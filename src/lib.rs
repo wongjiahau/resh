@@ -114,6 +114,18 @@ impl Session {
         Ok(out)
     }
 
+    /// See `check::Checker::symbols`.
+    pub fn symbols(&self, ns: Option<&str>) -> Result<Vec<check::Symbol>, String> {
+        self.interp.ck.symbols(ns)
+    }
+
+    /// Names `:symbols` can list: `prelude` first, then declared namespaces.
+    pub fn namespaces(&self) -> Vec<String> {
+        let mut names = vec![repl::PRELUDE_NAME.to_string()];
+        names.extend(self.interp.ck.namespace_names());
+        names
+    }
+
     pub fn render(&self, v: &Value, json: bool) -> String {
         self.interp.render(v, json)
     }
