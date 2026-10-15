@@ -93,6 +93,9 @@ pub enum Stmt {
 
 #[derive(Debug, Clone)]
 pub enum Item {
+    /// `IMPORT name`: loads the wrapper library `name` (see `library`) before
+    /// anything else in the file is declared.
+    Import(String, Span),
     Decl(Decl),
     Stmt(Stmt),
 }

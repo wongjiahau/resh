@@ -41,6 +41,20 @@ pub fn parse_program(src: &str) -> Res<Vec<Item>> {
                 }
                 items.push(Item::Decl(decl));
             }
+            Tok::Kw(k) if k == "IMPORT" => {
+                let kw = p.bump();
+                let words = p.parse_words(AnyfixRules::default())?;
+                match words.as_slice() {
+                    [name] => items.push(Item::Import(name.clone(), kw.span)),
+                    [] => return p.err("a library name, e.g. `IMPORT git`"),
+                    _ => {
+                        return Err(Diag::new(
+                            kw.span,
+                            "a library name is a single word, e.g. `IMPORT git`",
+                        ));
+                    }
+                }
+            }
             Tok::Kw(k) if k == "FUNCTION" || k == "RECORD" || k == "ENUM" || k == "TYPE" => {
                 items.push(Item::Decl(p.parse_decl()?));
             }

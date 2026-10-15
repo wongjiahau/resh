@@ -1553,14 +1553,14 @@ mod run_primitive {
     }
 }
 
-// ---------- examples/fd.resh end to end ----------
+// ---------- lib/fd.resh end to end ----------
 
 mod fd_example {
     use resh::{Session, Value};
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    const FD: &str = include_str!("../examples/fd.resh");
+    const FD: &str = include_str!("../lib/fd.resh");
 
     type Calls = Rc<RefCell<Vec<(String, Vec<String>)>>>;
 
@@ -1728,14 +1728,14 @@ mod fd_example {
     }
 }
 
-// ---------- examples/rg.resh end to end ----------
+// ---------- lib/rg.resh end to end ----------
 
 mod rg_example {
     use resh::{Session, Value};
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    const RG: &str = include_str!("../examples/rg.resh");
+    const RG: &str = include_str!("../lib/rg.resh");
     const BASE: [&str; 3] = ["--no-heading", "--line-number", "--column"];
 
     type Calls = Rc<RefCell<Vec<(String, Vec<String>)>>>;
@@ -2081,10 +2081,7 @@ mod symbols {
             .iter()
             .find(|x| x.name == "list file in (dir: String) (options: List Options)")
             .expect("list file in");
-        assert_eq!(
-            list.ret.as_deref(),
-            Some("Result (List (Entry))")
-        );
+        assert_eq!(list.ret.as_deref(), Some("Result (List (Entry))"));
         assert!(syms.iter().any(|x| x.name == "Option (T)"));
         assert!(syms.iter().any(|x| x.name == "Result (T) Or (E)"));
     }
@@ -2200,7 +2197,10 @@ mod symbols_cli {
 
     #[test]
     fn doc_comment_lines_are_one_entry_with_their_declaration() {
-        let (out, _) = repl(&[], "/// A point.\nRECORD Pt { x (Int) }\n:symbols prelude\n");
+        let (out, _) = repl(
+            &[],
+            "/// A point.\nRECORD Pt { x (Int) }\n:symbols prelude\n",
+        );
         assert!(out.contains("  /// A point.\n  record  Pt\n"), "{out}");
     }
 }
@@ -2224,12 +2224,16 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) }
     fn nests_to_any_depth_and_binds_inside() {
         let src = format!(
             "{}\nf (deep (deep (w (green))));",
-            with("w (red) => 1, w (green) => 2, pair (a) and (b) => 3, deep (deep (w (red))) => 4, deep (deep (w (green))) => 5, deep (_) => 6")
+            with(
+                "w (red) => 1, w (green) => 2, pair (a) and (b) => 3, deep (deep (w (red))) => 4, deep (deep (w (green))) => 5, deep (_) => 6"
+            )
         );
         assert_eq!(run(&src).last(), Some(&Value::Int(5)));
         let src = format!(
             "{}\nf (deep (w (red)));",
-            with("w (_) => 1, pair (a) and (b) => 3, deep (deep (_)) => 4, deep (w (_)) => 7, deep (pair (_) and (_)) => 8")
+            with(
+                "w (_) => 1, pair (a) and (b) => 3, deep (deep (_)) => 4, deep (w (_)) => 7, deep (pair (_) and (_)) => 8"
+            )
         );
         assert_eq!(run(&src).last(), Some(&Value::Int(7)));
     }
@@ -2241,20 +2245,32 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) }
         assert_eq!(run(&src).last(), Some(&Value::Int(4)));
         let missing = "w (_) => 0, deep (_) => 0, pair (red) and (red) => 1, pair (green) and (green) => 2, pair (red) and (green) => 3";
         let msg = run_err(&with(missing));
-        assert!(msg.contains("non-exhaustive MATCH; missing: pair (green) and (red)"), "{msg}");
+        assert!(
+            msg.contains("non-exhaustive MATCH; missing: pair (green) and (red)"),
+            "{msg}"
+        );
     }
 
     #[test]
     fn missing_cases_name_the_deepest_hole() {
-        let msg = run_err(&with("w (_) => 0, pair (_) and (_) => 0, deep (deep (w (red))) => 1"));
-        assert!(msg.contains("deep (w (_))") && msg.contains("deep (pair (_) and (_))"), "{msg}");
+        let msg = run_err(&with(
+            "w (_) => 0, pair (_) and (_) => 0, deep (deep (w (red))) => 1",
+        ));
+        assert!(
+            msg.contains("deep (w (_))") && msg.contains("deep (pair (_) and (_))"),
+            "{msg}"
+        );
     }
 
     #[test]
     fn unreachable_arms_are_rejected() {
-        let msg = run_err(&with("w (_) => 0, pair (_) and (_) => 0, deep (_) => 0, deep (w (red)) => 1"));
+        let msg = run_err(&with(
+            "w (_) => 0, pair (_) and (_) => 0, deep (_) => 0, deep (w (red)) => 1",
+        ));
         assert!(msg.contains("unreachable"), "{msg}");
-        let msg = run_err(&with("w (_) => 0, pair (_) and (_) => 0, deep (_) => 0, _ => 1"));
+        let msg = run_err(&with(
+            "w (_) => 0, pair (_) and (_) => 0, deep (_) => 0, _ => 1",
+        ));
         assert!(msg.contains("unreachable"), "{msg}");
         let msg = run_err(&with("_ => 0, w (red) => 1"));
         assert!(msg.contains("unreachable"), "{msg}");
@@ -2262,13 +2278,17 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) }
 
     #[test]
     fn a_wildcard_arm_after_partial_arms_is_exhaustive() {
-        let src = format!("{}\nf (w (green));", with("w (red) => 1, deep (deep (_)) => 2, _ => 3"));
+        let src = format!(
+            "{}\nf (w (green));",
+            with("w (red) => 1, deep (deep (_)) => 2, _ => 3")
+        );
         assert_eq!(run(&src).last(), Some(&Value::Int(3)));
     }
 
     #[test]
     fn a_non_enum_slot_cannot_hold_a_nested_pattern() {
-        let src = "ENUM Num { num (Int) }\nFUNCTION f (x: Num): Int { MATCH x { num (k (j)) => 1 } }";
+        let src =
+            "ENUM Num { num (Int) }\nFUNCTION f (x: Num): Int { MATCH x { num (k (j)) => 1 } }";
         let msg = run_err(src);
         assert!(msg.contains("not an enum"), "{msg}");
     }
@@ -2285,14 +2305,18 @@ ENUM Shape { dot (Dot), blank }
 "#;
 
     fn with(body: &str) -> String {
-        format!("{DECLS}\nFUNCTION f (x: Shape): Int {{ MATCH x {{ {body} }} }}\nLET d: Dot = {{ color (red), size (7) }};\n")
+        format!(
+            "{DECLS}\nFUNCTION f (x: Shape): Int {{ MATCH x {{ {body} }} }}\nLET d: Dot = {{ color (red), size (7) }};\n"
+        )
     }
 
     #[test]
     fn a_record_pattern_nests_inside_an_enum_pattern() {
         let src = format!(
             "{}f (dot (d));",
-            with("dot ({ color (red), size (n) }) => n, dot ({ color (green), size (_) }) => 0, blank => 9")
+            with(
+                "dot ({ color (red), size (n) }) => n, dot ({ color (green), size (_) }) => 0, blank => 9"
+            )
         );
         assert_eq!(run(&src).last(), Some(&Value::Int(7)));
     }
@@ -2300,15 +2324,23 @@ ENUM Shape { dot (Dot), blank }
     #[test]
     fn missing_cases_inside_a_record_are_reported() {
         let msg = run_err(&with("dot ({ color (red), size (n) }) => n, blank => 9"));
-        assert!(msg.contains("missing: dot ({ color (green), size (_) })"), "{msg}");
+        assert!(
+            msg.contains("missing: dot ({ color (green), size (_) })"),
+            "{msg}"
+        );
     }
 
     #[test]
     fn refutable_record_arms_can_be_followed_by_more_arms() {
         let src = "ENUM Color { red, green }\nRECORD Dot { color (Color), size (Int) }\nFUNCTION f (d: Dot): Int { MATCH d { { color (red), size (n) } => n, { color (green), size (_) } => 0 } }\nLET d: Dot = { color (green), size (3) };\nf (d);";
         assert_eq!(run(src).last(), Some(&Value::Int(0)));
-        let msg = run_err("ENUM Color { red, green }\nRECORD Dot { color (Color), size (Int) }\nFUNCTION f (d: Dot): Int { MATCH d { { color (red), size (n) } => n } }");
-        assert!(msg.contains("missing: { color (green), size (_) }"), "{msg}");
+        let msg = run_err(
+            "ENUM Color { red, green }\nRECORD Dot { color (Color), size (Int) }\nFUNCTION f (d: Dot): Int { MATCH d { { color (red), size (n) } => n } }",
+        );
+        assert!(
+            msg.contains("missing: { color (green), size (_) }"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -2318,14 +2350,14 @@ ENUM Shape { dot (Dot), blank }
     }
 }
 
-// ---------- examples/sed.resh end to end ----------
+// ---------- lib/sed.resh end to end ----------
 
 mod sed_example {
     use resh::Session;
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    const SED: &str = include_str!("../examples/sed.resh");
+    const SED: &str = include_str!("../lib/sed.resh");
 
     fn argv(src: &str) -> Vec<String> {
         let calls: Rc<RefCell<Vec<(String, Vec<String>)>>> = Rc::default();
@@ -2335,7 +2367,8 @@ mod sed_example {
             seen.borrow_mut().push((c.to_string(), a.to_vec()));
             Ok(String::new())
         }));
-        s.run(SED).unwrap_or_else(|d| panic!("sed.resh failed: {d}"));
+        s.run(SED)
+            .unwrap_or_else(|d| panic!("sed.resh failed: {d}"));
         s.run(src).unwrap_or_else(|d| panic!("{d}"));
         let calls = calls.borrow();
         assert_eq!(calls.len(), 1);
@@ -2356,7 +2389,9 @@ mod sed_example {
     #[test]
     fn replace_all_on_every_line() {
         assert_eq!(
-            argv(r#"sed:: { preview "f.txt" with [ in (every line) do (replace all "a/b" with "c") ] };"#),
+            argv(
+                r#"sed:: { preview "f.txt" with [ in (every line) do (replace all "a/b" with "c") ] };"#
+            ),
             expected(&["s\ta/b\tc\tg"])
         );
     }

@@ -2,5 +2,11 @@
 name = "resh"
 version = "0.1.0"
 edition = "2024"
+description = "A readable shell: typed, anyfix commands and wrappers for existing CLI tools"
+repository = "https://github.com/wongjiahau/resh"
+homepage = "https://github.com/wongjiahau/resh"
+readme = "README.md"
+keywords = ["shell", "cli", "language"]
+categories = ["command-line-utilities"]
 
 [dependencies]

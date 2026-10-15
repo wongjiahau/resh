@@ -19,3 +19,33 @@ A readable shell.
   be declared multiple times, as long as their parameter types differ. The
   overload is resolved bottom-up from the already-inferred types of the
   arguments.
+
+## Install
+
+Homebrew (macOS, Linux):
+
+```
+brew install wongjiahau/resh/resh
+```
+
+or from source:
+
+```
+cargo install --git https://github.com/wongjiahau/resh
+```
+
+The wrapper libraries (`fd`, `git`, `herdr`, `rg`, `sed`) and the language prelude
+are built into the binary; load a wrapper with `IMPORT git;` (see `SYNTAX.md`,
+"Importing libraries"). `resh libs` lists them.
+
+### Writing wrappers for your own tools
+
+Wrappers are plain `.resh` files in `~/.config/resh/lib/` (`resh libs` prints the
+exact directory). To have Claude Code write one for a CLI tool:
+
+```
+resh skill install
+```
+
+then ask Claude to "wrap `jq` for resh". The skill reads the tool's `--help`,
+writes `~/.config/resh/lib/jq.resh`, and checks it with `resh check`.

@@ -1,6 +1,6 @@
 # resh TODO
 
-Goal: make `examples/fd.resh` lex, parse, type-check and run, following
+Goal: make `lib/fd.resh` lex, parse, type-check and run, following
 `SYNTAX.md`. Work one task at a time, top to bottom (later tasks depend on
 earlier ones). A task is done only when its acceptance criteria hold and
 `cargo test` passes.
@@ -87,7 +87,7 @@ Ground rules (see CLAUDE.md and README.md):
   argv directly.
   *Done when:* a test runs a real harmless command and one failing command.
 
-- [x] **11. `examples/fd.resh` end to end.**
+- [x] **11. `lib/fd.resh` end to end.**
   Type-check the file, and test `fd::find` with `run` mocked, asserting the
   argv produced for the four usage lines at the bottom of the file.
   *Done when:* those tests pass and the "does not parse yet" note in the file

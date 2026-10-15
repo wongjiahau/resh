@@ -1,10 +1,10 @@
-// ---------- examples/git.resh end to end ----------
+// ---------- lib/git.resh end to end ----------
 
 use resh::Session;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-const GIT: &str = include_str!("../examples/git.resh");
+const GIT: &str = include_str!("../lib/git.resh");
 
 fn argv(src: &str) -> Vec<String> {
     let calls: Rc<RefCell<Vec<(String, Vec<String>)>>> = Rc::default();
@@ -14,7 +14,8 @@ fn argv(src: &str) -> Vec<String> {
         seen.borrow_mut().push((c.to_string(), a.to_vec()));
         Ok(String::new())
     }));
-    s.run(GIT).unwrap_or_else(|d| panic!("git.resh failed: {d}"));
+    s.run(GIT)
+        .unwrap_or_else(|d| panic!("git.resh failed: {d}"));
     s.run(src).unwrap_or_else(|d| panic!("{d}"));
     let calls = calls.borrow();
     assert_eq!(calls.len(), 1);
@@ -35,7 +36,12 @@ fn status_plain() {
 fn status_options() {
     assert_eq!(
         argv("git:: { status { untracked (all), branch } };"),
-        strs(&["status", "--porcelain=v1", "--untracked-files=all", "--branch"])
+        strs(&[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--branch"
+        ])
     );
 }
 
@@ -43,7 +49,17 @@ fn status_options() {
 fn log_options_and_paths() {
     assert_eq!(
         argv(r#"git:: { log { max count 5, author "alice", no merge } touching ["src"] };"#),
-        strs(&["log", "--format=%h %s", "--max-count", "5", "--author", "alice", "--no-merges", "--", "src"])
+        strs(&[
+            "log",
+            "--format=%h %s",
+            "--max-count",
+            "5",
+            "--author",
+            "alice",
+            "--no-merges",
+            "--",
+            "src"
+        ])
     );
 }
 

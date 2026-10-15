@@ -1,10 +1,10 @@
-// ---------- examples/herdr.resh end to end ----------
+// ---------- lib/herdr.resh end to end ----------
 
 use resh::Session;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-const HERDR: &str = include_str!("../examples/herdr.resh");
+const HERDR: &str = include_str!("../lib/herdr.resh");
 
 fn argv(src: &str) -> Vec<String> {
     let calls: Rc<RefCell<Vec<(String, Vec<String>)>>> = Rc::default();
@@ -14,7 +14,8 @@ fn argv(src: &str) -> Vec<String> {
         seen.borrow_mut().push((c.to_string(), a.to_vec()));
         Ok(String::new())
     }));
-    s.run(HERDR).unwrap_or_else(|d| panic!("herdr.resh failed: {d}"));
+    s.run(HERDR)
+        .unwrap_or_else(|d| panic!("herdr.resh failed: {d}"));
     s.run(src).unwrap_or_else(|d| panic!("{d}"));
     let calls = calls.borrow();
     assert_eq!(calls.len(), 1);
@@ -41,14 +42,27 @@ fn list_pane_in_workspace() {
 
 #[test]
 fn read_pane_plain() {
-    assert_eq!(argv(r#"herdr:: { read pane "w1:p1" };"#), strs(&["pane", "read", "w1:p1"]));
+    assert_eq!(
+        argv(r#"herdr:: { read pane "w1:p1" };"#),
+        strs(&["pane", "read", "w1:p1"])
+    );
 }
 
 #[test]
 fn read_pane_options() {
     assert_eq!(
         argv(r#"herdr:: { read pane "w1:p1" { lines 50, source (recent unwrapped), ansi } };"#),
-        strs(&["pane", "read", "w1:p1", "--lines", "50", "--source", "recent-unwrapped", "--format", "ansi"])
+        strs(&[
+            "pane",
+            "read",
+            "w1:p1",
+            "--lines",
+            "50",
+            "--source",
+            "recent-unwrapped",
+            "--format",
+            "ansi"
+        ])
     );
 }
 
@@ -56,7 +70,15 @@ fn read_pane_options() {
 fn create_workspace_options() {
     assert_eq!(
         argv(r#"herdr:: { create workspace { label "demo", cwd "/tmp", no focus } };"#),
-        strs(&["workspace", "create", "--label", "demo", "--cwd", "/tmp", "--no-focus"])
+        strs(&[
+            "workspace",
+            "create",
+            "--label",
+            "demo",
+            "--cwd",
+            "/tmp",
+            "--no-focus"
+        ])
     );
 }
 
@@ -64,7 +86,16 @@ fn create_workspace_options() {
 fn split_pane_direction() {
     assert_eq!(
         argv(r#"herdr:: { split pane "w1:p1" (right) { keep focus, start in "/tmp" } };"#),
-        strs(&["pane", "split", "w1:p1", "--direction", "right", "--no-focus", "--cwd", "/tmp"])
+        strs(&[
+            "pane",
+            "split",
+            "w1:p1",
+            "--direction",
+            "right",
+            "--no-focus",
+            "--cwd",
+            "/tmp"
+        ])
     );
 }
 
@@ -80,7 +111,15 @@ fn run_in_pane() {
 fn wait_for_output_timeout_is_milliseconds() {
     assert_eq!(
         argv(r#"herdr:: { wait for output "ok" in pane "w1:p2" { timeout (120 seconds) } };"#),
-        strs(&["pane", "wait-output", "w1:p2", "--match", "ok", "--timeout", "120000"])
+        strs(&[
+            "pane",
+            "wait-output",
+            "w1:p2",
+            "--match",
+            "ok",
+            "--timeout",
+            "120000"
+        ])
     );
 }
 
@@ -88,15 +127,27 @@ fn wait_for_output_timeout_is_milliseconds() {
 fn start_agent() {
     assert_eq!(
         argv(r#"herdr:: { start agent "reviewer" (codex) in pane "w1:p3" };"#),
-        strs(&["agent", "start", "reviewer", "--kind", "codex", "--pane", "w1:p3"])
+        strs(&[
+            "agent", "start", "reviewer", "--kind", "codex", "--pane", "w1:p3"
+        ])
     );
 }
 
 #[test]
 fn prompt_agent_and_wait() {
     assert_eq!(
-        argv(r#"herdr:: { prompt agent "reviewer" with "go" { wait, give up after (30 seconds) } };"#),
-        strs(&["agent", "prompt", "reviewer", "go", "--wait", "--timeout", "30000"])
+        argv(
+            r#"herdr:: { prompt agent "reviewer" with "go" { wait, give up after (30 seconds) } };"#
+        ),
+        strs(&[
+            "agent",
+            "prompt",
+            "reviewer",
+            "go",
+            "--wait",
+            "--timeout",
+            "30000"
+        ])
     );
 }
 

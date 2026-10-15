@@ -104,6 +104,28 @@ rg:: {
 - Blocks nest; the innermost opened namespace wins over the outer ones.
 - The namespace must be declared, else `unknown namespace`.
 
+## Importing libraries
+
+`IMPORT name;` loads the wrapper library `name`, so its namespace can be used:
+
+```
+IMPORT git;
+git::status;
+```
+
+- A library is a `.resh` file that starts with `NAMESPACE name`. `resh` looks
+  for `name.resh` in the user library directory first (`$RESH_LIB_DIR`, else
+  `$XDG_CONFIG_HOME/resh/lib`, else `~/.config/resh/lib`), then among the
+  libraries bundled in the binary (`fd`, `git`, `herdr`, `rg`, `sed`). A user
+  file with the same name replaces the bundled one.
+- Each library is loaded once per session; importing it again does nothing.
+- In a file, `IMPORT` comes after `NAMESPACE` (if any) and before the
+  declarations. Imports are loaded before the file's own declarations.
+- The library's top-level statements, if it has any, are not run.
+- `resh libs` lists the libraries and the user directory; `resh libs show name`
+  prints a library's source; `resh check file.resh` type-checks a library without
+  running anything.
+
 ## Let bindings
 
 `LET name = value` binds a single-word name. A type may be stated with
