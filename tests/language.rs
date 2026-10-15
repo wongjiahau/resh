@@ -882,16 +882,16 @@ MATCH r { { n (n) } => n };
     }
 
     #[test]
-    fn destructuring_takes_exactly_one_record_arm() {
+    fn a_second_record_arm_is_unreachable_when_the_first_cannot_fail() {
         let msg = server_err(
             "LET c: Server Config = {};\nMATCH c { { host (h), port (p) } => h, { host (h), port (p) } => h };",
         );
-        assert!(msg.contains("single-case MATCH, found 2 arms"), "{msg}");
-        let msg = server_err("LET c: Server Config = {};\nMATCH c { _ => 1 };");
+        assert!(msg.contains("unreachable"), "{msg}");
+        let msg = server_err("LET c: Server Config = {};\nMATCH c { bar => 1 };");
         assert!(msg.contains("pattern must be a record pattern"), "{msg}");
         let msg =
             server_err("LET c: Server Config = {};\nMATCH c { { host (h), port (p) _ } => h };");
-        assert!(msg.contains("words and `(name)` binders only"), "{msg}");
+        assert!(msg.contains("words and slots only"), "{msg}");
     }
 
     #[test]
@@ -2271,5 +2271,49 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) }
         let src = "ENUM Num { num (Int) }\nFUNCTION f (x: Num): Int { MATCH x { num (k (j)) => 1 } }";
         let msg = run_err(src);
         assert!(msg.contains("not an enum"), "{msg}");
+    }
+}
+
+mod record_patterns_in_the_matrix {
+    use super::{run, run_err};
+    use resh::Value;
+
+    const DECLS: &str = r#"
+ENUM Color { red, green }
+RECORD Dot { color (Color), size (Int) }
+ENUM Shape { dot (Dot), blank }
+"#;
+
+    fn with(body: &str) -> String {
+        format!("{DECLS}\nFUNCTION f (x: Shape): Int {{ MATCH x {{ {body} }} }}\nLET d: Dot = {{ color (red), size (7) }};\n")
+    }
+
+    #[test]
+    fn a_record_pattern_nests_inside_an_enum_pattern() {
+        let src = format!(
+            "{}f (dot (d));",
+            with("dot ({ color (red), size (n) }) => n, dot ({ color (green), size (_) }) => 0, blank => 9")
+        );
+        assert_eq!(run(&src).last(), Some(&Value::Int(7)));
+    }
+
+    #[test]
+    fn missing_cases_inside_a_record_are_reported() {
+        let msg = run_err(&with("dot ({ color (red), size (n) }) => n, blank => 9"));
+        assert!(msg.contains("missing: dot ({ color (green), size (_) })"), "{msg}");
+    }
+
+    #[test]
+    fn refutable_record_arms_can_be_followed_by_more_arms() {
+        let src = "ENUM Color { red, green }\nRECORD Dot { color (Color), size (Int) }\nFUNCTION f (d: Dot): Int { MATCH d { { color (red), size (n) } => n, { color (green), size (_) } => 0 } }\nLET d: Dot = { color (green), size (3) };\nf (d);";
+        assert_eq!(run(src).last(), Some(&Value::Int(0)));
+        let msg = run_err("ENUM Color { red, green }\nRECORD Dot { color (Color), size (Int) }\nFUNCTION f (d: Dot): Int { MATCH d { { color (red), size (n) } => n } }");
+        assert!(msg.contains("missing: { color (green), size (_) }"), "{msg}");
+    }
+
+    #[test]
+    fn a_wildcard_matches_a_record() {
+        let src = "RECORD Dot { size (Int) }\nFUNCTION f (d: Dot): Int { MATCH d { _ => 1 } }\nLET d: Dot = { size (3) };\nf (d);";
+        assert_eq!(run(src).last(), Some(&Value::Int(1)));
     }
 }

@@ -15,7 +15,7 @@ use std::fmt;
 use crate::ast::*;
 use crate::eval::{NATIVES, Value};
 use crate::lexer::{Diag, Res, Span};
-use crate::pattern::{Pat, enum_params, render, useful, witnesses};
+use crate::pattern::{Pat, Sig, enum_params, render, useful, witnesses};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
@@ -317,8 +317,6 @@ pub enum Ir {
     /// A `{ ... }` literal not yet fitted to a record; never reaches `eval`.
     /// Each entry is its signature key and its slot values.
     Struct(Vec<(String, Vec<Ir>)>),
-    /// Destructures a record: binds each named slot (declaration order) in the body.
-    Unpack(Box<Ir>, Vec<Option<String>>, Box<Ir>),
     If(Box<Ir>, Box<Ir>, Box<Ir>),
     Match(Box<Ir>, Vec<IrArm>),
     Tuple(Vec<Ir>),
@@ -1546,16 +1544,16 @@ impl Checker {
         Ok((Ir::Struct(irs), Type::Struct(tys)))
     }
 
-    /// `MATCH record { { field (name), ... } => body }`: the only way to take
-    /// values out of a record. One arm; every field is listed, in any order.
-    fn unpack(
+    /// `{ field (name), ... }` against record `rn`: every field listed once, in
+    /// any order. The pattern is one constructor over the record's slots in
+    /// declaration order, and so are its binders.
+    fn resolve_record(
         &self,
-        sir: Ir,
         rn: &str,
-        arms: &[Arm],
+        entries: &[Vec<PatItem>],
         span: Span,
-        sc: &mut Scope,
-    ) -> Res<(Ir, Type)> {
+        binds: &mut Vec<(String, Type)>,
+    ) -> Res<Pat> {
         let rd = &self.records[rn];
         let fields = || {
             rd.fields
@@ -1564,40 +1562,21 @@ impl Checker {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let [arm] = arms else {
-            return Err(Diag::new(
-                span,
-                format!(
-                    "a record is destructured by a single-case MATCH, found {} arms; write one arm `{{ {} }} => ...` with a `(name)` for each slot",
-                    arms.len(),
-                    fields()
-                ),
-            ));
-        };
-        let [PatItem::Record(entries)] = arm.pat.as_slice() else {
-            return Err(Diag::new(
-                arm.span,
-                format!(
-                    "`{rn}` is a record, so the pattern must be a record pattern `{{ field (name), ... }}`; its fields are: {}",
-                    fields()
-                ),
-            ));
-        };
-        let mut binds: Vec<Option<Vec<Option<String>>>> = vec![None; rd.fields.len()];
+        let mut found: Vec<Option<(Vec<Pat>, Vec<(String, Type)>)>> = vec![None; rd.fields.len()];
         for entry in entries {
             let mut key = Vec::new();
-            let mut names = Vec::new();
+            let mut slot_items = Vec::new();
             for item in entry {
                 match item {
                     PatItem::Word(w) => key.push(w.as_str()),
-                    PatItem::Bind(n) => {
+                    PatItem::Bind(_) | PatItem::Nested(_) => {
                         key.push("_");
-                        names.push((n != "_").then(|| n.clone()));
+                        slot_items.push(item);
                     }
-                    PatItem::Wild | PatItem::Record(_) | PatItem::Nested(_) => {
+                    PatItem::Wild | PatItem::Record(_) => {
                         return Err(Diag::new(
-                            arm.span,
-                            "a field pattern holds words and `(name)` binders only; write `(_)` to ignore a slot",
+                            span,
+                            "a field pattern holds words and slots only; write `(_)` to ignore a slot",
                         ));
                     }
                 }
@@ -1605,16 +1584,21 @@ impl Checker {
             let key = key.join(" ");
             let Some(fi) = rd.fields.iter().position(|d| d.key == key) else {
                 return Err(Diag::new(
-                    arm.span,
+                    span,
                     format!(
                         "record `{rn}` has no field pattern `{key}`; its fields are: {}",
                         fields()
                     ),
                 ));
             };
-            if binds[fi].replace(names).is_some() {
+            let mut local = Vec::new();
+            let mut pats = Vec::new();
+            for (slot, item) in rd.fields[fi].slots.iter().zip(slot_items) {
+                pats.push(self.resolve_slot(&slot.ty, item, span, &mut local)?);
+            }
+            if found[fi].replace((pats, local)).is_some() {
                 return Err(Diag::new(
-                    arm.span,
+                    span,
                     format!("field `{}` is listed twice", rd.fields[fi].signature()),
                 ));
             }
@@ -1622,38 +1606,87 @@ impl Checker {
         let missing: Vec<String> = rd
             .fields
             .iter()
-            .zip(&binds)
-            .filter(|(_, b)| b.is_none())
+            .zip(&found)
+            .filter(|(_, f)| f.is_none())
             .map(|(d, _)| d.signature())
             .collect();
         if !missing.is_empty() {
             return Err(Diag::new(
-                arm.span,
+                span,
                 format!(
                     "destructuring `{rn}` must list every field; missing: {}",
                     missing.join(", ")
                 ),
             ));
         }
-        let mark = sc.len();
-        let mut flat = Vec::new();
-        for (d, b) in rd.fields.iter().zip(binds) {
-            for (slot, name) in d.slots.iter().zip(b.unwrap_or_default()) {
-                if let Some(n) = &name {
-                    sc.push((n.clone(), slot.ty.clone()));
-                }
-                flat.push(name);
-            }
+        let mut args = Vec::new();
+        for (pats, local) in found.into_iter().flatten() {
+            args.extend(pats);
+            binds.extend(local);
         }
-        let res = self.check(&arm.body, sc);
-        sc.truncate(mark);
-        let (bir, bt) = res?;
-        Ok((Ir::Unpack(Box::new(sir), flat, Box::new(bir)), bt))
+        Ok(Pat::Ctor(0, args))
     }
 
-    /// Resolves the words and slots of a variant pattern against enum type
-    /// `ty`; slots hold binders, `(_)`, or nested variant patterns, to any
-    /// depth. Binders are appended to `binds` in left-to-right order.
+    fn sig(&self) -> Sig<'_> {
+        Sig {
+            enums: &self.enums,
+            records: &self.records,
+        }
+    }
+
+    /// Resolves a pattern against `ty`: a record pattern for a record, variant
+    /// words and slots for an enum. Slots hold binders, `(_)`, or nested
+    /// patterns, to any depth. Binders are appended to `binds` in the order
+    /// the matcher binds them.
+    fn resolve(&self, ty: &Type, items: &[PatItem], span: Span, binds: &mut Vec<(String, Type)>) -> Res<Pat> {
+        match (ty, items) {
+            (Type::Record(rn), [PatItem::Record(entries)]) => {
+                self.resolve_record(rn, entries, span, binds)
+            }
+            (Type::Record(rn), _) => {
+                let rd = &self.records[rn];
+                let fields: Vec<String> = rd.fields.iter().map(FieldDef::signature).collect();
+                Err(Diag::new(
+                    span,
+                    format!(
+                        "`{rn}` is a record, so the pattern must be a record pattern `{{ field (name), ... }}`; its fields are: {}",
+                        fields.join(", ")
+                    ),
+                ))
+            }
+            (Type::Enum(..), _) => self.resolve_variant(ty, items, span, binds),
+            _ => Err(Diag::new(
+                span,
+                format!("this slot has type {ty}, which is not an enum or record, so it cannot hold a nested pattern; use a `(name)` binder or `(_)`"),
+            )),
+        }
+    }
+
+    fn resolve_slot(&self, slot: &Type, item: &PatItem, span: Span, binds: &mut Vec<(String, Type)>) -> Res<Pat> {
+        Ok(match item {
+            PatItem::Bind(n) if n == "_" => Pat::Any(None),
+            PatItem::Bind(n) => {
+                // A lone word naming a nullary variant of the slot's enum is
+                // that variant, not a binder.
+                let nullary = match slot {
+                    Type::Enum(se, _) => self.enums[se].variants.iter().position(
+                        |v| matches!(v.parts.as_slice(), [PartT::Word(w)] if w == n),
+                    ),
+                    _ => None,
+                };
+                match nullary {
+                    Some(vi) => Pat::Ctor(vi, vec![]),
+                    None => {
+                        binds.push((n.clone(), slot.clone()));
+                        Pat::Any(Some(n.clone()))
+                    }
+                }
+            }
+            PatItem::Nested(inner) => self.resolve(slot, inner, span, binds)?,
+            _ => unreachable!("slots hold Bind or Nested"),
+        })
+    }
+
     fn resolve_variant(
         &self,
         ty: &Type,
@@ -1662,10 +1695,7 @@ impl Checker {
         binds: &mut Vec<(String, Type)>,
     ) -> Res<Pat> {
         let Type::Enum(en, targs) = ty else {
-            return Err(Diag::new(
-                span,
-                format!("this slot has type {ty}, which is not an enum, so it cannot hold a nested pattern; use a `(name)` binder or `(_)`"),
-            ));
+            unreachable!("resolve dispatches enums here")
         };
         let ed = &self.enums[en];
         let pmap = enum_params(&self.enums, en, targs);
@@ -1689,40 +1719,17 @@ impl Checker {
         };
         let mut args = Vec::new();
         for (p, q) in ed.variants[vi].parts.iter().zip(items) {
-            let PartT::Param(_, slot) = p else { continue };
-            let slot = subst(slot, &pmap, false);
-            args.push(match q {
-                PatItem::Bind(n) if n == "_" => Pat::Any(None),
-                PatItem::Bind(n) => {
-                    // A lone word naming a nullary variant of the slot's enum is
-                    // that variant, not a binder.
-                    let nullary = match &slot {
-                        Type::Enum(se, _) => self.enums[se].variants.iter().position(
-                            |v| matches!(v.parts.as_slice(), [PartT::Word(w)] if w == n),
-                        ),
-                        _ => None,
-                    };
-                    match nullary {
-                        Some(vi) => Pat::Ctor(vi, vec![]),
-                        None => {
-                            binds.push((n.clone(), slot));
-                            Pat::Any(Some(n.clone()))
-                        }
-                    }
-                }
-                PatItem::Nested(inner) => self.resolve_variant(&slot, inner, span, binds)?,
-                _ => unreachable!("matched as Bind or Nested above"),
-            });
+            if let PartT::Param(_, slot) = p {
+                let slot = subst(slot, &pmap, false);
+                args.push(self.resolve_slot(&slot, q, span, binds)?);
+            }
         }
         Ok(Pat::Ctor(vi, args))
     }
 
     fn matching(&self, scrut: &Expr, arms: &[Arm], span: Span, sc: &mut Scope) -> Res<(Ir, Type)> {
         let (sir, sty) = self.check(scrut, sc)?;
-        if let Type::Record(rn) = &sty {
-            return self.unpack(sir, rn, arms, span, sc);
-        }
-        if !matches!(sty, Type::Enum(..)) {
+        if !matches!(sty, Type::Enum(..) | Type::Record(_)) {
             return Err(Diag::new(
                 scrut.span,
                 format!(
@@ -1739,9 +1746,9 @@ impl Checker {
             let pat = if arm.pat == [PatItem::Wild] {
                 Pat::Any(None)
             } else {
-                self.resolve_variant(&sty, &arm.pat, arm.span, &mut binds)?
+                self.resolve(&sty, &arm.pat, arm.span, &mut binds)?
             };
-            if !useful(&self.enums, &rows, std::slice::from_ref(&pat), &tys) {
+            if !useful(&self.sig(), &rows, std::slice::from_ref(&pat), &tys) {
                 return Err(Diag::new(
                     arm.span,
                     "this arm is unreachable: earlier arms already handle every value it matches",
@@ -1766,11 +1773,11 @@ impl Checker {
             });
             irs.push(IrArm { pat, body: bir });
         }
-        let missing = witnesses(&self.enums, &rows, &tys);
+        let missing = witnesses(&self.sig(), &rows, &tys);
         if !missing.is_empty() {
             let shown: Vec<String> = missing
                 .iter()
-                .map(|w| render(&self.enums, &sty, &w[0]))
+                .map(|w| render(&self.sig(), &sty, &w[0]))
                 .collect();
             return Err(Diag::new(
                 span,

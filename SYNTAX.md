@@ -155,7 +155,7 @@ Record literals are unnamed (and so are set literals). Entries are anyfix phrase
 ### Destructuring
 
 There are no accessor functions. The only way to take values out of a record is
-a single-case `MATCH`:
+a `MATCH` with a record pattern:
 
 ```
 MATCH config {
@@ -163,9 +163,15 @@ MATCH config {
 }
 ```
 
-- The pattern has one phrase per field, with a `(name)` binder in each slot.
+- The pattern has one phrase per field, with a `(name)` binder (or a nested
+  pattern) in each slot.
   Every field must be listed, in any order; `(_)` ignores a slot.
-- A record pattern is the only arm; there is no wildcard or second case.
+- A record is a type with one constructor, so a record pattern takes part in the
+  same exhaustiveness check as enum patterns. A slot may hold a nested enum
+  pattern (`{ color (red), size (n) }`), and a record pattern may itself sit in
+  an enum variant's slot. A record `MATCH` is exhaustive with one arm unless a
+  slot is refutable; further arms are checked like any other (an arm after an
+  irrefutable one is unreachable). `_` matches a whole record.
 
 ## Enum variants and patterns
 

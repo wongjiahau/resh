@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::check::{EnumDef, PartT, Type, subst};
+use crate::check::{EnumDef, PartT, RecordDef, Type, subst};
 use crate::eval::Value;
 
 /// A resolved pattern. `Any` matches everything (and binds it when named);
@@ -18,6 +18,13 @@ pub enum Pat {
 
 type Enums = HashMap<String, EnumDef>;
 
+/// The type declarations patterns are checked against. A record is a type
+/// with one constructor (index 0) whose arguments are all its slots.
+pub struct Sig<'a> {
+    pub enums: &'a Enums,
+    pub records: &'a HashMap<String, RecordDef>,
+}
+
 pub fn enum_params(enums: &Enums, en: &str, targs: &[Type]) -> HashMap<String, Type> {
     enums[en]
         .params
@@ -28,12 +35,19 @@ pub fn enum_params(enums: &Enums, en: &str, targs: &[Type]) -> HashMap<String, T
 }
 
 /// Types of the parameter slots of variant `c` of `ty`.
-fn fields(enums: &Enums, ty: &Type, c: usize) -> Vec<Type> {
+fn fields(sig: &Sig, ty: &Type, c: usize) -> Vec<Type> {
+    if let Type::Record(rn) = ty {
+        return sig.records[rn]
+            .fields
+            .iter()
+            .flat_map(|f| f.slots.iter().map(|s| s.ty.clone()))
+            .collect();
+    }
     let Type::Enum(en, targs) = ty else {
         return vec![];
     };
-    let pmap = enum_params(enums, en, targs);
-    enums[en].variants[c]
+    let pmap = enum_params(sig.enums, en, targs);
+    sig.enums[en].variants[c]
         .parts
         .iter()
         .filter_map(|p| match p {
@@ -43,9 +57,10 @@ fn fields(enums: &Enums, ty: &Type, c: usize) -> Vec<Type> {
         .collect()
 }
 
-fn variant_count(enums: &Enums, ty: &Type) -> usize {
+fn variant_count(sig: &Sig, ty: &Type) -> usize {
     match ty {
-        Type::Enum(en, _) => enums[en].variants.len(),
+        Type::Enum(en, _) => sig.enums[en].variants.len(),
+        Type::Record(_) => 1,
         _ => 0,
     }
 }
@@ -85,64 +100,64 @@ fn used_ctors(rows: &[Vec<Pat>]) -> HashSet<usize> {
 }
 
 /// Is there a value vector matched by `q` and by no row of `rows`?
-pub fn useful(enums: &Enums, rows: &[Vec<Pat>], q: &[Pat], tys: &[Type]) -> bool {
+pub fn useful(sig: &Sig, rows: &[Vec<Pat>], q: &[Pat], tys: &[Type]) -> bool {
     if q.is_empty() {
         return rows.is_empty();
     }
     match &q[0] {
         Pat::Ctor(c, args) => {
-            let fs = fields(enums, &tys[0], *c);
+            let fs = fields(sig, &tys[0], *c);
             let rows = specialize(rows, *c, fs.len());
             useful(
-                enums,
+                sig,
                 &rows,
                 &concat(args, &q[1..]),
                 &concat(&fs, &tys[1..]),
             )
         }
         Pat::Any(_) => {
-            let n = variant_count(enums, &tys[0]);
+            let n = variant_count(sig, &tys[0]);
             if n > 0 && used_ctors(rows).len() == n {
                 (0..n).any(|c| {
-                    let fs = fields(enums, &tys[0], c);
+                    let fs = fields(sig, &tys[0], c);
                     let rows = specialize(rows, c, fs.len());
                     useful(
-                        enums,
+                        sig,
                         &rows,
                         &concat(&wilds(fs.len()), &q[1..]),
                         &concat(&fs, &tys[1..]),
                     )
                 })
             } else {
-                useful(enums, &default_rows(rows), &q[1..], &tys[1..])
+                useful(sig, &default_rows(rows), &q[1..], &tys[1..])
             }
         }
     }
 }
 
 /// Every value vector (as a pattern vector) that no row matches.
-pub fn witnesses(enums: &Enums, rows: &[Vec<Pat>], tys: &[Type]) -> Vec<Vec<Pat>> {
+pub fn witnesses(sig: &Sig, rows: &[Vec<Pat>], tys: &[Type]) -> Vec<Vec<Pat>> {
     if tys.is_empty() {
         return if rows.is_empty() { vec![vec![]] } else { vec![] };
     }
-    let n = variant_count(enums, &tys[0]);
+    let n = variant_count(sig, &tys[0]);
     let used = used_ctors(rows);
     let mut out = Vec::new();
     if n > 0 && used.len() == n {
         for c in 0..n {
-            let fs = fields(enums, &tys[0], c);
+            let fs = fields(sig, &tys[0], c);
             let rows = specialize(rows, c, fs.len());
-            for w in witnesses(enums, &rows, &concat(&fs, &tys[1..])) {
+            for w in witnesses(sig, &rows, &concat(&fs, &tys[1..])) {
                 let (args, rest) = w.split_at(fs.len());
                 out.push(concat(&[Pat::Ctor(c, args.to_vec())], rest));
             }
         }
         return out;
     }
-    let rest = witnesses(enums, &default_rows(rows), &tys[1..]);
+    let rest = witnesses(sig, &default_rows(rows), &tys[1..]);
     if n > 0 && (!used.is_empty() || rows.is_empty()) {
         for c in (0..n).filter(|c| !used.contains(c)) {
-            let arity = fields(enums, &tys[0], c).len();
+            let arity = fields(sig, &tys[0], c).len();
             for w in &rest {
                 out.push(concat(&[Pat::Ctor(c, wilds(arity))], w));
             }
@@ -156,23 +171,42 @@ pub fn witnesses(enums: &Enums, rows: &[Vec<Pat>], tys: &[Type]) -> Vec<Vec<Pat>
 }
 
 /// A pattern as source text, e.g. `match (glob)` or `(_) by (_)`.
-pub fn render(enums: &Enums, ty: &Type, pat: &Pat) -> String {
+pub fn render(sig: &Sig, ty: &Type, pat: &Pat) -> String {
     let Pat::Ctor(c, args) = pat else {
         return "_".into();
     };
+    let fs = fields(sig, ty, *c);
+    let mut args = args.iter().zip(&fs);
+    if let Type::Record(rn) = ty {
+        let fields: Vec<String> = sig.records[rn]
+            .fields
+            .iter()
+            .map(|f| {
+                f.key
+                    .split(' ')
+                    .map(|w| match w {
+                        "_" => args
+                            .next()
+                            .map_or("(_)".into(), |(a, t)| format!("({})", render(sig, t, a))),
+                        w => w.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect();
+        return format!("{{ {} }}", fields.join(", "));
+    }
     let Type::Enum(en, _) = ty else {
         return "_".into();
     };
-    let fs = fields(enums, ty, *c);
-    let mut args = args.iter().zip(&fs);
-    enums[en].variants[*c]
+    sig.enums[en].variants[*c]
         .parts
         .iter()
         .filter_map(|p| match p {
             PartT::Word(w) => Some(w.clone()),
             PartT::Param(..) => args
                 .next()
-                .map(|(a, t)| format!("({})", render(enums, t, a))),
+                .map(|(a, t)| format!("({})", render(sig, t, a))),
             PartT::Tuple(_) => Some("(_)".into()),
         })
         .collect::<Vec<_>>()
@@ -189,10 +223,13 @@ pub fn bind(pat: &Pat, v: &Value, out: &mut Vec<(String, Value)>) -> bool {
             true
         }
         Pat::Ctor(c, subs) => {
-            let Value::Variant(_, idx, args) = v else {
-                return false;
-            };
-            idx == c && subs.iter().zip(args).all(|(p, a)| bind(p, a, out))
+            match v {
+                Value::Variant(_, idx, args) => {
+                    idx == c && subs.iter().zip(args).all(|(p, a)| bind(p, a, out))
+                }
+                Value::Record(_, vals) => subs.iter().zip(vals).all(|(p, a)| bind(p, a, out)),
+                _ => false,
+            }
         }
     }
 }

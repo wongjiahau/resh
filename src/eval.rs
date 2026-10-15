@@ -213,20 +213,6 @@ impl Interp {
                     .map(|x| self.eval(x, env))
                     .collect::<Result<_, _>>()?,
             )),
-            Ir::Unpack(s, binds, body) => {
-                let Value::Record(_, vals) = self.eval(s, env)? else {
-                    return Err("internal error: destructuring a non-record".into());
-                };
-                let mark = env.len();
-                for (name, v) in binds.iter().zip(vals) {
-                    if let Some(name) = name {
-                        env.push((name.clone(), v));
-                    }
-                }
-                let res = self.eval(body, env);
-                env.truncate(mark);
-                res
-            }
             Ir::If(c, t, f) => match self.eval(c, env)? {
                 Value::Bool(true) => self.eval(t, env),
                 _ => self.eval(f, env),
