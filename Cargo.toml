@@ -10,3 +10,4 @@ keywords = ["shell", "cli", "language"]
 categories = ["command-line-utilities"]
 
 [dependencies]
+rustyline = { version = "18.0.1", default-features = false, features = ["with-file-history"] }

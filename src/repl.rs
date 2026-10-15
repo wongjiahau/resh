@@ -1,6 +1,7 @@
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, BufRead, IsTerminal};
 
 use crate::Session;
+use crate::complete::{Completions, ReplHelper};
 use crate::check::{Member, Symbol, SymbolKind};
 use crate::eval::json_str;
 use crate::lexer::{Tok, lex};
@@ -27,71 +28,127 @@ fn is_incomplete(src: &str) -> bool {
     }
 }
 
-/// Runs an interactive read-eval-print loop on stdin/stdout. Declarations and
-/// `LET` bindings persist across entries; `:symbols [namespace]` lists declarations; `:quit` or end of input exits.
+/// Where the interactive REPL keeps its history: `$RESH_HISTORY`, else `~/.resh_history`.
+fn history_path() -> Option<std::path::PathBuf> {
+    if let Some(p) = std::env::var_os("RESH_HISTORY") {
+        return Some(p.into());
+    }
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".resh_history"))
+}
+
+/// Feeds one input line to the session. `Ok(true)` means the line completed an
+/// entry that was run (so it belongs in the history), `Ok(false)` that more
+/// lines are needed; `Err(())` means the REPL should exit.
+fn feed(session: &mut Session, buf: &mut String, line: &str, json: bool) -> Result<bool, ()> {
+    if buf.is_empty() && matches!(line.trim(), ":quit" | ":q" | ":exit") {
+        return Err(());
+    }
+    if buf.is_empty() {
+        let t = line.trim();
+        let arg = if t == ":symbols" {
+            Some("")
+        } else {
+            t.strip_prefix(":symbols ")
+                .filter(|_| t.starts_with(":symbols"))
+        };
+        if let Some(arg) = arg {
+            let arg = arg.trim();
+            if arg.is_empty() {
+                println!("{}", render_namespaces(&session.namespaces(), json));
+            } else {
+                let ns = if arg == PRELUDE_NAME { None } else { Some(arg) };
+                match session.symbols(ns) {
+                    Ok(syms) => println!("{}", render_symbols(ns, &syms, json)),
+                    Err(msg) => eprintln!("error: {msg}"),
+                }
+            }
+            return Ok(true);
+        }
+    }
+    buf.push_str(line);
+    buf.push('\n');
+    if is_incomplete(buf) {
+        return Ok(false);
+    }
+    // The REPL supplies the final `;`, so a one-line entry can omit it.
+    let src = std::mem::take(buf) + ";";
+    if !src.trim().is_empty() {
+        let result = session.run_with(&src, &mut |interp, v| {
+            println!("{}", interp.render(v, json))
+        });
+        if let Err(d) = result {
+            eprintln!("error at {}:{}: {}", d.span.line, d.span.col, d.msg);
+        }
+    }
+    Ok(true)
+}
+
+/// Runs a read-eval-print loop. Declarations and `LET` bindings persist across
+/// entries; `:symbols [namespace]` lists declarations; `:quit` or end of input
+/// exits. On a terminal the line editor gives readline keybindings and a
+/// persistent history; piped input is read plainly.
 pub fn run(json: bool) {
-    let stdin = io::stdin();
-    let interactive = stdin.is_terminal();
     let mut session = Session::new();
     let mut buf = String::new();
-    if interactive {
-        println!("resh repl (:symbols [namespace] to list declarations, :quit or Ctrl-D to exit)");
-    }
-    let prompt = |continuation: bool| {
-        if interactive {
-            print!("{}", if continuation { "... " } else { "resh> " });
-            let _ = io::stdout().flush();
+    if !io::stdin().is_terminal() {
+        for line in io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            if feed(&mut session, &mut buf, &line, json).is_err() {
+                return;
+            }
         }
-    };
-    prompt(false);
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        if buf.is_empty() && matches!(line.trim(), ":quit" | ":q" | ":exit") {
+        return;
+    }
+    println!("resh repl (:symbols [namespace] to list declarations, :quit or Ctrl-D to exit)");
+    let mut editor = match rustyline::Editor::<ReplHelper, rustyline::history::FileHistory>::new() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("cannot start the line editor: {e}");
             return;
         }
-        if buf.is_empty() {
-            let t = line.trim();
-            let arg = if t == ":symbols" {
-                Some("")
-            } else {
-                t.strip_prefix(":symbols ")
-                    .filter(|_| t.starts_with(":symbols"))
-            };
-            if let Some(arg) = arg {
-                let arg = arg.trim();
-                if arg.is_empty() {
-                    println!("{}", render_namespaces(&session.namespaces(), json));
-                } else {
-                    let ns = if arg == PRELUDE_NAME { None } else { Some(arg) };
-                    match session.symbols(ns) {
-                        Ok(syms) => println!("{}", render_symbols(ns, &syms, json)),
-                        Err(msg) => eprintln!("error: {msg}"),
+    };
+    editor.set_helper(Some(ReplHelper {
+        completions: Completions::of(&session),
+    }));
+    let history = history_path();
+    if let Some(h) = &history {
+        let _ = editor.load_history(h);
+    }
+    // A multi-line entry is stored as one history item, so Up recalls it whole.
+    let mut entry = String::new();
+    loop {
+        let prompt = if buf.is_empty() { "resh> " } else { "... " };
+        match editor.readline(prompt) {
+            Ok(line) => {
+                if !entry.is_empty() {
+                    entry.push('\n');
+                }
+                entry.push_str(&line);
+                let fed = feed(&mut session, &mut buf, &line, json);
+                if let Some(h) = editor.helper_mut() {
+                    h.completions = Completions::of(&session);
+                }
+                match fed {
+                    Err(()) => break,
+                    Ok(false) => {}
+                    Ok(true) => {
+                        if !entry.trim().is_empty() {
+                            let _ = editor.add_history_entry(entry.as_str());
+                        }
+                        entry.clear();
                     }
                 }
-                prompt(false);
-                continue;
             }
-        }
-        buf.push_str(&line);
-        buf.push('\n');
-        if is_incomplete(&buf) {
-            prompt(true);
-            continue;
-        }
-        // The REPL supplies the final `;`, so a one-line entry can omit it.
-        let src = std::mem::take(&mut buf) + ";";
-        if !src.trim().is_empty() {
-            let result = session.run_with(&src, &mut |interp, v| {
-                println!("{}", interp.render(v, json))
-            });
-            if let Err(d) = result {
-                eprintln!("error at {}:{}: {}", d.span.line, d.span.col, d.msg);
+            // Ctrl-C abandons the entry being typed.
+            Err(rustyline::error::ReadlineError::Interrupted) => {
+                buf.clear();
+                entry.clear();
             }
+            Err(_) => break,
         }
-        prompt(false);
     }
-    if interactive {
-        println!();
+    if let Some(h) = &history {
+        let _ = editor.save_history(h);
     }
 }
 
