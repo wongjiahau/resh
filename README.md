@@ -2,6 +2,13 @@
 
 A readable shell.
 
+## Main goal
+
+**The best shell for AI agents.** resh aims to be what an agent reaches for
+instead of bash: typed calls checked before they run, diagnostics an agent can
+act on without guessing, and output that costs few tokens. The objectives below
+serve this goal.
+
 ## Objectives
 
 - **Readable shell commands.** Calls read like plain phrases (anyfix names,
@@ -11,7 +18,7 @@ A readable shell.
 - **Fast type-checking and fast execution.** Type checking is bottom-up and
   one-way (inference flows from leaves to roots only). No bidirectional type
   checking, since it is expensive.
-- **AI-friendly.** Diagnostics are written for agents as much as for humans.
+- **AI-friendly (the main goal).** Diagnostics are written for agents as much as for humans.
   Readability may be sacrificed to pack more context into an error: the call
   site, the inferred argument types, every candidate signature, and what to
   change, so an agent can fix the code without guessing.
