@@ -115,7 +115,10 @@ is no precedence: operators apply left to right.
 
 A consumer should not do recursive descent parsing. `.` and `:` already
 provide associative chaining, so the tree arrives fully grouped. The consumer
-walks it and matches each run against its own signatures.
+walks it and matches each run against its own signatures. When designing its
+syntax, a consumer that wants associative chaining should express it with `.`
+(left-assoc) or `:` (right-assoc), not with operators or keywords of its own
+that would need precedence parsing.
 
 ## Tree
 
