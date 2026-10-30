@@ -5,6 +5,6 @@ pre-commit:
       run: cargo fmt --all -- --check
     lint:
       glob: "*.rs"
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-targets -- -D warnings
     test:
-      run: cargo test
+      run: cargo test --workspace

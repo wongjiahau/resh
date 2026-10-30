@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "anyfix-expr"
+version = "0.1.0"
+
+[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

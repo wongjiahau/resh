@@ -1,0 +1,8 @@
+[package]
+name = "anyfix-expr"
+version = "0.1.0"
+edition = "2024"
+description = "A lossless parser for anyfix expressions, a keyword-free notation that only describes grouping"
+repository = "https://github.com/wongjiahau/resh"
+
+[dependencies]
