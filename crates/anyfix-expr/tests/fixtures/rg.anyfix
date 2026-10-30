@@ -1,0 +1,21 @@
+#!/usr/bin/env resh
+
+namespace (rg) {
+    record (Match) { path : String, line : Int, column : Int, text : String },
+
+    function { (option : Search Option) argument : List : String } {
+        select (option) {
+            match (regex)      : [],
+            case (insensitive) : ["--ignore-case"],
+            glob (gs)          : gs . flat map : lambda (g) { ["--glob", g] },
+            max count (n)      : ["--max-count", n . to string],
+        }
+    },
+
+    function { (output : String) match : List : Match } {
+        output . split on ":" at most 4 . let (parts) be (_),
+        unless (parts . count . equals 4) do : { return ([]) },
+        new (Match) : { path : parts . item 0, line : line, column : column, text : parts . item 3 }
+            . singleton
+    },
+}

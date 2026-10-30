@@ -1,0 +1,32 @@
+# Anyfix expressions — described in anyfix expressions.
+
+document : sequence,
+
+sequence : [ expr { "," expr } [ "," ] ],
+expr     : dotted [ ":" expr ],
+dotted   : run { "." run },
+run      : item { item },
+
+item     : word | number | string
+         | "(" sequence ")"
+         | "[" sequence "]"
+         | "{" sequence "}",
+
+special    : "," | ":" | "." | "(" | ")" | "[" | "]" | "{" | "}" | "#" | "\"",
+alnum      : letter | digit | "_",
+symbol     : any char except (whitespace | special | alnum),
+
+word       : name | symbols,
+name       : (letter | "_") { alnum },
+symbols    : symbol { symbol },
+
+number     : digit { alnum | "." digit },
+
+string     : "\"" { any char except ("\"" | "\\") | escape } "\"",
+escape     : "\\" ("\"" | "\\" | "n" | "t" | "r" | "u{" hex { hex } "}"),
+
+comment    : "#" { any char except newline },
+whitespace : unicode whitespace,
+
+letter     : unicode letter,
+digit      : "0" to "9",

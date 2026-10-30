@@ -1,0 +1,22 @@
+{
+  "name": "resh",
+  "version": "0.1.0",
+  "private": true,
+  "license": null,
+  "description": "A readable shell: typed, anyfix commands",
+  "keywords": ["shell", "cli", "language"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wongjiahau/resh"
+  },
+  "release": {
+    "targets": [
+      { "os": "linux", "arch": "x86_64", "size": 4718592, "checksum": "9f86d081884c7d65" },
+      { "os": "macos", "arch": "aarch64", "size": 4194304, "checksum": "60303ae22b998861" }
+    ],
+    "latency ms": { "p50": 1.25, "p99": 18.5, "max": -3 },
+    "notes": "Line one\nLine two\t(tabbed) \"quoted\" \\ café"
+  },
+  "contributors": [],
+  "settings": {}
+}
