@@ -1,0 +1,1 @@
+search { max depth : 3, include hidden file, glob ["*.rs", "!target"], }
