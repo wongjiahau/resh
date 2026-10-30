@@ -11,9 +11,13 @@ Deciding what a word means is the consumer's job. resh is the first consumer,
 but this crate knows nothing about it.
 
 `.`, `:` and `_` are syntactic sugar, like `'` in Lisp: `'x` is read as
-`(quote x)` before any evaluator sees it. They are rewritten into plain runs
-and parens while parsing, so the consumer never sees them (see
-[Sugar](#sugar)).
+`(quote x)` before any evaluator sees it. They fill a slot of a call while
+parsing, so the consumer never sees them (see [Sugar](#sugar)).
+
+Consumers read a tree of calls, not flat runs. A run's words name the call
+and its other items fill the slots, and symbol words bind looser than the
+rest: `x < y < z` is the call `_ < _ < _` of `x`, `y` and `z` (see
+[Tree](#tree)).
 
 ## Design principles
 
@@ -33,6 +37,8 @@ and parens while parsing, so the consumer never sees them (see
    appear inside a word.
 5. **Exactly two operators:** `.` (left-assoc) binds tighter than `:`
    (right-assoc). Both take whole runs as operands, and both are sugar.
+   Symbol words are not operators: they split a run into slots but have no
+   precedence or associativity among themselves.
 6. **One separator, `,`**, at the top level and inside every bracket. Trailing
    commas are allowed. `;` is an ordinary symbol word.
 7. **Newlines are plain whitespace.** They never end anything.
@@ -92,13 +98,13 @@ digit      = "0" … "9" ;                          (* ASCII only *)
 
 ## Sugar
 
-`.` and `:` each hand their left value to the run on their other side:
+`.` and `:` each hand their left value to the run on their other side, as an
+argument of the call that run becomes:
 
-- If that run has a bare `_` at its top level, the value goes in a `( )` slot in
-  place of the `_`.
-- Otherwise the slot goes at the front for `.` and at the end for `:`.
+- If that run has a bare `_` at its top level, the value fills that slot.
+- Otherwise a new slot goes at the front for `.` and at the end for `:`.
 
-| Source | Rewritten |
+| Source | Same as |
 | --- | --- |
 | `x . y (z)` | `(x) y (z)` |
 | `x . y _` | `y (x)` |
@@ -110,62 +116,92 @@ consumed. It reaches the consumer as an ordinary `Underscore`. A run that
 receives a value may hold at most one bare `_`; a second is `ExtraUnderscore`.
 
 This lets a consumer define infix operators as plain functions:
-`1 .+ 1 .+ 2` is `((1) + 1) + 2`, so the consumer declares `(a) + (b)`. There
+`1 .+ 1 .+ 2` is `((1) + 1) + 2`, the call `_ + _` of `_ + _` and `2`. There
 is no precedence: operators apply left to right.
 
 A consumer should not do recursive descent parsing. `.` and `:` already
 provide associative chaining, so the tree arrives fully grouped. The consumer
-walks it and matches each run against its own signatures. When designing its
-syntax, a consumer that wants associative chaining should express it with `.`
-(left-assoc) or `:` (right-assoc), not with operators or keywords of its own
-that would need precedence parsing.
+walks it and matches each call's name against its own signatures. When
+designing its syntax, a consumer that wants associative chaining should express
+it with `.` (left-assoc) or `:` (right-assoc), not with operators or keywords
+of its own that would need precedence parsing.
 
 ## Tree
 
 Consumers read the abstract view, `SyntaxTree::nodes()`: a document is a list
-of nodes, its top-level sequence. It is the tree after the sugar is rewritten.
+of nodes, its top-level sequence. It is the tree after the sugar is applied,
+with every run read as a call.
 
 ```text
-Node = Word       (text)
-     | Number     (source text)
+Node = Number     (source text)
      | String     (decoded value)
-     | Underscore               // a `_` that no `.` or `:` consumed
-     | Parens     [Node]
+     | Call       { name: [NamePart], arguments: [Node] }
+     | Parens     [Node]        // `()`, `(a, b)` or `(a,)`
      | Brackets   [Node]
      | Braces     [Node]
-     | Run        [Node]        // two or more items
+     | Underscore               // a `_` that no `.` or `:` consumed
      | Missing                  // only where an error left a hole
+
+NamePart = Word { text, span }
+         | Slot                 // filled by the next argument, in order
 ```
 
-- A run with a single item is that item, never a one-element `Run`.
-- Every node carries a byte `Span { start, end }`. A `Parens` made by the sugar
-  reuses the span of the value it wraps. `line_column(source, offset)`
-  converts an offset to a 1-based line and column (counted in characters).
+A run becomes a call in two steps:
+
+1. **Symbol words split the run.** Symbol words (`<=`, `+`, `->`) bind looser
+   than everything else, so the items between them gather into one argument
+   each. `my weight <= max (all) < 10` is the call `_ <= _ < _` of
+   `my weight`, `max (all)` and `10`. Symbol words carry no precedence among
+   themselves, so a consumer declares the whole shape `(a) <= (b) < (c)`.
+2. **Words name the call.** Every name word becomes part of the name. Every
+   other item (number, string, bracket, `_`, or a value from `.` or `:`) fills
+   a slot. `list file in (dir)` is the call `list file in _` of `dir`, and
+   `my weight` is the call `my weight` with no arguments.
+
+- A word is a call with no arguments. A run of one non-word item is that item,
+  never a call.
+- Parens around one element with no comma only group: `(x)` is `x`. The
+  exception is `(_)`, which stays `Parens[_]` because the parens mark the
+  `_`'s scope.
+- `Call::name_text()` joins the name with spaces and writes `_` for each slot:
+  `_ <= _ < _`, `list file in _`. A lone `_` is never a word, so the text is
+  unambiguous even though words like `x_` may contain `_`.
+- A name word mixing symbol and name characters is impossible: `null?` is the
+  call `_ ?` of `null`.
+- Every node and name word carries a byte `Span { start, end }`.
+  `line_column(source, offset)` converts an offset to a 1-based line and
+  column (counted in characters).
 - `Missing` stands for an empty operand or element. It appears only when
   `Parsed::errors` is not empty.
 
 ## Groupings that must hold
 
+Calls are written as s-expressions with the name first, in backticks when it
+has spaces. A call with no arguments is just its name.
+
 | Source | Tree |
 | --- | --- |
-| `a b . c d . e f` | `Run[Parens[Run[Parens[Run[a,b]], c, d]], e, f]` |
-| `a : b : c` | `Run[a, Parens[Run[b, Parens[c]]]]` |
-| `k : x . f` | `Run[k, Parens[Run[Parens[x], f]]]` |
-| `search { max depth : 3 }` | `Run[search, Braces[Run[max, depth, Parens[3]]]]` |
-| `x . y _` | `Run[y, Parens[x]]` |
-| `_ f : x` | `Run[Parens[x], f]` |
-| `x . f (_)` | `Run[Parens[x], f, Parens[_]]` |
-| `1 .+ 1 .+ 2` | `Run[Parens[Run[Parens[1], +, 1]], +, 2]` |
-| `-5` | `Run[Word "-", Number "5"]` |
-| `x+1` | `Run[x, +, 1]` |
-| `a->b` | `Run[a, ->, b]` |
-| `null?` | `Run[null, ?]` |
-| `f(x)` | `Run[f, Parens[x]]` |
-| `1.to` | `Run[Parens[1], to]` |
+| `x < y < z` | ``(`_ < _ < _` x y z)`` |
+| `my weight <= average (all weights) < max (all weights)` | ``(`_ <= _ < _` `my weight` (`average _` `all weights`) (`max _` `all weights`))`` |
+| `a b . c d . e f` | ``(`_ e f` (`_ c d` `a b`))`` |
+| `a : b : c` | ``(`a _` (`b _` c))`` |
+| `k : x . f` | ``(`k _` (`_ f` x))`` |
+| `search { max depth : 3 }` | ``(`search _` Braces[(`max depth _` 3)])`` |
+| `x . y _` | ``(`y _` x)`` |
+| `_ f : x` | ``(`_ f` x)`` |
+| `x . f (_)` | ``(`_ f _` x Parens[_])`` |
+| `1 .+ 1 .+ 2` | ``(`_ + _` (`_ + _` 1 1) 2)`` |
+| `-5` | ``(`- _` 5)`` |
+| `x+1` | ``(`_ + _` x 1)`` |
+| `a->b` | ``(`_ -> _` a b)`` |
+| `null?` | ``(`_ ?` null)`` |
+| `f(x)` | ``(`f _` x)`` |
+| `1.to` | ``(`_ to` 1)`` |
 | `1.2.3` | `Number "1.2.3"` |
-| `rg.search "TODO" in "src"` | `Run[Parens[rg], search, "TODO", in, "src"]` |
-| `fd.(option) argument` | `Run[Parens[fd], Parens[option], argument]` |
+| `rg.search "TODO" in "src"` | ``(`_ search _ in _` rg "TODO" "src")`` |
+| `fd.(option) argument` | ``(`_ _ argument` fd option)`` |
 | `("rg", x)` | `Parens["rg", x]` |
+| `(x)` | `x` |
 | `()`, `[]`, `{}` | empty sequences |
 | `[a, b,]` | `Brackets[a, b]` |
 
@@ -204,9 +240,10 @@ odd place is the consumer's job.
 ## The grammar in anyfix expressions
 
 The grammar written in anyfix expressions (`tests/fixtures/grammar.anyfix`). A
-grammar consumer would read `name : body` as a rule, a run as a sequence, the
-word `|` as alternation, `( )` as grouping, `[ ]` as optional and `{ }` as
-repetition. This crate only has to parse it.
+grammar consumer would read each `name _` call as a rule, a `_ | _` call as
+alternation, any other call as a sequence of its words and arguments in order,
+`( )` as grouping, `[ ]` as optional and `{ }` as repetition. This crate only
+has to parse it.
 
 ```text
 # Anyfix expressions — described in anyfix expressions.
@@ -245,11 +282,14 @@ digit      : "0" to "9",
 
 ## JSON
 
-Most JSON parses as anyfix expressions: objects are braces of `key (value)` runs,
-arrays are brackets, and `true`, `false`, `null` are words. The exceptions:
+Most JSON parses as anyfix expressions: objects are braces of `_ _` calls
+(`"key" : value` is the call `_ _` of the key and the value), arrays are
+brackets, and `true`, `false`, `null` are calls with no arguments. The
+exceptions:
 
-- Exponent numbers like `1e-5` split at the sign (`Number "1e"`, `Word "-"`,
-  `Number "5"`), and negative numbers are a `-` word then a number.
+- Exponent numbers like `1e-5` split at the sign into the call `_ - _` of
+  `Number "1e"` and `Number "5"`, and a negative number is the call `- _` of
+  a number.
 - JSON's `\uXXXX`, `\/`, `\b` and `\f` escapes are not anyfix escapes and
   report `InvalidEscape`; anyfix writes code points as `\u{…}`.
 
@@ -259,5 +299,7 @@ arrays are brackets, and `true`, `false`, `null` are words. The exceptions:
 let parsed = anyfix_expr::parse("search { max depth : 3 }");
 assert!(parsed.errors.is_empty());
 let nodes = parsed.syntax.nodes();
+let anyfix_expr::NodeKind::Call(call) = &nodes[0].kind else { unreachable!() };
+assert_eq!(call.name_text(), "search _");
 assert_eq!(parsed.syntax.to_source(), "search { max depth : 3 }");
 ```

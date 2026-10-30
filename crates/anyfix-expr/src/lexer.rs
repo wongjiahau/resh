@@ -18,6 +18,11 @@ fn is_alnum(c: char) -> bool {
     c.is_alphabetic() || c.is_ascii_digit() || c == '_'
 }
 
+/// Whether a word token is made of symbol characters (`<=`, `+`), not a name.
+pub(crate) fn is_symbol_word(text: &str) -> bool {
+    text.chars().next().is_some_and(is_symbol)
+}
+
 fn is_symbol(c: char) -> bool {
     !c.is_whitespace() && !SPECIAL.contains(&c) && !is_alnum(c)
 }

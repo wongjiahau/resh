@@ -5,13 +5,15 @@
 //! ```
 //! let parsed = anyfix_expr::parse("search { max depth : 3 }");
 //! assert!(parsed.errors.is_empty());
-//! assert_eq!(parsed.syntax.nodes().len(), 1);
+//! let nodes = parsed.syntax.nodes();
+//! let anyfix_expr::NodeKind::Call(call) = &nodes[0].kind else { unreachable!() };
+//! assert_eq!(call.name_text(), "search _");
 //! assert_eq!(parsed.syntax.to_source(), "search { max depth : 3 }");
 //! ```
 //!
 //! [`parse`] returns a lossless [`SyntaxTree`] (printing it back reproduces
 //! the input byte for byte) and every [`Error`] found. [`SyntaxTree::nodes`]
-//! derives the abstract [`Node`] view from it.
+//! derives the abstract [`Node`] view from it, where every run is a [`Call`].
 
 mod error;
 mod lexer;
@@ -21,7 +23,7 @@ mod span;
 mod syntax;
 
 pub use error::{Error, ErrorCode};
-pub use node::{Node, NodeKind};
+pub use node::{Call, NamePart, Node, NodeKind};
 pub use parser::{MAX_DEPTH, Parsed, parse};
 pub use span::{LineColumn, Span, line_column};
 pub use syntax::{

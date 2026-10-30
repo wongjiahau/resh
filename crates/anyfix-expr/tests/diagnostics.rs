@@ -24,7 +24,7 @@ fn tree_despite_errors(source: &str) -> String {
 fn unclosed_bracket_points_at_the_opener() {
     assert_eq!(errors("f (a"), [(ErrorCode::UnclosedBracket, 2, 3)]);
     assert_eq!(errors("{ [x }"), [(ErrorCode::UnclosedBracket, 2, 3)]);
-    assert_eq!(tree_despite_errors("f (a"), "Run[f, Parens[a]]");
+    assert_eq!(tree_despite_errors("f (a"), "(`f _` a)");
     assert!(messages("f (a")[0].contains("`)`"));
 }
 
@@ -36,14 +36,14 @@ fn mismatched_bracket_names_both_brackets() {
         message.contains("`]`") && message.contains("`(`"),
         "{message}"
     );
-    assert_eq!(tree_despite_errors("(a] b"), "Run[Parens[a], b]");
+    assert_eq!(tree_despite_errors("(a] b"), "(`_ b` a)");
 }
 
 #[test]
 fn unexpected_closer() {
     assert_eq!(errors("a)"), [(ErrorCode::UnexpectedCloser, 1, 2)]);
     assert_eq!(errors("}"), [(ErrorCode::UnexpectedCloser, 0, 1)]);
-    assert_eq!(tree_despite_errors("a) b, ]"), "Run[a, b]");
+    assert_eq!(tree_despite_errors("a) b, ]"), "`a b`");
 }
 
 #[test]
@@ -54,8 +54,8 @@ fn empty_operand_needs_a_run_on_both_sides() {
     assert_eq!(errors(": b"), [(ErrorCode::EmptyOperand, 0, 1)]);
     assert_eq!(errors("a::b"), [(ErrorCode::EmptyOperand, 1, 2)]);
     assert_eq!(errors("(a .)"), [(ErrorCode::EmptyOperand, 3, 4)]);
-    assert_eq!(tree_despite_errors("a :"), "Run[a, Parens[Missing]]");
-    assert_eq!(tree_despite_errors(". a"), "Run[Parens[Missing], a]");
+    assert_eq!(tree_despite_errors("a :"), "(`a _` Missing)");
+    assert_eq!(tree_despite_errors(". a"), "(`_ a` Missing)");
 }
 
 #[test]
