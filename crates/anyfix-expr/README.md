@@ -113,6 +113,10 @@ This lets a consumer define infix operators as plain functions:
 `1 .+ 1 .+ 2` is `((1) + 1) + 2`, so the consumer declares `(a) + (b)`. There
 is no precedence: operators apply left to right.
 
+A consumer should not do recursive descent parsing. `.` and `:` already
+provide associative chaining, so the tree arrives fully grouped. The consumer
+walks it and matches each run against its own signatures.
+
 ## Tree
 
 Consumers read the abstract view, `SyntaxTree::nodes()`: a document is a list
