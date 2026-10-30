@@ -7,14 +7,21 @@ notation that only describes grouping and gives nothing a meaning.
 
 Anyfix expressions are to a language what S-expressions are to Lisp and WAT: a
 consumer-neutral notation. The crate builds tree structure and nothing else.
-Deciding what a word, a `.` or a `:` means is the consumer's job. resh is the
-first consumer, but this crate knows nothing about it.
+Deciding what a word means is the consumer's job. resh is the first consumer,
+but this crate knows nothing about it.
+
+`.`, `:` and `_` are syntactic sugar, like `'` in Lisp: `'x` is read as
+`(quote x)` before any evaluator sees it. They are rewritten into plain runs
+and parens while parsing, so the consumer never sees them (see
+[Sugar](#sugar)).
 
 ## Design principles
 
 1. **The syntax has no meaning.** Tokens and operators only build tree
-   structure. There are no keywords and no special identifiers (`_`, `true`,
-   `let` are ordinary words). No evaluation, holes, namespaces or types.
+   structure. There are no keywords and no special identifiers (`true` and
+   `let` are ordinary words). No evaluation, holes, namespaces or types. The
+   one exception is the sugar of `.`, `:` and a bare `_`, which is rewritten
+   away and is meaning-free like Lisp's `'`.
 2. **Letter case is never significant.** Words keep the text as written, and
    nothing in the notation depends on case. String escapes are
    case-insensitive (`\N` is `\n`, `\U{4a}` is `\u{4A}`).
@@ -25,7 +32,7 @@ first consumer, but this crate knows nothing about it.
 4. **Exactly eleven special characters:** `, : . ( ) [ ] { } # "`. They never
    appear inside a word.
 5. **Exactly two operators:** `.` (left-assoc) binds tighter than `:`
-   (right-assoc). Both take whole runs as operands.
+   (right-assoc). Both take whole runs as operands, and both are sugar.
 6. **One separator, `,`**, at the top level and inside every bracket. Trailing
    commas are allowed. `;` is an ordinary symbol word.
 7. **Newlines are plain whitespace.** They never end anything.
@@ -83,26 +90,49 @@ digit      = "0" … "9" ;                          (* ASCII only *)
    Strings may contain literal newlines. No interpolation and no raw strings in
    v1.
 
+## Sugar
+
+`.` and `:` each hand their left value to the run on their other side:
+
+- If that run has a bare `_` at its top level, the value goes in a `( )` slot in
+  place of the `_`.
+- Otherwise the slot goes at the front for `.` and at the end for `:`.
+
+| Source | Rewritten |
+| --- | --- |
+| `x . y (z)` | `(x) y (z)` |
+| `x . y _` | `y (x)` |
+| `f : x` | `f (x)` |
+| `_ f : x` | `(x) f` |
+
+A `_` inside brackets belongs to those brackets (as in Scala) and is not
+consumed. It reaches the consumer as an ordinary `Underscore`. A run that
+receives a value may hold at most one bare `_`; a second is `ExtraUnderscore`.
+
+This lets a consumer define infix operators as plain functions:
+`1 .+ 1 .+ 2` is `((1) + 1) + 2`, so the consumer declares `(a) + (b)`. There
+is no precedence: operators apply left to right.
+
 ## Tree
 
 Consumers read the abstract view, `SyntaxTree::nodes()`: a document is a list
-of nodes, its top-level sequence.
+of nodes, its top-level sequence. It is the tree after the sugar is rewritten.
 
 ```text
-Node = Word     (text)
-     | Number   (source text)
-     | String   (decoded value)
-     | Parens   [Node]
-     | Brackets [Node]
-     | Braces   [Node]
-     | Run      [Node]        // two or more items
-     | Dot      { left, right }  // a . b
-     | Colon    { left, right }  // a : b
-     | Missing                // only where an error left a hole
+Node = Word       (text)
+     | Number     (source text)
+     | String     (decoded value)
+     | Underscore               // a `_` that no `.` or `:` consumed
+     | Parens     [Node]
+     | Brackets   [Node]
+     | Braces     [Node]
+     | Run        [Node]        // two or more items
+     | Missing                  // only where an error left a hole
 ```
 
 - A run with a single item is that item, never a one-element `Run`.
-- Every node carries a byte `Span { start, end }`. `line_column(source, offset)`
+- Every node carries a byte `Span { start, end }`. A `Parens` made by the sugar
+  reuses the span of the value it wraps. `line_column(source, offset)`
   converts an offset to a 1-based line and column (counted in characters).
 - `Missing` stands for an empty operand or element. It appears only when
   `Parsed::errors` is not empty.
@@ -111,19 +141,23 @@ Node = Word     (text)
 
 | Source | Tree |
 | --- | --- |
-| `a b . c d . e f` | `Dot(Dot(Run[a,b], Run[c,d]), Run[e,f])` |
-| `a : b : c` | `Colon(a, Colon(b, c))` |
-| `k : x . f` | `Colon(k, Dot(x, f))` |
-| `search { max depth : 3 }` | `Run[search, Braces[Colon(Run[max,depth], 3)]]` |
+| `a b . c d . e f` | `Run[Parens[Run[Parens[Run[a,b]], c, d]], e, f]` |
+| `a : b : c` | `Run[a, Parens[Run[b, Parens[c]]]]` |
+| `k : x . f` | `Run[k, Parens[Run[Parens[x], f]]]` |
+| `search { max depth : 3 }` | `Run[search, Braces[Run[max, depth, Parens[3]]]]` |
+| `x . y _` | `Run[y, Parens[x]]` |
+| `_ f : x` | `Run[Parens[x], f]` |
+| `x . f (_)` | `Run[Parens[x], f, Parens[_]]` |
+| `1 .+ 1 .+ 2` | `Run[Parens[Run[Parens[1], +, 1]], +, 2]` |
 | `-5` | `Run[Word "-", Number "5"]` |
 | `x+1` | `Run[x, +, 1]` |
 | `a->b` | `Run[a, ->, b]` |
 | `null?` | `Run[null, ?]` |
 | `f(x)` | `Run[f, Parens[x]]` |
-| `1.to` | `Dot(1, to)` |
+| `1.to` | `Run[Parens[1], to]` |
 | `1.2.3` | `Number "1.2.3"` |
-| `rg.search "TODO" in "src"` | `Dot(rg, Run[search, "TODO", in, "src"])` |
-| `fd.(option) argument` | `Dot(fd, Run[Parens[option], argument])` |
+| `rg.search "TODO" in "src"` | `Run[Parens[rg], search, "TODO", in, "src"]` |
+| `fd.(option) argument` | `Run[Parens[fd], Parens[option], argument]` |
 | `("rg", x)` | `Parens["rg", x]` |
 | `()`, `[]`, `{}` | empty sequences |
 | `[a, b,]` | `Brackets[a, b]` |
@@ -152,6 +186,7 @@ found, what was expected, and the fix.
 | `UnexpectedCloser` | `a)` | The closer, which is skipped. |
 | `EmptyOperand` | `a..b`, `. a`, `a :`, `: b`, `a::b` | The operator next to the missing run, which becomes `Missing`. |
 | `EmptyElement` | `a,,b`, `[, a]` | The comma with nothing before it. A trailing comma is fine. |
+| `ExtraUnderscore` | `x . f _ _`, `_ f _ : x` | The second bare `_` in a run that receives a value. It stays an `Underscore`. |
 | `UnterminatedString` | `"abc` | The string, which runs to the end of input. |
 | `InvalidEscape` | `"\q"`, `"\u{110000}"` | The escape, kept as written in the decoded value. |
 | `TooDeep` | 1000 nested `(` | The first bracket deeper than `MAX_DEPTH` (256). It and its contents are skipped, so the stack never overflows. |
@@ -203,7 +238,7 @@ digit      : "0" to "9",
 
 ## JSON
 
-Most JSON parses as anyfix expressions: objects are braces of `Colon` pairs,
+Most JSON parses as anyfix expressions: objects are braces of `key (value)` runs,
 arrays are brackets, and `true`, `false`, `null` are words. The exceptions:
 
 - Exponent numbers like `1e-5` split at the sign (`Number "1e"`, `Word "-"`,

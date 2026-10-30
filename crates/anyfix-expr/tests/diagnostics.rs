@@ -54,8 +54,8 @@ fn empty_operand_needs_a_run_on_both_sides() {
     assert_eq!(errors(": b"), [(ErrorCode::EmptyOperand, 0, 1)]);
     assert_eq!(errors("a::b"), [(ErrorCode::EmptyOperand, 1, 2)]);
     assert_eq!(errors("(a .)"), [(ErrorCode::EmptyOperand, 3, 4)]);
-    assert_eq!(tree_despite_errors("a :"), "Colon(a, Missing)");
-    assert_eq!(tree_despite_errors(". a"), "Dot(Missing, a)");
+    assert_eq!(tree_despite_errors("a :"), "Run[a, Parens[Missing]]");
+    assert_eq!(tree_despite_errors(". a"), "Run[Parens[Missing], a]");
 }
 
 #[test]
@@ -146,4 +146,14 @@ fn render_gives_file_line_column_and_a_caret() {
     assert!(lines.next().unwrap().starts_with("x.resh:2:5: found `]`"));
     assert_eq!(lines.next(), Some("  f (b]"));
     assert_eq!(lines.next(), Some("      ^"));
+}
+
+#[test]
+fn extra_underscore_in_a_receiving_run() {
+    assert_eq!(errors("x . f _ _"), [(ErrorCode::ExtraUnderscore, 8, 9)]);
+    assert_eq!(errors("_ f _ : x"), [(ErrorCode::ExtraUnderscore, 4, 5)]);
+    assert_eq!(errors("x . f _ (_)"), []);
+    // Not receiving a value, so `_` is an ordinary word here.
+    assert_eq!(errors("_ _"), []);
+    assert_eq!(errors("_ _ . f"), []);
 }

@@ -33,7 +33,7 @@ fn string(source: &str) -> String {
 fn a_word_is_all_name_or_all_symbol_characters() {
     assert_eq!(kinds("flat map"), [word("flat"), word("map")]);
     assert_eq!(kinds("snake_case2"), [word("snake_case2")]);
-    assert_eq!(kinds("_"), [word("_")]);
+    assert_eq!(kinds("_"), [NodeKind::Underscore]);
     assert_eq!(kinds("a->b"), [word("a"), word("->"), word("b")]);
     assert_eq!(kinds("<=>!"), [word("<=>!")]);
     assert_eq!(
@@ -46,8 +46,8 @@ fn a_word_is_all_name_or_all_symbol_characters() {
 #[test]
 fn special_characters_never_appear_inside_a_word() {
     assert_eq!(tree("a,b"), "a, b");
-    assert_eq!(tree("a:b"), "Colon(a, b)");
-    assert_eq!(tree("+.-"), "Dot(+, -)");
+    assert_eq!(tree("a:b"), "Run[a, Parens[b]]");
+    assert_eq!(tree("+.-"), "Run[Parens[+], -]");
     assert_eq!(
         tree("f(x)[y]{z}"),
         "Run[f, Parens[x], Brackets[y], Braces[z]]"
@@ -86,10 +86,10 @@ fn numbers_start_with_an_ascii_digit_and_keep_their_text() {
 
 #[test]
 fn dot_in_a_number_needs_a_digit_after_it() {
-    assert_eq!(tree("1.to"), "Dot(1, to)");
-    assert_eq!(tree("1. 2"), "Dot(1, 2)");
-    assert_eq!(tree("x.1"), "Dot(x, 1)");
-    assert_eq!(tree("1.5.to"), "Dot(1.5, to)");
+    assert_eq!(tree("1.to"), "Run[Parens[1], to]");
+    assert_eq!(tree("1. 2"), "Run[Parens[1], 2]");
+    assert_eq!(tree("x.1"), "Run[Parens[x], 1]");
+    assert_eq!(tree("1.5.to"), "Run[Parens[1.5], to]");
 }
 
 #[test]

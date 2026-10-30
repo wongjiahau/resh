@@ -13,6 +13,8 @@ pub enum ErrorCode {
     EmptyOperand,
     /// Nothing between two commas, or before the first one, e.g. `a,,b`, `[, a]`.
     EmptyElement,
+    /// A second bare `_` in a run that receives a value from `.` or `:`, e.g. `x . f _ _`.
+    ExtraUnderscore,
     /// A string with no closing `"`.
     UnterminatedString,
     /// An unknown escape, or a bad `\u{…}`, e.g. `"\q"`, `"\u{110000}"`.

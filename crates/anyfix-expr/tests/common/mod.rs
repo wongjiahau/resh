@@ -47,8 +47,7 @@ pub fn show(node: &Node) -> String {
         NodeKind::Brackets(nodes) => format!("Brackets[{}]", list(nodes)),
         NodeKind::Braces(nodes) => format!("Braces[{}]", list(nodes)),
         NodeKind::Run(nodes) => format!("Run[{}]", list(nodes)),
-        NodeKind::Dot { left, right } => format!("Dot({}, {})", show(left), show(right)),
-        NodeKind::Colon { left, right } => format!("Colon({}, {})", show(left), show(right)),
+        NodeKind::Underscore => "_".into(),
         NodeKind::Missing => "Missing".into(),
     }
 }

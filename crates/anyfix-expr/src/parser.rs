@@ -128,6 +128,7 @@ impl Parser<'_> {
         }
         if !operators.is_empty() {
             self.report_empty_operands(&mut runs, &operators);
+            self.report_extra_underscores(&runs, &operators);
         }
 
         let mut runs = runs.into_iter();
@@ -183,6 +184,33 @@ impl Parser<'_> {
                     "found `{text}` with nothing {side} it; expected a run on both sides of `{text}`; add the missing operand or remove `{text}`"
                 ),
             ));
+        }
+    }
+
+    /// A run that receives a value (right of `.`, or left of `:` when no `.`
+    /// precedes it) takes it at one `_`; a second `_` has nowhere to go.
+    fn report_extra_underscores(&mut self, runs: &[Run], operators: &[Token]) {
+        for (index, run) in runs.iter().enumerate() {
+            let receives = (index > 0 && operators[index - 1].kind == TokenKind::Dot)
+                || (index < operators.len()
+                    && operators[index].kind == TokenKind::Colon
+                    && (index == 0 || operators[index - 1].kind == TokenKind::Colon));
+            if !receives {
+                continue;
+            }
+            let extra = run.items.iter().filter_map(|item| match item {
+                Item::Atom(token) if token.kind == TokenKind::Word && token.text == "_" => {
+                    Some(token.span)
+                }
+                _ => None,
+            });
+            for span in extra.skip(1) {
+                self.errors.push(Error::new(
+                    ErrorCode::ExtraUnderscore,
+                    span,
+                    "found a second `_` in a run that receives a value; expected at most one `_` per run; remove it, or put it in brackets to give it its own scope".to_string(),
+                ));
+            }
         }
     }
 

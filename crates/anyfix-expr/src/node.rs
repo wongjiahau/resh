@@ -21,16 +21,9 @@ pub enum NodeKind {
     Braces(Vec<Node>),
     /// Two or more items side by side; a single item is never a `Run`.
     Run(Vec<Node>),
-    /// `left . right`.
-    Dot {
-        left: Box<Node>,
-        right: Box<Node>,
-    },
-    /// `left : right`.
-    Colon {
-        left: Box<Node>,
-        right: Box<Node>,
-    },
+    /// The bare word `_`, left over when no `.` or `:` consumed it. It is a
+    /// placeholder in the scope of the nearest enclosing brackets.
+    Underscore,
     /// Where an operand or element is missing. Appears only when there are errors.
     Missing,
 }
@@ -56,20 +49,70 @@ fn holds_only_skipped(expression: &Expression) -> bool {
     matches!(expression, Expression::Run(run) if !run.items.is_empty() && run.is_empty())
 }
 
+/// `.` and `:` do not survive into the abstract view. Each hands its left
+/// value to the run on its other side (see [`apply`]):
+///
+/// - `x . y (z)` is `(x) y (z)` and `x . y _` is `y (x)`;
+/// - `f : x` is `f (x)` and `_ f : x` is `(x) f`.
 fn expression_node(expression: &Expression) -> Node {
     match expression {
         Expression::Run(run) => run_node(run),
-        Expression::Dot(binary) | Expression::Colon(binary) => {
-            let left = Box::new(expression_node(&binary.left));
-            let right = Box::new(expression_node(&binary.right));
-            let span = left.span.to(right.span);
-            let kind = match expression {
-                Expression::Dot(_) => NodeKind::Dot { left, right },
-                _ => NodeKind::Colon { left, right },
-            };
-            Node { kind, span }
+        Expression::Dot(binary) => {
+            let value = expression_node(&binary.left);
+            let receiver = expression_node(&binary.right);
+            apply(value, receiver, Side::Front)
+        }
+        Expression::Colon(binary) => {
+            let receiver = expression_node(&binary.left);
+            let value = expression_node(&binary.right);
+            apply(value, receiver, Side::Back)
         }
     }
+}
+
+enum Side {
+    Front,
+    Back,
+}
+
+/// Puts `value` in a slot of `receiver`: in place of its first top-level `_`,
+/// else at the `side`. A `_` inside brackets belongs to those brackets.
+fn apply(value: Node, receiver: Node, side: Side) -> Node {
+    let span = cover(value.span, receiver.span);
+    let mut items = match receiver.kind {
+        NodeKind::Run(items) => items,
+        NodeKind::Missing => Vec::new(),
+        _ => vec![receiver],
+    };
+    let slot = Node {
+        span: value.span,
+        kind: NodeKind::Parens(vec![value]),
+    };
+    match items
+        .iter()
+        .position(|item| item.kind == NodeKind::Underscore)
+    {
+        Some(index) => items[index] = slot,
+        None => match side {
+            Side::Front => items.insert(0, slot),
+            Side::Back => items.push(slot),
+        },
+    }
+    if items.len() == 1 {
+        let only = items.remove(0);
+        return Node {
+            kind: only.kind,
+            span,
+        };
+    }
+    Node {
+        kind: NodeKind::Run(items),
+        span,
+    }
+}
+
+fn cover(a: Span, b: Span) -> Span {
+    Span::new(a.start.min(b.start), a.end.max(b.end))
 }
 
 fn run_node(run: &Run) -> Node {
@@ -92,6 +135,7 @@ fn item_node(item: &Item) -> Option<Node> {
         Item::Skipped(_) => None,
         Item::Atom(token) => {
             let kind = match &token.kind {
+                TokenKind::Word if token.text == "_" => NodeKind::Underscore,
                 TokenKind::Word => NodeKind::Word(token.text.clone()),
                 TokenKind::Number => NodeKind::Number(token.text.clone()),
                 TokenKind::String { value } => NodeKind::String(value.clone()),

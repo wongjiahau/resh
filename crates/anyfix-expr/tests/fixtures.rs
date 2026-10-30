@@ -13,10 +13,10 @@ fn fixture(name: &str) -> String {
 fn grammar_parses_as_one_rule_per_element() {
     let nodes = nodes(&fixture("grammar.anyfix"));
     assert_eq!(nodes.len(), 19);
-    assert_eq!(show(&nodes[0]), "Colon(document, sequence)");
+    assert_eq!(show(&nodes[0]), "Run[document, Parens[sequence]]");
     assert_eq!(
         show(&nodes[2]),
-        r#"Colon(expr, Run[dotted, Brackets[Run[":", expr]]])"#
+        r#"Run[expr, Parens[Run[dotted, Brackets[Run[":", expr]]]]]"#
     );
 }
 
@@ -31,7 +31,7 @@ fn rg_parses() {
 fn config_parses() {
     assert_eq!(
         tree(&fixture("config.anyfix")),
-        r#"Run[search, Braces[Colon(Run[max, depth], 3), Run[include, hidden, file], Run[glob, Brackets["*.rs", "!target"]]]]"#
+        r#"Run[search, Braces[Run[max, depth, Parens[3]], Run[include, hidden, file], Run[glob, Brackets["*.rs", "!target"]]]]"#
     );
 }
 
@@ -40,7 +40,10 @@ fn json_parses() {
     let nodes = nodes(&fixture("json.anyfix"));
     assert_eq!(nodes.len(), 1);
     let shown = show(&nodes[0]);
-    assert!(shown.contains(r#"Colon("private", true)"#), "{shown}");
-    assert!(shown.contains(r#"Colon("max", Run[-, 3])"#), "{shown}");
-    assert!(shown.contains(r#"Colon("p50", 1.25)"#), "{shown}");
+    assert!(shown.contains(r#"Run["private", Parens[true]]"#), "{shown}");
+    assert!(
+        shown.contains(r#"Run["max", Parens[Run[-, 3]]]"#),
+        "{shown}"
+    );
+    assert!(shown.contains(r#"Run["p50", Parens[1.25]]"#), "{shown}");
 }
