@@ -2,6 +2,13 @@
 //! It gives nothing a meaning; that is the consumer's job. See `README.md`
 //! for the specification.
 //!
+//! ```
+//! let parsed = anyfix_expr::parse("search { max depth : 3 }");
+//! assert!(parsed.errors.is_empty());
+//! assert_eq!(parsed.syntax.nodes().len(), 1);
+//! assert_eq!(parsed.syntax.to_source(), "search { max depth : 3 }");
+//! ```
+//!
 //! [`parse`] returns a lossless [`SyntaxTree`] (printing it back reproduces
 //! the input byte for byte) and every [`Error`] found. [`SyntaxTree::nodes`]
 //! derives the abstract [`Node`] view from it.
