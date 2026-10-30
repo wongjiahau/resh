@@ -136,3 +136,14 @@ fn messages_are_one_line_with_what_was_found_and_expected() {
         assert!(message.contains("; expected "), "{message}");
     }
 }
+
+#[test]
+fn render_gives_file_line_column_and_a_caret() {
+    let source = "a\nf (b]";
+    let error = &parse_round_trip(source).errors[0];
+    let rendered = error.render(source, "x.resh");
+    let mut lines = rendered.lines();
+    assert!(lines.next().unwrap().starts_with("x.resh:2:5: found `]`"));
+    assert_eq!(lines.next(), Some("  f (b]"));
+    assert_eq!(lines.next(), Some("      ^"));
+}

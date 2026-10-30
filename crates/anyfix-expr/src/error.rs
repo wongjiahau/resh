@@ -1,4 +1,4 @@
-use crate::span::Span;
+use crate::span::{LineColumn, Span, line_column};
 
 /// A stable code for each kind of syntax error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -36,5 +36,28 @@ impl Error {
             span,
             message: message.into(),
         }
+    }
+}
+
+impl Error {
+    /// Where the error starts in `source`, as a line and column.
+    pub fn position(&self, source: &str) -> LineColumn {
+        line_column(source, self.span.start)
+    }
+
+    /// `file:line:column: message`, then the source line with `^` under the span.
+    pub fn render(&self, source: &str, file: &str) -> String {
+        let at = self.position(source);
+        let line = source.lines().nth(at.line - 1).unwrap_or("");
+        let width = source
+            .get(self.span.start..self.span.end)
+            .map_or(1, |text| text.lines().next().unwrap_or("").chars().count())
+            .max(1);
+        format!(
+            "{file}:{at}: {}\n  {line}\n  {}{}",
+            self.message,
+            " ".repeat(at.column - 1),
+            "^".repeat(width)
+        )
     }
 }
