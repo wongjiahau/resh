@@ -1,7 +1,7 @@
 # anyfix-expr
 
-A lexer, parser and lossless tree for **anyfix expressions**: a keyword-free
-notation that only describes grouping and gives nothing a meaning.
+A lexer, parser and lossless tree for **anyfix expressions**: a notation that
+only describes grouping and gives nothing a meaning.
 
 ## Motivation
 
@@ -15,19 +15,22 @@ but this crate knows nothing about it.
 parsing, so the consumer never sees them (see [Sugar](#sugar)).
 
 Consumers read a tree of calls, not flat runs. A run's words name the call
-and its other items fill the slots, and symbol words bind looser than the
-rest: `x < y < z` is the call `_ < _ < _` of `x`, `y` and `z` (see
-[Tree](#tree)).
+and its other items fill the slots. Keywords (all-caps words) bind loosest,
+then symbol words: `x < y < z` is the call `_ < _ < _` of `x`, `y` and `z`,
+and `IF x < y THEN x ELSE y` is the call `IF _ THEN _ ELSE _` of `x < y`, `x`
+and `y` (see [Tree](#tree)).
 
 ## Design principles
 
 1. **The syntax has no meaning.** Tokens and operators only build tree
-   structure. There are no keywords and no special identifiers (`true` and
-   `let` are ordinary words). No evaluation, holes, namespaces or types. The
-   one exception is the sugar of `.`, `:` and a bare `_`, which is rewritten
-   away and is meaning-free like Lisp's `'`.
-2. **Letter case is never significant.** Words keep the text as written, and
-   nothing in the notation depends on case. String escapes are
+   structure. No word is special (`true` and `LET` mean nothing here). No
+   evaluation, holes, namespaces or types. The one exception is the sugar of
+   `.`, `:` and a bare `_`, which is rewritten away and is meaning-free like
+   Lisp's `'`.
+2. **Letter case only groups.** Words keep the text as written. An all-caps
+   word is a *keyword*, which binds looser than other words so that a
+   consumer's forms need fewer parentheses (see [Tree](#tree)); it still
+   means nothing. Nothing else depends on case: string escapes are
    case-insensitive (`\N` is `\n`, `\U{4a}` is `\u{4A}`).
 3. **The word boundary is conventional.** A word is all name characters
    (letters, digits, `_`) or all symbol characters. Switching kinds ends it, so
@@ -37,8 +40,8 @@ rest: `x < y < z` is the call `_ < _ < _` of `x`, `y` and `z` (see
    appear inside a word.
 5. **Exactly two operators:** `.` (left-assoc) binds tighter than `:`
    (right-assoc). Both take whole runs as operands, and both are sugar.
-   Symbol words are not operators: they split a run into slots but have no
-   precedence or associativity among themselves.
+   Keywords and symbol words are not operators: they split a run into slots
+   but have no precedence or associativity among themselves.
 6. **One separator, `,`**, at the top level and inside every bracket. Trailing
    commas are allowed. `;` is an ordinary symbol word.
 7. **Newlines are plain whitespace.** They never end anything.
@@ -124,7 +127,8 @@ provide associative chaining, so the tree arrives fully grouped. The consumer
 walks it and matches each call's name against its own signatures. When
 designing its syntax, a consumer that wants associative chaining should express
 it with `.` (left-assoc) or `:` (right-assoc), not with operators or keywords
-of its own that would need precedence parsing.
+of its own that would need precedence parsing. Keywords only fix where a run
+splits; they never nest one call in another.
 
 ## Tree
 
@@ -146,18 +150,31 @@ NamePart = Word { text, span }
          | Slot                 // filled by the next argument, in order
 ```
 
-A run becomes a call in two steps:
+A run becomes a call in three steps:
 
-1. **Symbol words split the run.** Symbol words (`<=`, `+`, `->`) bind looser
-   than everything else, so the items between them gather into one argument
-   each. `my weight <= max (all) < 10` is the call `_ <= _ < _` of
-   `my weight`, `max (all)` and `10`. Symbol words carry no precedence among
-   themselves, so a consumer declares the whole shape `(a) <= (b) < (c)`.
-2. **Words name the call.** Every name word becomes part of the name. Every
+1. **Keywords split the run.** A keyword is a name word with an uppercase
+   letter and no lowercase one: `IF`, `T` and `X1` are keywords; `If`, `_1`
+   and `中` are not. Keywords bind loosest, so the items between them gather
+   into one argument each, and each argument then goes through the next two
+   steps. `IF x > 0 THEN x ELSE 0 - x` is the call `IF _ THEN _ ELSE _` of
+   `x > 0`, `x` and `0 - x`.
+2. **Symbol words split the run.** In a run without keywords, symbol words
+   (`<=`, `+`, `->`) bind looser than the rest, so the items between them
+   gather into one argument each. `my weight <= max (all) < 10` is the call
+   `_ <= _ < _` of `my weight`, `max (all)` and `10`.
+3. **Words name the call.** Every name word becomes part of the name. Every
    other item (number, string, bracket, `_`, or a value from `.` or `:`) fills
    a slot. `list file in (dir)` is the call `list file in _` of `dir`, and
    `my weight` is the call `my weight` with no arguments.
 
+- Keywords, like symbol words, carry no precedence among themselves: every
+  keyword in a run belongs to one call, so a consumer declares the whole
+  shape `IF _ THEN _ ELSE _`. A keyword form nested in another needs `:` or
+  parentheses, even as the last argument:
+  `LET s BE: IF a THEN b ELSE : IF c THEN d ELSE e`. Without the first `:`,
+  the run is the one call `LET _ BE IF _ THEN _ ELSE _`.
+- A split leaves no slot where nothing stands: `x DONE` is `_ DONE`, and
+  `FOR ALL [a]` is `FOR ALL _`.
 - A word is a call with no arguments. A run of one non-word item is that item,
   never a call.
 - Parens around one element with no comma only group: `(x)` is `x`. The
@@ -183,6 +200,10 @@ has spaces. A call with no arguments is just its name.
 | --- | --- |
 | `x < y < z` | ``(`_ < _ < _` x y z)`` |
 | `my weight <= average (all weights) < max (all weights)` | ``(`_ <= _ < _` `my weight` (`average _` `all weights`) (`max _` `all weights`))`` |
+| `IF x > 0 THEN x ELSE 0 - x` | ``(`IF _ THEN _ ELSE _` (`_ > _` x 0) x (`_ - _` 0 x))`` |
+| `LET s BE IF a THEN b ELSE c` | ``(`LET _ BE IF _ THEN _ ELSE _` s a b c)`` |
+| `LET s BE: IF a THEN b ELSE c` | ``(`LET _ BE _` s (`IF _ THEN _ ELSE _` a b c))`` |
+| `RETURNS T` | `` `RETURNS T` `` |
 | `a b . c d . e f` | ``(`_ e f` (`_ c d` `a b`))`` |
 | `a : b : c` | ``(`a _` (`b _` c))`` |
 | `k : x . f` | ``(`k _` (`_ f` x))`` |

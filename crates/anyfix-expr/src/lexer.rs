@@ -23,6 +23,14 @@ pub(crate) fn is_symbol_word(text: &str) -> bool {
     text.chars().next().is_some_and(is_symbol)
 }
 
+/// A name word in all caps: at least one uppercase letter and no lowercase
+/// one, so `IF`, `T` and `X1` are keywords but `If`, `_1` and `中` are not.
+pub(crate) fn is_keyword(text: &str) -> bool {
+    !is_symbol_word(text)
+        && text.chars().any(char::is_uppercase)
+        && !text.chars().any(char::is_lowercase)
+}
+
 fn is_symbol(c: char) -> bool {
     !c.is_whitespace() && !SPECIAL.contains(&c) && !is_alnum(c)
 }

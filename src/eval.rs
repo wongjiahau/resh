@@ -551,7 +551,7 @@ impl Interp {
     }
 
     /// The function members of a record value as literal entries, with
-    /// `<function>` for each body: `FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) <function>`.
+    /// `<function>` for each body: `FUNCTION (a: T) compare (b: T) RETURNS Ordering <function>`.
     fn record_functions(&self, name: &str) -> impl Iterator<Item = String> + '_ {
         self.ck.records[name]
             .functions

@@ -246,7 +246,7 @@ fn render_symbols_text(ns: Option<&str>, syms: &[Symbol]) -> String {
             SymbolKind::Function => (
                 "fn",
                 match &s.ret {
-                    Some(r) => format!("{} RETURNS ({})", s.name, r),
+                    Some(r) => format!("{} RETURNS {}", s.name, crate::check::returns_text(r)),
                     None => s.name.clone(),
                 },
             ),
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn text_output() {
-        let want = "fd\n  /// Search \"options\".\n  /// Second line\n  record  Options\n            hidden (Boolean DEFAULT false)\n  enum    Match Kind\n            exact\n            glob (pattern: String)\n  fn      find (root: String) RETURNS (List (Entry))";
+        let want = "fd\n  /// Search \"options\".\n  /// Second line\n  record  Options\n            hidden (Boolean DEFAULT false)\n  enum    Match Kind\n            exact\n            glob (pattern: String)\n  fn      find (root: String) RETURNS List (Entry)";
         assert_eq!(render_symbols(Some("fd"), &sample(), false), want);
         assert_eq!(render_symbols(None, &[], false), "prelude");
     }

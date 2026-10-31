@@ -43,7 +43,7 @@ pub struct FieldAst {
     pub span: Span,
 }
 
-/// A function member of a record declaration: `FUNCTION (signature) RETURNS (Type)`.
+/// A function member of a record declaration: `FUNCTION signature RETURNS Type`.
 #[derive(Debug, Clone)]
 pub struct MemberAst {
     pub sig: SigAst,
@@ -51,7 +51,7 @@ pub struct MemberAst {
 }
 
 /// A function member of a record literal:
-/// `FUNCTION (signature) RETURNS (Type) { body }`.
+/// `FUNCTION signature RETURNS Type DO { body }`.
 #[derive(Debug, Clone)]
 pub struct MemberLiteral {
     pub sig: SigAst,
@@ -76,7 +76,7 @@ pub enum Decl {
         body: FnBody,
         doc: Option<String>,
     },
-    /// `RECORD (Order (T)) { ... }`: `name` is the key with `_` for each type
+    /// `RECORD Order (T) HAS { ... }`: `name` is the key with `_` for each type
     /// parameter (`Order _`), `params` the parameters as written.
     Record {
         name: String,
@@ -92,7 +92,7 @@ pub enum Decl {
         span: Span,
         doc: Option<String>,
     },
-    /// `TYPE (Result (T)) : Result (T) Or (String)`: `pattern` names the alias and its
+    /// `TYPE Result (T) BE Result (T) Or (String)`: `pattern` names the alias and its
     /// type parameters, `target` is what it stands for.
     Alias {
         pattern: TyExpr,
@@ -141,9 +141,9 @@ pub enum ExprKind {
         qualifier: String,
         call: Vec<SeqItem>,
     },
-    /// `[a, SPREAD (b), c]`: elements may be `Spread`.
+    /// `[a, SPREAD b, c]`: elements may be `Spread`.
     List(Vec<Expr>),
-    /// `SPREAD (xs)`: splices a list into the list literal that contains it.
+    /// `SPREAD xs`: splices a list into the list literal that contains it.
     Spread(Box<Expr>),
     /// `(a, b)`: two or more values.
     Tuple(Vec<Expr>),
@@ -154,7 +154,7 @@ pub enum ExprKind {
     Match(Box<Expr>, Vec<Arm>),
     /// `expr AS Type`: states the type an expression must fit.
     Ascribe(Box<Expr>, TyExpr),
-    /// `FN (x) : body`: a function value of one parameter.
+    /// `FN x DO body`: a function value of one parameter.
     Lambda(String, Box<Expr>),
 }
 

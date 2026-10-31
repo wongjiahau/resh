@@ -22,14 +22,14 @@ fn render(src: &str) -> String {
 }
 
 const SHAPES: &str = r#"
-ENUM (Shape) {
+ENUM Shape HAS {
     circle (radius: Float),
     (width: Float) by (height: Float),
     empty
 },
 
-FUNCTION (describe (s: Shape)) RETURNS (String) {
-    MATCH (s) {
+FUNCTION describe (s: Shape) RETURNS String DO {
+    MATCH s WITH {
         circle (r) : "circle",
         (w) by (h) : "rectangle",
         empty : "nothing"
@@ -54,8 +54,8 @@ fn anyfix_constructors_and_match() {
 #[test]
 fn non_exhaustive_match_is_an_error() {
     let src = r#"
-ENUM (Light) { red, green },
-FUNCTION (name (l: Light)) RETURNS (String) { MATCH (l) { red : "r" } }
+ENUM Light HAS { red, green },
+FUNCTION name (l: Light) RETURNS String DO { MATCH l WITH { red : "r" } }
 "#;
     assert!(run_err(src).contains("non-exhaustive MATCH; missing: green"));
 }
@@ -63,15 +63,15 @@ FUNCTION (name (l: Light)) RETURNS (String) { MATCH (l) { red : "r" } }
 #[test]
 fn record_literal_defaults_and_bare_boolean_shorthand() {
     let src = r#"
-RECORD (Job) {
+RECORD Job HAS {
     name (String),
-    retries (Int . DEFAULT 3),
-    dry run (Boolean . DEFAULT (false))
+    retries (Int DEFAULT 3),
+    dry run (Boolean DEFAULT false)
 },
-LET (j : Job) : { name "build", dry run },
-MATCH (j) { { name (n), retries (_), dry run (_) } : n },
-MATCH (j) { { name (_), retries (r), dry run (_) } : r },
-MATCH (j) { { name (_), retries (_), dry run (d) } : d },
+LET (j : Job) BE { name "build", dry run },
+MATCH j WITH { { name (n), retries (_), dry run (_) } : n },
+MATCH j WITH { { name (_), retries (r), dry run (_) } : r },
+MATCH j WITH { { name (_), retries (_), dry run (d) } : d },
 "#;
     assert_eq!(
         run(src),
@@ -82,15 +82,15 @@ MATCH (j) { { name (_), retries (_), dry run (d) } : d },
 #[test]
 fn fields_are_anyfix_phrases_with_slots_anywhere() {
     let src = r#"
-RECORD (Person) {
+RECORD Person HAS {
     (String) is name,
     age (Int),
     between (Int) and (Int)
 },
-LET (p : Person) : { "Ada" is name, age 36, between 1 and 5 },
-MATCH (p) { { (a) is name, age (_), between (_) and (_) } : a },
-MATCH (p) { { (_) is name, age (g), between (lo) and (hi) } : g },
-MATCH (p) { { (_) is name, age (_), between (lo) and (hi) } : hi },
+LET (p : Person) BE { "Ada" is name, age 36, between 1 and 5 },
+MATCH p WITH { { (a) is name, age (_), between (_) and (_) } : a },
+MATCH p WITH { { (_) is name, age (g), between (lo) and (hi) } : g },
+MATCH p WITH { { (_) is name, age (_), between (lo) and (hi) } : hi },
 "#;
     assert_eq!(
         run(src),
@@ -107,8 +107,8 @@ fn dot_takes_at_most_one_placeholder() {
 #[test]
 fn user_function_with_infix_signature_and_generics() {
     let src = r#"
-FUNCTION ((a: List (T)) has more than (b: List (T))) RETURNS (Boolean) {
-    IF (count (a) . equals : count (b)) THEN (false) ELSE (true)
+FUNCTION (a: List (T)) has more than (b: List (T)) RETURNS Boolean DO {
+    IF (count (a) . equals : count (b)) THEN false ELSE true
 },
 [1, 2, 3] has more than [1],
 "#;
@@ -119,7 +119,7 @@ FUNCTION ((a: List (T)) has more than (b: List (T))) RETURNS (Boolean) {
 
 #[test]
 fn unknown_name_lists_variables_in_scope() {
-    let msg = run_err("LET (x) : 1,\ncount (y),");
+    let msg = run_err("LET x BE 1,\ncount (y),");
     assert!(msg.contains("unknown name `y`"), "{msg}");
     assert!(msg.contains("x"), "{msg}");
 }
@@ -127,16 +127,16 @@ fn unknown_name_lists_variables_in_scope() {
 #[test]
 fn overlapping_signatures_are_rejected() {
     let msg = run_err(
-        "FUNCTION (ping (a: Int)) RETURNS (Int) { a },\nFUNCTION (ping (b: Int)) RETURNS (Int) { 1 }",
+        "FUNCTION ping (a: Int) RETURNS Int DO { a },\nFUNCTION ping (b: Int) RETURNS Int DO { 1 }",
     );
     assert!(msg.contains("clashes"), "{msg}");
     // Specialization and bare generics always overlap something.
     let msg = run_err(
-        "FUNCTION (f (a: List (T))) RETURNS (Int) { 1 },\nFUNCTION (f (a: List (Int))) RETURNS (Int) { 2 }",
+        "FUNCTION f (a: List (T)) RETURNS Int DO { 1 },\nFUNCTION f (a: List (Int)) RETURNS Int DO { 2 }",
     );
     assert!(msg.contains("specialization"), "{msg}");
     let msg = run_err(
-        "FUNCTION (f (a: T)) RETURNS (Int) { 1 },\nFUNCTION (f (a: Int)) RETURNS (Int) { 2 }",
+        "FUNCTION f (a: T) RETURNS Int DO { 1 },\nFUNCTION f (a: Int) RETURNS Int DO { 2 }",
     );
     assert!(msg.contains("clashes"), "{msg}");
 }
@@ -149,15 +149,15 @@ fn nested_calls_need_parentheses() {
 }
 
 const OVERLOADS: &str = r#"
-RECORD (Bag) { items (List (Int)) },
-RECORD (Pair) { left (Int), right (Int) },
-RECORD (Triple) { left (Int), right (Int), extra (Int) },
-FUNCTION (describe (x: Int)) RETURNS (String) { "int" },
-FUNCTION (describe (x: Boolean)) RETURNS (String) { "boolean" },
-FUNCTION (describe (x: List (T))) RETURNS (String) { "list" },
-FUNCTION (describe (x: Bag)) RETURNS (String) { "bag" },
-FUNCTION (sum (p: Pair)) RETURNS (Int) { 1 },
-FUNCTION (sum (t: Triple)) RETURNS (Int) { 3 },
+RECORD Bag HAS { items (List (Int)) },
+RECORD Pair HAS { left (Int), right (Int) },
+RECORD Triple HAS { left (Int), right (Int), extra (Int) },
+FUNCTION describe (x: Int) RETURNS String DO { "int" },
+FUNCTION describe (x: Boolean) RETURNS String DO { "boolean" },
+FUNCTION describe (x: List (T)) RETURNS String DO { "list" },
+FUNCTION describe (x: Bag) RETURNS String DO { "bag" },
+FUNCTION sum (p: Pair) RETURNS Int DO { 1 },
+FUNCTION sum (t: Triple) RETURNS Int DO { 3 },
 "#;
 
 #[test]
@@ -194,33 +194,33 @@ fn record_literal_picks_the_only_record_it_fits() {
 #[test]
 fn ambiguous_record_literal_needs_an_annotation() {
     let src = r#"
-RECORD (Apple) { x (Int) },
-RECORD (Banana) { x (Int) },
-FUNCTION (f (a: Apple)) RETURNS (Int) { 1 },
-FUNCTION (f (b: Banana)) RETURNS (Int) { 2 }
+RECORD Apple HAS { x (Int) },
+RECORD Banana HAS { x (Int) },
+FUNCTION f (a: Apple) RETURNS Int DO { 1 },
+FUNCTION f (b: Banana) RETURNS Int DO { 2 }
 "#;
     let msg = run_err(&format!("{src},\nf {{ x 1 }},"));
     assert!(msg.contains("ambiguous call"), "{msg}");
     assert!(msg.contains("{ ... } AS Record Name"), "{msg}");
     assert_eq!(
-        run(&format!("{src},\nf : {{ x 1 }} AS (Banana),")),
+        run(&format!("{src},\nf : {{ x 1 }} AS Banana,")),
         vec![Value::Int(2)]
     );
 }
 
 #[test]
 fn bare_record_literal_has_no_type_of_its_own() {
-    let msg = run_err("LET (x) : { a 1 },");
+    let msg = run_err("LET x BE { a 1 },");
     assert!(msg.contains("annotate it"), "{msg}");
-    let msg = run_err("RECORD (Apple) { x (Int) },\nLET (x) : { y 1 } AS (Apple),");
+    let msg = run_err("RECORD Apple HAS { x (Int) },\nLET x BE: { y 1 } AS Apple,");
     assert!(msg.contains("has no field `y (Int)`"), "{msg}");
     assert!(msg.contains("its fields are: x (Int)"), "{msg}");
 }
 
 #[test]
 fn omitted_fields_need_a_default() {
-    let decl = "RECORD (Job) { name (String), retries (Int . DEFAULT 3) },\n";
-    let get = "FUNCTION (retries (j: Job)) RETURNS (Int) { MATCH (j) { { name (_), retries (r) } : r } },\n";
+    let decl = "RECORD Job HAS { name (String), retries (Int DEFAULT 3) },\n";
+    let get = "FUNCTION retries (j: Job) RETURNS Int DO { MATCH j WITH { { name (_), retries (r) } : r } },\n";
     assert_eq!(
         run(&format!("{decl}{get}retries {{ name \"b\" }},")),
         vec![Value::Int(3)]
@@ -242,8 +242,8 @@ fn no_coercions_and_empty_values_fit_anywhere() {
     run("read file \"nope.txt\",");
     // `none` and `[]` are subtypes of every Option / List.
     run("count [],");
-    run("LET (x) : IF (true) THEN (some 1) ELSE (none),\nx,");
-    let msg = run_err("IF (true) THEN 1 ELSE \"a\",");
+    run("LET x BE: IF true THEN some 1 ELSE none,\nx,");
+    let msg = run_err("IF true THEN 1 ELSE \"a\",");
     assert!(msg.contains("IF branches must have the same type"), "{msg}");
 }
 
@@ -308,15 +308,15 @@ fn list_file_has_ls_parity_options() {
 #[test]
 fn type_names_are_anyfix_and_capitalized() {
     let ok =
-        "FUNCTION (first (xs: List (T))) RETURNS (Result (T) Or (String)) { NATIVE \"unwrap\" }";
+        "FUNCTION first (xs: List (T)) RETURNS Result (T) Or (String) DO { NATIVE \"unwrap\" }";
     assert!(Session::new().run(ok).is_ok());
-    assert!(run_err("RECORD (my thing) { a: Int }").contains("capitalize every word"));
-    assert!(run_err("FUNCTION (f (x: int)) RETURNS (Int) { 1 }").contains("capitalize every word"));
+    assert!(run_err("RECORD my thing HAS { a: Int }").contains("capitalize every word"));
+    assert!(run_err("FUNCTION f (x: int) RETURNS Int DO { 1 }").contains("capitalize every word"));
     assert!(
-        run_err("FUNCTION (f (x: List<Int>)) RETURNS (Int) { 1 }")
+        run_err("FUNCTION f (x: List<Int>) RETURNS Int DO { 1 }")
             .contains("type parameters go in parentheses")
     );
-    assert!(run_err("FUNCTION (f (x: List)) RETURNS (Int) { 1 }").contains("unknown type `List`"));
+    assert!(run_err("FUNCTION f (x: List) RETURNS Int DO { 1 }").contains("unknown type `List`"));
 }
 
 // ---------- `.` qualifiers ----------
@@ -426,7 +426,7 @@ mod qualifiers {
 
     #[test]
     fn qualified_type_in_let_annotation() {
-        let (value, ty) = only_let_ascription("LET (c : git -> Commit) : make commit,");
+        let (value, ty) = only_let_ascription("LET (c : git -> Commit) BE make commit,");
         assert_eq!(ty.qualifiers, vec!["git".to_string()]);
         assert_eq!(ty.name, "Commit");
         assert!(ty.args.is_empty());
@@ -435,7 +435,7 @@ mod qualifiers {
 
     #[test]
     fn qualified_type_inside_a_type_slot() {
-        let (_, ty) = only_let_ascription("LET (c : List (git -> Commit)) : x,");
+        let (_, ty) = only_let_ascription("LET (c : List (git -> Commit)) BE x,");
         assert_eq!(ty.name, "List _");
         assert_eq!(ty.args[0].qualifiers, vec!["git".to_string()]);
         assert_eq!(ty.args[0].name, "Commit");
@@ -443,7 +443,7 @@ mod qualifiers {
 
     #[test]
     fn qualified_type_in_signature() {
-        let items = parse("FUNCTION (show (c: git -> Commit)) RETURNS (git -> Commit) { c }");
+        let items = parse("FUNCTION show (c: git -> Commit) RETURNS git -> Commit DO { c }");
         let [Item::Decl(Decl::Function { ret, .. })] = items.as_slice() else {
             panic!("expected one function");
         };
@@ -457,14 +457,14 @@ mod qualifiers {
 
     #[test]
     fn let_annotation_states_the_type() {
-        let (_, ty) = only_let_ascription("LET (x : Int) : 1,");
+        let (_, ty) = only_let_ascription("LET (x : Int) BE 1,");
         assert!(ty.qualifiers.is_empty());
         assert_eq!(ty.name, "Int");
         assert_eq!(
-            Session::new().run("LET (x : Int) : 1,\nx,").unwrap(),
+            Session::new().run("LET (x : Int) BE 1,\nx,").unwrap(),
             vec![resh::Value::Int(1)]
         );
-        assert!(!check_err("LET (x : String) : 1,").msg.is_empty());
+        assert!(!check_err("LET (x : String) BE 1,").msg.is_empty());
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod qualifiers {
             "{}",
             d.msg
         );
-        let d = check_err("FUNCTION (show (c: git -> Commit)) RETURNS (Int) { 1 }");
+        let d = check_err("FUNCTION show (c: git -> Commit) RETURNS Int DO { 1 }");
         assert!(d.msg.contains("unknown namespace `git`"), "{}", d.msg);
     }
 }
@@ -487,19 +487,19 @@ mod namespaces {
     use resh::{Session, Value};
 
     const FD: &str = r#"
-NAMESPACE : fd,
+NAMESPACE fd,
 
-ENUM (Mode) { regex, glob },
+ENUM Mode HAS { regex, glob },
 
-FUNCTION (name (m: Mode)) RETURNS (String) {
-    MATCH (m) { regex : "regex", glob : "glob" }
+FUNCTION name (m: Mode) RETURNS String DO {
+    MATCH m WITH { regex : "regex", glob : "glob" }
 },
 
-FUNCTION (helper) RETURNS (Int) { 41 },
-FUNCTION (find (pattern: String) in (dir: String)) RETURNS (String) {
+FUNCTION helper RETURNS Int DO { 41 },
+FUNCTION find (pattern: String) in (dir: String) RETURNS String DO {
     join (pattern) with (dir)
 },
-FUNCTION (find (pattern: String)) RETURNS (Int) { helper . equals 41 . IF _ THEN (count [pattern]) ELSE 0 },
+FUNCTION find (pattern: String) RETURNS Int DO { helper . equals 41 . IF _ THEN count [pattern] ELSE 0 },
 "#;
 
     fn session_with_fd() -> Session {
@@ -547,8 +547,8 @@ FUNCTION (find (pattern: String)) RETURNS (Int) { helper . equals 41 . IF _ THEN
     fn namespaced_types_are_referenced_qualified_from_outside() {
         let mut s = session_with_fd();
         let src = r#"
-FUNCTION (show (m: fd -> Mode)) RETURNS (Int) { 1 },
-LET (m : fd -> Mode) : fd -> regex,
+FUNCTION show (m: fd -> Mode) RETURNS Int DO { 1 },
+LET (m : fd -> Mode) BE fd -> regex,
 show (m),
 fd -> name (m),
 "#;
@@ -556,7 +556,7 @@ fd -> name (m),
             s.run(src).unwrap(),
             vec![Value::Int(1), Value::Str("regex".into())]
         );
-        let msg = err(&mut s, "FUNCTION (show2 (m: Mode)) RETURNS (Int) { 1 }");
+        let msg = err(&mut s, "FUNCTION show2 (m: Mode) RETURNS Int DO { 1 }");
         assert!(msg.contains("unknown type `Mode`"), "{msg}");
     }
 
@@ -589,7 +589,7 @@ fd -> name (m),
         let mut s = session_with_fd();
         let msg = err(&mut s, r#"y .-> find "a","#);
         assert!(msg.contains("unknown namespace `y`"), "{msg}");
-        let msg = err(&mut s, r#"LET (x) : 1, x .-> find "a","#);
+        let msg = err(&mut s, r#"LET x BE 1, x .-> find "a","#);
         assert!(
             msg.contains("`x` is a variable of type Int, which has no function members"),
             "{msg}"
@@ -610,20 +610,20 @@ fd -> name (m),
     #[test]
     fn namespace_must_be_first_and_unique() {
         let mut s = Session::new();
-        let msg = err(&mut s, "ENUM (A) { a },\nNAMESPACE : fd");
+        let msg = err(&mut s, "ENUM (A) HAS { a },\nNAMESPACE fd");
         assert!(msg.contains("must be the first declaration"), "{msg}");
-        let msg = err(&mut s, "NAMESPACE : fd,\nNAMESPACE : gd");
+        let msg = err(&mut s, "NAMESPACE fd,\nNAMESPACE gd");
         assert!(msg.contains("at most one NAMESPACE"), "{msg}");
-        let msg = err(&mut s, "NAMESPACE : fd gd");
+        let msg = err(&mut s, "NAMESPACE fd gd");
         assert!(msg.contains("single-word name"), "{msg}");
         let msg = err(&mut s, "NAMESPACE");
-        assert!(msg.contains("`NAMESPACE : name`"), "{msg}");
+        assert!(msg.contains("`NAMESPACE name`"), "{msg}");
     }
 
     #[test]
     fn comments_and_blank_lines_may_precede_namespace() {
         let mut s = Session::new();
-        s.run("# header\n\nNAMESPACE : fd,\nFUNCTION (one) RETURNS (Int) { 1 }")
+        s.run("# header\n\nNAMESPACE fd,\nFUNCTION one RETURNS Int DO { 1 }")
             .unwrap();
         assert_eq!(s.run("fd -> one,").unwrap(), vec![Value::Int(1)]);
     }
@@ -631,9 +631,9 @@ fd -> name (m),
     #[test]
     fn same_name_in_two_namespaces_does_not_clash() {
         let mut s = Session::new();
-        s.run("NAMESPACE : a,\nFUNCTION (one) RETURNS (Int) { 1 }")
+        s.run("NAMESPACE a,\nFUNCTION one RETURNS Int DO { 1 }")
             .unwrap();
-        s.run("NAMESPACE : b,\nFUNCTION (one) RETURNS (Int) { 2 }")
+        s.run("NAMESPACE b,\nFUNCTION one RETURNS Int DO { 2 }")
             .unwrap();
         assert_eq!(
             s.run("a -> one,\nb -> one,").unwrap(),
@@ -650,19 +650,19 @@ mod records {
     use resh::{Session, Value};
 
     const SERVER: &str = r#"
-RECORD (Server Config) {
-    host (String . DEFAULT "localhost"),
-    port (Int . DEFAULT 8080)
+RECORD Server Config HAS {
+    host (String DEFAULT "localhost"),
+    port (Int DEFAULT 8080)
 },
 
-FUNCTION (summary (c: Server Config)) RETURNS (List (String)) {
-    MATCH (c) { { host (h), port (p) } : [h, "x"] }
+FUNCTION summary (c: Server Config) RETURNS List (String) DO {
+    MATCH c WITH { { host (h), port (p) } : [h, "x"] }
 },
-FUNCTION (port number (c: Server Config)) RETURNS (Int) {
-    MATCH (c) { { host (_), port (p) } : p }
+FUNCTION port number (c: Server Config) RETURNS Int DO {
+    MATCH c WITH { { host (_), port (p) } : p }
 },
-FUNCTION (host name (c: Server Config)) RETURNS (String) {
-    MATCH (c) { { port (_), host (h) } : h }
+FUNCTION host name (c: Server Config) RETURNS String DO {
+    MATCH c WITH { { port (_), host (h) } : h }
 },
 "#;
 
@@ -714,9 +714,9 @@ FUNCTION (host name (c: Server Config)) RETURNS (String) {
     #[test]
     fn entry_order_is_free_and_annotation_names_the_record() {
         let src = r#"
-LET (c : Server Config) : { port 1, host "h" },
-MATCH (c) { { host (h), port (p) } : p },
-MATCH (c) { { port (p), host (h) } : h },
+LET (c : Server Config) BE { port 1, host "h" },
+MATCH c WITH { { host (h), port (p) } : p },
+MATCH c WITH { { port (p), host (h) } : h },
 "#;
         assert_eq!(server(src), vec![Value::Int(1), Value::Str("h".into())]);
     }
@@ -724,8 +724,8 @@ MATCH (c) { { port (p), host (h) } : h },
     #[test]
     fn single_case_match_destructures_every_field() {
         let src = r#"
-LET (c : Server Config) : { port 443 },
-MATCH (c) { { host (h), port (p) } : [h] },
+LET (c : Server Config) BE { port 443 },
+MATCH c WITH { { host (h), port (p) } : [h] },
 "#;
         assert_eq!(
             server(src),
@@ -762,14 +762,14 @@ MATCH (c) { { host (h), port (p) } : [h] },
 
     #[test]
     fn omitting_a_field_without_default_is_an_error() {
-        let src = "RECORD (Job) { name (String), retries (Int . DEFAULT 3) },\nLET (j : Job) : { retries 1 },";
+        let src = "RECORD Job HAS { name (String), retries (Int DEFAULT 3) },\nLET (j : Job) BE { retries 1 },";
         let msg = err(src);
         assert!(
             msg.contains("missing required field `name (String)`"),
             "{msg}"
         );
         // One slot without a default is enough, even when its sibling has one.
-        let src = "RECORD (Rec) { between (Int . DEFAULT 1) and (Int) },\nLET (r : Rec) : {},";
+        let src = "RECORD Rec HAS { between (Int DEFAULT 1) and (Int) },\nLET (r : Rec) BE {},";
         let msg = err(src);
         assert!(
             msg.contains("missing required field `between (Int) and (Int)`"),
@@ -779,15 +779,15 @@ MATCH (c) { { host (h), port (p) } : [h] },
 
     #[test]
     fn bare_field_name_is_true_only_for_a_boolean_field() {
-        let msg = err("RECORD (Rec) { depth (Int . DEFAULT 1) },\nLET (r : Rec) : { depth },");
+        let msg = err("RECORD Rec HAS { depth (Int DEFAULT 1) },\nLET (r : Rec) BE { depth },");
         assert!(msg.contains("has no field `depth`"), "{msg}");
-        let src = "RECORD (Rec) { verbose (Boolean . DEFAULT (false)) },\nLET (r : Rec) : { verbose },\nMATCH (r) { { verbose (v) } : v },";
+        let src = "RECORD Rec HAS { verbose (Boolean DEFAULT false) },\nLET (r : Rec) BE { verbose },\nMATCH r WITH { { verbose (v) } : v },";
         assert_eq!(run(src), vec![Value::Bool(true)]);
         // The explicit form is the same field.
-        let src = "RECORD (Rec) { verbose (Boolean . DEFAULT (true)) },\nLET (r : Rec) : { verbose (false) },\nMATCH (r) { { verbose (v) } : v },";
+        let src = "RECORD Rec HAS { verbose (Boolean DEFAULT true) },\nLET (r : Rec) BE { verbose (false) },\nMATCH r WITH { { verbose (v) } : v },";
         assert_eq!(run(src), vec![Value::Bool(false)]);
         let msg = err(
-            "RECORD (Rec) { verbose (Boolean . DEFAULT (true)) },\nLET (r : Rec) : { verbose, verbose (false) },",
+            "RECORD Rec HAS { verbose (Boolean DEFAULT true) },\nLET (r : Rec) BE { verbose, verbose (false) },",
         );
         assert!(msg.contains("is given twice"), "{msg}");
     }
@@ -795,11 +795,11 @@ MATCH (c) { { host (h), port (p) } : [h] },
     #[test]
     fn every_slot_of_a_field_has_its_own_default() {
         let src = r#"
-RECORD (Rec) { between (Int . DEFAULT 1) and (Int . DEFAULT 9) },
-LET (r : Rec) : {},
-MATCH (r) { { between (lo) and (hi) } : hi },
-LET (s : Rec) : { between 2 and 3 },
-MATCH (s) { { between (lo) and (hi) } : lo },
+RECORD Rec HAS { between (Int DEFAULT 1) and (Int DEFAULT 9) },
+LET (r : Rec) BE {},
+MATCH r WITH { { between (lo) and (hi) } : hi },
+LET (s : Rec) BE { between 2 and 3 },
+MATCH s WITH { { between (lo) and (hi) } : lo },
 "#;
         assert_eq!(run(src), vec![Value::Int(9), Value::Int(2)]);
     }
@@ -807,12 +807,12 @@ MATCH (s) { { between (lo) and (hi) } : lo },
     #[test]
     fn nested_record_literal_fits_a_record_slot() {
         let src = r#"
-RECORD (Inner) { n (Int . DEFAULT 7) },
-RECORD (Outer) { inner (Inner . DEFAULT {}), tag (String) },
-LET (o : Outer) : { tag "t" },
-MATCH (o) { { inner (i), tag (_) } : MATCH (i) { { n (n) } : n } },
-LET (p : Outer) : { inner { n 1 }, tag "t" },
-MATCH (p) { { inner (i), tag (_) } : MATCH (i) { { n (n) } : n } },
+RECORD Inner HAS { n (Int DEFAULT 7) },
+RECORD Outer HAS { inner (Inner DEFAULT {}), tag (String) },
+LET (o : Outer) BE { tag "t" },
+MATCH o WITH { { inner (i), tag (_) } : MATCH i WITH { { n (n) } : n } },
+LET (p : Outer) BE { inner { n 1 }, tag "t" },
+MATCH p WITH { { inner (i), tag (_) } : MATCH i WITH { { n (n) } : n } },
 "#;
         assert_eq!(run(src), vec![Value::Int(7), Value::Int(1)]);
     }
@@ -820,17 +820,17 @@ MATCH (p) { { inner (i), tag (_) } : MATCH (i) { { n (n) } : n } },
     #[test]
     fn default_may_call_a_function_declared_later_in_the_file() {
         let src = r#"
-RECORD (Rec) { n (Int . DEFAULT (forty two)) },
-FUNCTION (forty two) RETURNS (Int) { 42 },
-LET (r : Rec) : {},
-MATCH (r) { { n (n) } : n },
+RECORD Rec HAS { n (Int DEFAULT forty two) },
+FUNCTION forty two RETURNS Int DO { 42 },
+LET (r : Rec) BE {},
+MATCH r WITH { { n (n) } : n },
 "#;
         assert_eq!(run(src), vec![Value::Int(42)]);
     }
 
     #[test]
     fn default_must_fit_its_slot_type() {
-        let msg = err("RECORD (Rec) { n (Int . DEFAULT \"x\") }");
+        let msg = err("RECORD Rec HAS { n (Int DEFAULT \"x\") }");
         assert!(msg.contains("DEFAULT of `n (Int)` in `Rec`"), "{msg}");
         assert!(msg.contains("expects Int, found String"), "{msg}");
     }
@@ -839,41 +839,41 @@ MATCH (r) { { n (n) } : n },
 
     #[test]
     fn two_fields_that_a_literal_cannot_tell_apart_are_rejected() {
-        let msg = err("RECORD (Rec) { a (Int), a (String) }");
+        let msg = err("RECORD Rec HAS { a (Int), a (String) }");
         assert!(msg.contains("clashes with field"), "{msg}");
         // `{ verbose }` would mean both fields.
-        let msg = err("RECORD (Rec) { verbose (Boolean), verbose }");
+        let msg = err("RECORD Rec HAS { verbose (Boolean), verbose }");
         assert!(msg.contains("clashes with field"), "{msg}");
     }
 
     #[test]
     fn a_field_needs_a_word() {
-        let msg = err("RECORD (Rec) { (Int) }");
+        let msg = err("RECORD Rec HAS { (Int) }");
         assert!(msg.contains("a field needs at least one word"), "{msg}");
     }
 
     #[test]
     fn slots_hold_types_not_names() {
-        let msg = err("RECORD (Rec) { a (n: Int) }");
+        let msg = err("RECORD Rec HAS { a (n: Int) }");
         assert!(!msg.is_empty());
-        let msg = err("RECORD (Rec) { a (Int . DEFAULT) }");
-        assert!(msg.contains("`(Type . DEFAULT value)`"), "{msg}");
+        let msg = err("RECORD Rec HAS { a (Int . DEFAULT) }");
+        assert!(msg.contains("`(Type DEFAULT value)`"), "{msg}");
     }
 
     #[test]
     fn key_value_form_and_optional_fields_are_gone() {
         // `a: Int` is anyfix for `a (Int)`, so only the optional marker is gone.
-        assert!(!err("RECORD (Rec) { a? : Int }").is_empty());
+        assert!(!err("RECORD Rec HAS { a? : Int }").is_empty());
         // No `Name { ... }` constructor either.
-        let msg = err("RECORD (Rec) { a (Int) },\nR { a 1 },");
+        let msg = err("RECORD Rec HAS { a (Int) },\nR { a 1 },");
         assert!(msg.contains("no function matches"), "{msg}");
     }
 
     #[test]
     fn records_have_no_accessor_functions() {
-        let msg = server_err("LET (c : Server Config) : {},\nport c,");
+        let msg = server_err("LET (c : Server Config) BE {},\nport c,");
         assert!(msg.contains("no function matches `port c`"), "{msg}");
-        let msg = server_err("LET (c : Server Config) : {},\nhost c,");
+        let msg = server_err("LET (c : Server Config) BE {},\nhost c,");
         assert!(msg.contains("no function matches"), "{msg}");
     }
 
@@ -881,18 +881,18 @@ MATCH (r) { { n (n) } : n },
 
     #[test]
     fn destructuring_names_every_field_and_only_known_ones() {
-        let msg = server_err("LET (c : Server Config) : {},\nMATCH (c) { { host (h) } : h },");
+        let msg = server_err("LET (c : Server Config) BE {},\nMATCH c WITH { { host (h) } : h },");
         assert!(
             msg.contains("must list every field; missing: port (Int)"),
             "{msg}"
         );
         let msg = server_err(
-            "LET (c : Server Config) : {},\nMATCH (c) { { host (h), port (p), tls (t) } : h },",
+            "LET (c : Server Config) BE {},\nMATCH c WITH { { host (h), port (p), tls (t) } : h },",
         );
         assert!(msg.contains("has no field pattern `tls _`"), "{msg}");
         assert!(msg.contains("host (String), port (Int)"), "{msg}");
         let msg = server_err(
-            "LET (c : Server Config) : {},\nMATCH (c) { { host (h), host (g), port (p) } : h },",
+            "LET (c : Server Config) BE {},\nMATCH c WITH { { host (h), host (g), port (p) } : h },",
         );
         assert!(msg.contains("is listed twice"), "{msg}");
     }
@@ -900,13 +900,13 @@ MATCH (r) { { n (n) } : n },
     #[test]
     fn a_second_record_arm_is_unreachable_when_the_first_cannot_fail() {
         let msg = server_err(
-            "LET (c : Server Config) : {},\nMATCH (c) { { host (h), port (p) } : h, { host (h), port (p) } : h },",
+            "LET (c : Server Config) BE {},\nMATCH c WITH { { host (h), port (p) } : h, { host (h), port (p) } : h },",
         );
         assert!(msg.contains("unreachable"), "{msg}");
-        let msg = server_err("LET (c : Server Config) : {},\nMATCH (c) { bar : 1 },");
+        let msg = server_err("LET (c : Server Config) BE {},\nMATCH c WITH { bar : 1 },");
         assert!(msg.contains("pattern must be a record pattern"), "{msg}");
         let msg = server_err(
-            "LET (c : Server Config) : {},\nMATCH (c) { { host (h), port (p) _ } : h },",
+            "LET (c : Server Config) BE {},\nMATCH c WITH { { host (h), port (p) _ } : h },",
         );
         assert!(msg.contains("words and slots only"), "{msg}");
     }
@@ -915,20 +915,21 @@ MATCH (r) { { n (n) } : n },
     fn destructured_names_have_the_slot_types() {
         // `h` is a String, so it cannot be returned as an Int.
         let msg = server_err(
-            "FUNCTION (bad (c: Server Config)) RETURNS (Int) { MATCH (c) { { host (h), port (_) } : h } }",
+            "FUNCTION bad (c: Server Config) RETURNS Int DO { MATCH c WITH { { host (h), port (_) } : h } }",
         );
         assert!(msg.contains("declared to return Int"), "{msg}");
         assert!(msg.contains("String"), "{msg}");
         // `(_)` ignores a slot and binds nothing.
-        let msg =
-            server_err("LET (c : Server Config) : {},\nMATCH (c) { { host (_), port (_) } : _ },");
+        let msg = server_err(
+            "LET (c : Server Config) BE {},\nMATCH c WITH { { host (_), port (_) } : _ },",
+        );
         assert!(msg.contains("`_` can only be used"), "{msg}");
     }
 
     #[test]
     fn enum_match_still_rejects_record_patterns() {
         let msg = err(
-            "ENUM (Light) { a, b },\nFUNCTION (f (e: Light)) RETURNS (Int) { MATCH (e) { { x (y) } : 1 } }",
+            "ENUM Light HAS { a, b },\nFUNCTION f (e: Light) RETURNS Int DO { MATCH e WITH { { x (y) } : 1 } }",
         );
         assert!(msg.contains("no variant of `Light` matches"), "{msg}");
     }
@@ -937,7 +938,7 @@ MATCH (r) { { n (n) } : n },
 
     #[test]
     fn default_is_an_uppercase_keyword() {
-        let msg = parse_program("RECORD (Rec) { a (Int default 1) }")
+        let msg = parse_program("RECORD Rec HAS { a (Int default 1) }")
             .unwrap_err()
             .msg;
         assert!(msg.contains("capitalize every word"), "{msg}");
@@ -946,7 +947,7 @@ MATCH (r) { { n (n) } : n },
     #[test]
     fn field_ast_is_words_and_slots_with_optional_defaults() {
         let items =
-            parse_program("RECORD (Rec) { between (Int . DEFAULT 1) and (Int), flag }").unwrap();
+            parse_program("RECORD Rec HAS { between (Int DEFAULT 1) and (Int), flag }").unwrap();
         let [Item::Decl(Decl::Record { fields, .. })] = items.as_slice() else {
             panic!("expected one record");
         };
@@ -987,7 +988,7 @@ MATCH (r) { { n (n) } : n },
         let mut s = Session::new();
         let vs = s
             .run(&format!(
-                "{SERVER}\nLET (c : Server Config) : {{ port 443 }},\nc,"
+                "{SERVER}\nLET (c : Server Config) BE {{ port 443 }},\nc,"
             ))
             .unwrap();
         assert_eq!(s.render(&vs[0], false), "{ host \"localhost\", port 443 }");
@@ -996,7 +997,7 @@ MATCH (r) { { n (n) } : n },
             "{\"host\":\"localhost\",\"port\":443}"
         );
         let vs = s
-            .run("RECORD (Rec) { between (Int) and (Int), flag (Boolean) },\nLET (r : Rec) : { between 1 and 2, flag },\nr,")
+            .run("RECORD Rec HAS { between (Int) and (Int), flag (Boolean) },\nLET (r : Rec) BE { between 1 and 2, flag },\nr,")
             .unwrap();
         assert_eq!(s.render(&vs[0], false), "{ between 1 and 2, flag (true) }");
         assert_eq!(
@@ -1014,12 +1015,12 @@ MATCH (r) { { n (n) } : n },
                    link count (_), owner id (_), group id (_), modified at (_), \
                    accessed at (_), inode number (_), block count (_), link target (_)";
         let src = format!(
-            "FUNCTION (entry size (e: Entry)) RETURNS (Int) {{ MATCH (e) {{ {{ {all} }} : s }} }}"
+            "FUNCTION entry size (e: Entry) RETURNS Int DO {{ MATCH e WITH {{ {{ {all} }} : s }} }}"
         );
         assert!(Session::new().run(&src).is_ok());
         let short = all.replace(", link target (_)", "");
         let src = format!(
-            "FUNCTION (entry size (e: Entry)) RETURNS (Int) {{ MATCH (e) {{ {{ {short} }} : s }} }}"
+            "FUNCTION entry size (e: Entry) RETURNS Int DO {{ MATCH e WITH {{ {{ {short} }} : s }} }}"
         );
         let msg = err(&src);
         assert!(
@@ -1027,7 +1028,7 @@ MATCH (r) { { n (n) } : n },
             "{msg}"
         );
         // List Options: every field has a DEFAULT, so `{}` and partial literals fit.
-        let msg = err("LET (o : List Options) : { sort by 1 },");
+        let msg = err("LET (o : List Options) BE { sort by 1 },");
         assert!(
             msg.contains(
                 "field `sort by (Sort Key)` of `List Options` expects Sort Key, found Int"
@@ -1036,7 +1037,7 @@ MATCH (r) { { n (n) } : n },
         );
         assert!(
             Session::new()
-                .run("LET (o : List Options) : { reverse, sort by (size) },")
+                .run("LET (o : List Options) BE { reverse, sort by (size) },")
                 .is_ok()
         );
     }
@@ -1045,10 +1046,10 @@ MATCH (r) { { n (n) } : n },
 #[test]
 fn record_literal_diagnostics_list_each_candidate_fields() {
     let src = r#"
-RECORD (Apple) { x (Int), ripe (Boolean) },
-RECORD (Banana) { y (Int . DEFAULT 1) },
-FUNCTION (f (a: Apple)) RETURNS (Int) { 1 },
-FUNCTION (f (b: Banana)) RETURNS (Int) { 2 }
+RECORD Apple HAS { x (Int), ripe (Boolean) },
+RECORD Banana HAS { y (Int DEFAULT 1) },
+FUNCTION f (a: Apple) RETURNS Int DO { 1 },
+FUNCTION f (b: Banana) RETURNS Int DO { 2 }
 "#;
     let msg = run_err(&format!("{src},\nf {{ z 1 }},"));
     assert!(msg.contains("no overload of `f <arg>`"), "{msg}");
@@ -1062,10 +1063,10 @@ FUNCTION (f (b: Banana)) RETURNS (Int) { 2 }
     assert_eq!(run(&format!("{src},\nf {{}},")), vec![Value::Int(2)]);
 
     let all_default = r#"
-RECORD (Alpha) { x (Int . DEFAULT 1) },
-RECORD (Beta) { y (Int . DEFAULT 1) },
-FUNCTION (g (a: Alpha)) RETURNS (Int) { 1 },
-FUNCTION (g (b: Beta)) RETURNS (Int) { 2 }
+RECORD Alpha HAS { x (Int DEFAULT 1) },
+RECORD Beta HAS { y (Int DEFAULT 1) },
+FUNCTION g (a: Alpha) RETURNS Int DO { 1 },
+FUNCTION g (b: Beta) RETURNS Int DO { 2 }
 "#;
     let msg = run_err(&format!("{all_default},\ng {{}},"));
     assert!(msg.contains("ambiguous call"), "{msg}");
@@ -1078,7 +1079,7 @@ mod sets {
 
     #[test]
     fn set_literal_is_accepted_and_empty_set_works() {
-        let src = "ENUM (Find Option) { include hidden file, extension (e: List (String)), max depth (n: Int) },\nFUNCTION (pick (options: Set (Find Option))) RETURNS (Set (Find Option)) { options },\n";
+        let src = "ENUM Find Option HAS { include hidden file, extension (e: List (String)), max depth (n: Int) },\nFUNCTION pick (options: Set (Find Option)) RETURNS Set (Find Option) DO { options },\n";
         for lit in [
             "{ extension [\"rs\"], max depth 3 }",
             "{ include hidden file }",
@@ -1090,7 +1091,7 @@ mod sets {
 
     #[test]
     fn duplicate_variant_names_both_positions() {
-        let src = "ENUM (Find Option) { max depth (n: Int), include hidden file },\nFUNCTION (pick (options: Set (Find Option))) RETURNS (Int) { 1 },\npick { max depth 1, max depth 2 },";
+        let src = "ENUM Find Option HAS { max depth (n: Int), include hidden file },\nFUNCTION pick (options: Set (Find Option)) RETURNS Int DO { 1 },\npick { max depth 1, max depth 2 },";
         let msg = run_err(src);
         assert!(msg.contains("`max depth (Int)` is given twice"), "{msg}");
         assert!(msg.contains("first at 3:8"), "{msg}");
@@ -1099,7 +1100,7 @@ mod sets {
 
     #[test]
     fn unknown_variant_lists_the_variants() {
-        let src = "ENUM (Find Option) { max depth (n: Int), include hidden file },\nFUNCTION (pick (options: Set (Find Option))) RETURNS (Int) { 1 },\npick { depth 1 },";
+        let src = "ENUM Find Option HAS { max depth (n: Int), include hidden file },\nFUNCTION pick (options: Set (Find Option)) RETURNS Int DO { 1 },\npick { depth 1 },";
         let msg = run_err(src);
         assert!(msg.contains("has no variant `depth (Int)`"), "{msg}");
         assert!(msg.contains("max depth (n: Int)"), "{msg}");
@@ -1109,7 +1110,7 @@ mod sets {
 
     #[test]
     fn record_or_set_is_decided_by_the_candidates() {
-        let src = "ENUM (Flag) { loud, quiet },\nRECORD (Config) { port (Int . DEFAULT 80) },\nFUNCTION (f (c: Config)) RETURNS (Int) { 1 },\nFUNCTION (f (s: Set (Flag))) RETURNS (Int) { 2 },\n";
+        let src = "ENUM Flag HAS { loud, quiet },\nRECORD Config HAS { port (Int DEFAULT 80) },\nFUNCTION f (c: Config) RETURNS Int DO { 1 },\nFUNCTION f (s: Set (Flag)) RETURNS Int DO { 2 },\n";
         assert_eq!(run(&format!("{src}f {{ port 1 }},")), vec![Value::Int(1)]);
         assert_eq!(run(&format!("{src}f {{ loud }},")), vec![Value::Int(2)]);
         let msg = run_err(&format!("{src}f {{}},"));
@@ -1118,7 +1119,7 @@ mod sets {
 
     #[test]
     fn set_must_hold_an_enum() {
-        let msg = run_err("FUNCTION (f (s: Set (Int))) RETURNS (Int) { 1 }");
+        let msg = run_err("FUNCTION f (s: Set (Int)) RETURNS Int DO { 1 }");
         assert!(msg.contains("variants of an enum"), "{msg}");
     }
 }
@@ -1133,12 +1134,12 @@ mod lambdas {
     #[test]
     fn flat_map_with_a_lambda_checks_and_evaluates() {
         assert_eq!(
-            run("LET (xs) : [1, 2, 3],\nflat map (xs) with : FN (x) : [x, x],"),
+            run("LET xs BE [1, 2, 3],\nflat map (xs) with : FN x DO [x, x],"),
             vec![ints(&[1, 1, 2, 2, 3, 3])]
         );
         // The result type comes from the lambda body.
         assert_eq!(
-            run("flat map ([\"a\"]) with : FN (s) : [s, \"!\"],"),
+            run("flat map ([\"a\"]) with : FN s DO [s, \"!\"],"),
             vec![Value::List(vec![
                 Value::Str("a".into()),
                 Value::Str("!".into())
@@ -1149,7 +1150,7 @@ mod lambdas {
     #[test]
     fn lambda_captures_variables_in_scope() {
         assert_eq!(
-            run("LET (k) : 7,\nflat map ([1, 2]) with : FN (x) : [x, k],"),
+            run("LET k BE 7,\nflat map ([1, 2]) with : FN x DO [x, k],"),
             vec![ints(&[1, 7, 2, 7])]
         );
     }
@@ -1157,7 +1158,7 @@ mod lambdas {
     #[test]
     fn lambda_parameter_type_comes_from_the_earlier_argument() {
         // `x` is an Int, so it cannot be joined as a String.
-        let msg = run_err("flat map ([1]) with : FN (x) : [join (x) with \"a\"],");
+        let msg = run_err("flat map ([1]) with : FN x DO [join (x) with \"a\"],");
         // (`join` is overloaded, so the message lists its candidates.)
         assert!(msg.contains("join <arg> with <arg>"), "{msg}");
         assert!(msg.contains("expects String, found Int"), "{msg}");
@@ -1167,7 +1168,7 @@ mod lambdas {
 
     #[test]
     fn lambda_before_its_parameter_type_is_known_is_an_error() {
-        let src = "FUNCTION (apply (f: Function (T) To (T)) to (x: T)) RETURNS (T) { x },\napply (FN (y) : y) to 1,";
+        let src = "FUNCTION apply (f: Function (T) To (T)) to (x: T) RETURNS (T) DO { x },\napply (FN y DO y) to 1,";
         let msg = run_err(src);
         assert!(msg.contains("not known yet"), "{msg}");
         assert!(msg.contains("move the lambda after it"), "{msg}");
@@ -1175,15 +1176,15 @@ mod lambdas {
 
     #[test]
     fn bare_lambda_has_no_type_and_non_functions_reject_it() {
-        let msg = run_err("LET (f) : (FN (x) : x),");
+        let msg = run_err("LET f BE (FN x DO x),");
         assert!(msg.contains("no type of its own"), "{msg}");
-        let msg = run_err("count : FN (x) : x,");
+        let msg = run_err("count : FN x DO x,");
         assert!(msg.contains("lambda"), "{msg}");
     }
 
     #[test]
     fn lambda_needs_exactly_one_parameter_name() {
-        let msg = run_err("flat map ([1]) with : FN (x y) : [x],");
+        let msg = run_err("flat map ([1]) with : FN (x y) DO [x],");
         assert!(msg.contains("exactly one parameter name"), "{msg}");
     }
 }
@@ -1198,30 +1199,30 @@ mod tuples_and_spread {
     #[test]
     fn spread_splices_lists_into_a_list_literal() {
         assert_eq!(
-            run("LET (a) : [\"1\", \"2\"],\nLET (b) : [\"3\"],\n[SPREAD (a), \"x\", SPREAD (b)],"),
+            run("LET a BE [\"1\", \"2\"],\nLET b BE [\"3\"],\n[SPREAD a, \"x\", SPREAD b],"),
             vec![strs(&["1", "2", "x", "3"])]
         );
         // The operand may be a parenthesized call, and `[]` spreads to nothing.
         assert_eq!(
-            run("[SPREAD (flat map ([\"a\"]) with : FN (s) : [s, s]), SPREAD ([])],"),
+            run("[SPREAD (flat map ([\"a\"]) with : FN s DO [s, s]), SPREAD []],"),
             vec![strs(&["a", "a"])]
         );
     }
 
     #[test]
     fn spread_needs_a_list_and_matching_element_types() {
-        let msg = run_err("[SPREAD (1)],");
+        let msg = run_err("[SPREAD 1],");
         assert!(msg.contains("splices a list"), "{msg}");
-        let msg = run_err("[1, SPREAD ([\"a\"])],");
+        let msg = run_err("[1, SPREAD [\"a\"]],");
         assert!(msg.contains("must share one type"), "{msg}");
-        let msg = run_err("LET (x) : SPREAD ([1]),");
+        let msg = run_err("LET x BE: SPREAD [1],");
         assert!(msg.contains("only works inside a list literal"), "{msg}");
     }
 
     #[test]
     fn tuple_value_has_a_tuple_type_and_renders() {
         assert_eq!(
-            run("LET (t) : (\"fd\", [\"a\"]),\nt,"),
+            run("LET t BE (\"fd\", [\"a\"]),\nt,"),
             vec![Value::Tuple(vec![Value::Str("fd".into()), strs(&["a"])])]
         );
         assert_eq!(render("(1, \"x\"),"), "(1, \"x\")");
@@ -1229,19 +1230,19 @@ mod tuples_and_spread {
 
     #[test]
     fn function_takes_a_tuple_parameter() {
-        let src = "FUNCTION (argv ((command: String, args: List (String)))) RETURNS (List (String)) {\n[command, SPREAD (args)]\n},\nargv (\"fd\", [\"-H\", \"x\"]),\nLET (extra) : [\"y\"],\nargv (\"ls\", [SPREAD (extra), \"z\"]),";
+        let src = "FUNCTION argv ((command: String, args: List (String))) RETURNS List (String) DO {\n[command, SPREAD args]\n},\nargv (\"fd\", [\"-H\", \"x\"]),\nLET extra BE [\"y\"],\nargv (\"ls\", [SPREAD extra, \"z\"]),";
         assert_eq!(
             run(src),
             vec![strs(&["fd", "-H", "x"]), strs(&["ls", "y", "z"])]
         );
         // A tuple written inside its own slot parentheses is the same value.
-        let src = "FUNCTION (first ((a: Int, b: Int))) RETURNS (Int) { a },\nfirst ((7, 8)),";
+        let src = "FUNCTION first ((a: Int, b: Int)) RETURNS Int DO { a },\nfirst ((7, 8)),";
         assert_eq!(run(src), vec![Value::Int(7)]);
     }
 
     #[test]
     fn tuple_parameter_mismatches_are_reported() {
-        let def = "FUNCTION (first ((a: Int, b: String))) RETURNS (Int) { a },\n";
+        let def = "FUNCTION first ((a: Int, b: String)) RETURNS Int DO { a },\n";
         let msg = run_err(&format!("{def}first (1, 2),"));
         assert!(msg.contains("(a: Int, b: String)"), "{msg}");
         assert!(msg.contains("found (Int, Int)"), "{msg}");
@@ -1253,28 +1254,28 @@ mod tuples_and_spread {
 
     #[test]
     fn tuple_parameters_overload_by_shape() {
-        let src = "FUNCTION (pick ((a: Int, b: Int))) RETURNS (String) { \"ints\" },\nFUNCTION (pick ((a: String, b: Int))) RETURNS (String) { \"mixed\" },\npick (1, 2),\npick (\"x\", 2),";
+        let src = "FUNCTION pick ((a: Int, b: Int)) RETURNS String DO { \"ints\" },\nFUNCTION pick ((a: String, b: Int)) RETURNS String DO { \"mixed\" },\npick (1, 2),\npick (\"x\", 2),";
         assert_eq!(
             run(src),
             vec![Value::Str("ints".into()), Value::Str("mixed".into())]
         );
         let msg = run_err(
-            "FUNCTION (pick ((a: Int, b: Int))) RETURNS (Int) { a },\nFUNCTION (pick ((c: Int, d: Int))) RETURNS (Int) { c }",
+            "FUNCTION pick ((a: Int, b: Int)) RETURNS Int DO { a },\nFUNCTION pick ((c: Int, d: Int)) RETURNS Int DO { c }",
         );
         assert!(msg.contains("clashes"), "{msg}");
     }
 
     #[test]
     fn tuple_parameter_needs_two_components_and_no_enum_variants() {
-        let msg = run_err("FUNCTION (f ((a: Int,))) RETURNS (Int) { a }");
+        let msg = run_err("FUNCTION f ((a: Int,)) RETURNS Int DO { a }");
         assert!(msg.contains("two or more components"), "{msg}");
-        let msg = run_err("ENUM (E) { pair ((a: Int, b: Int)) }");
+        let msg = run_err("ENUM (E) HAS { pair ((a: Int, b: Int)) }");
         assert!(msg.contains("cannot take a tuple slot"), "{msg}");
     }
 
     #[test]
     fn the_spec_example_wrapper_shape_works() {
-        let src = "FUNCTION (exec ((command: String, args: List (String)))) RETURNS (List (String)) {\n[command, SPREAD (args)]\n},\nFUNCTION (wrap (pattern: String) in (dir: String)) RETURNS (List (String)) {\nexec (\"fd\", [SPREAD ([\"--hidden\"]), pattern, dir])\n},\nwrap \"x\" in \"src\",";
+        let src = "FUNCTION exec ((command: String, args: List (String))) RETURNS List (String) DO {\n[command, SPREAD args]\n},\nFUNCTION wrap (pattern: String) in (dir: String) RETURNS List (String) DO {\nexec (\"fd\", [SPREAD [\"--hidden\"], pattern, dir])\n},\nwrap \"x\" in \"src\",";
         assert_eq!(run(src), vec![strs(&["fd", "--hidden", "x", "src"])]);
     }
 }
@@ -1282,12 +1283,12 @@ mod tuples_and_spread {
 mod prelude_functions {
     use super::*;
 
-    const COLORS: &str = "ENUM (Color) { red, green, rgb (n: Int) },\n";
+    const COLORS: &str = "ENUM Color HAS { red, green, rgb (n: Int) },\n";
 
     #[test]
     fn flat_map_over_a_set_returns_a_list() {
         let src = format!(
-            "{COLORS}FUNCTION (twice (cs: Set (Color))) RETURNS (List (Color)) {{ flat map (cs) with : FN (c) : [c, c] }},\ntwice {{ red, green }},"
+            "{COLORS}FUNCTION twice (cs: Set (Color)) RETURNS List (Color) DO {{ flat map (cs) with : FN c DO [c, c] }},\ntwice {{ red, green }},"
         );
         assert_eq!(render(&src), "[red, red, green, green]");
     }
@@ -1295,7 +1296,7 @@ mod prelude_functions {
     #[test]
     fn flat_map_over_a_set_type_checks_the_lambda_body() {
         let src = format!(
-            "{COLORS}FUNCTION (bad (cs: Set (Color))) RETURNS (List (Int)) {{ flat map (cs) with : FN (c) : 1 }}"
+            "{COLORS}FUNCTION bad (cs: Set (Color)) RETURNS List (Int) DO {{ flat map (cs) with : FN c DO 1 }}"
         );
         let msg = run_err(&src);
         assert!(msg.contains("flat map"), "{msg}");
@@ -1303,7 +1304,7 @@ mod prelude_functions {
 
     #[test]
     fn flat_map_on_a_non_collection_is_an_error() {
-        let msg = run_err("flat map (1) with : FN (x) : [x],");
+        let msg = run_err("flat map (1) with : FN x DO [x],");
         assert!(msg.contains("flat map"), "{msg}");
     }
 
@@ -1326,21 +1327,21 @@ mod prelude_functions {
     #[test]
     fn map_result_applies_to_ok() {
         assert_eq!(
-            render("map (ok 1) with : FN (n) : (n) to string,"),
+            render("map (ok 1) with : FN n DO (n) to string,"),
             "ok (\"1\")"
         );
     }
 
     #[test]
     fn map_result_keeps_error() {
-        let src = "LET (r) : read file \"/definitely/not/here\",\nmap (r) with : FN (s) : count : s . lines,";
+        let src = "LET r BE read file \"/definitely/not/here\",\nmap (r) with : FN s DO: count : s . lines,";
         let out = render(src);
         assert!(out.starts_with("error"), "{out}");
     }
 
     #[test]
     fn map_result_needs_a_result() {
-        let msg = run_err("map ([1]) with : FN (n) : n,");
+        let msg = run_err("map ([1]) with : FN n DO n,");
         assert!(msg.contains("map"), "{msg}");
     }
 
@@ -1379,15 +1380,15 @@ mod units {
     use resh::{Session, Value};
 
     const FD: &str = r#"
-NAMESPACE : fd,
+NAMESPACE fd,
 
-ENUM (Find Option) {
+ENUM Find Option HAS {
     size at least (s: Size),
     changed within (d: Duration),
     max depth (n: Int)
 },
 
-FUNCTION (find (pattern: String) in (dir: String) (options: Set (Find Option))) RETURNS (Int) { 1 },
+FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) RETURNS Int DO { 1 },
 "#;
 
     fn session() -> Session {
@@ -1730,7 +1731,7 @@ mod fd_example {
     fn nested_patterns_check_exhaustiveness() {
         let (mut s, _) = session(Ok(""));
         let e = s
-            .run("ENUM (Wrap) { w (Entry Kind) },\nFUNCTION (f (x: Wrap)) RETURNS (Int) { MATCH (x) { w (file) : 1, w (directory) : 2 } }")
+            .run("ENUM Wrap HAS { w (Entry Kind) },\nFUNCTION f (x: Wrap) RETURNS Int DO { MATCH x WITH { w (file) : 1, w (directory) : 2 } }")
             .unwrap_err();
         assert!(
             e.msg.contains("non-exhaustive") && e.msg.contains("symlink"),
@@ -1948,8 +1949,8 @@ mod statements {
     fn statements_are_separated_by_commas() {
         assert_eq!(run("count [1]"), vec![Value::Int(1)]);
         for src in [
-            "LET (x) : 1\nLET (y) : 2,",
-            "FUNCTION (one) RETURNS (Int) { 1 }\nFUNCTION (two) RETURNS (Int) { 2 }",
+            "LET x BE: 1\nLET y BE 2,",
+            "FUNCTION one RETURNS Int DO { 1 }\nFUNCTION two RETURNS Int DO { 2 }",
         ] {
             let msg = run_err(src);
             assert!(msg.contains("`,`"), "{src}: {msg}");
@@ -1959,25 +1960,25 @@ mod statements {
     #[test]
     fn a_trailing_comma_is_fine_and_an_empty_element_is_not() {
         assert_eq!(
-            run("FUNCTION (one) RETURNS (Int) { 1 },\none,"),
+            run("FUNCTION one RETURNS Int DO { 1 },\none,"),
             vec![Value::Int(1)]
         );
-        let msg = run_err("FUNCTION (one) RETURNS (Int) { 1 },\n,one,");
+        let msg = run_err("FUNCTION one RETURNS Int DO { 1 },\n,one,");
         assert!(msg.contains("remove the extra `,`"), "{msg}");
     }
 
     #[test]
     fn last_expression_of_a_body_is_its_value_without_a_return_type_it_is_dropped() {
         assert_eq!(
-            run("FUNCTION (f) RETURNS (Int) { LET (x) : 4, x },\nf,"),
+            run("FUNCTION f RETURNS Int DO { LET x BE 4, x },\nf,"),
             vec![Value::Int(4)]
         );
-        assert_eq!(run("FUNCTION (f) { 4 },\nf,"), vec![]);
-        let msg = run_err("FUNCTION (f) RETURNS (Int) { LET (x) : 4 }");
+        assert_eq!(run("FUNCTION f DO { 4 },\nf,"), vec![]);
+        let msg = run_err("FUNCTION f RETURNS Int DO { LET x BE 4 }");
         assert!(msg.contains("Int") && msg.contains("Unit"), "{msg}");
     }
 
-    const ZZ: &str = "NAMESPACE : zz,\nFUNCTION (count (xs: List (Int))) RETURNS (Int) { 99 }";
+    const ZZ: &str = "NAMESPACE zz,\nFUNCTION count (xs: List (Int)) RETURNS Int DO { 99 }";
 
     #[test]
     fn scope_block_resolves_unqualified_and_namespace_wins() {
@@ -2006,7 +2007,7 @@ mod statements {
         let mut s = Session::new();
         s.run(ZZ).unwrap();
         let v = s
-            .run("FUNCTION (f) RETURNS (Int) { zz -> { count [1] } },\nf,")
+            .run("FUNCTION f RETURNS Int DO { zz -> { count [1] } },\nf,")
             .unwrap();
         assert_eq!(v, vec![Value::Int(99)]);
     }
@@ -2023,7 +2024,7 @@ mod statements {
 mod docs {
     use resh::Session;
 
-    const SRC: &str = "## Adds one.\n## Second line.\nFUNCTION (bump (n: Int)) RETURNS (Int) { n },\n\n# Detached by a blank line.\n\nFUNCTION (lonely) RETURNS (Int) { 1 },\n\nx : 1, # trailing\nFUNCTION (trailing_above) RETURNS (Int) { 2 },\n\n## A shape.\nRECORD (Dot Doc) { x (Int) },\n\n## Colours.\nENUM (Hue Doc) { red, blue },\n\nFUNCTION (plain) RETURNS (Int) { 3 }\n";
+    const SRC: &str = "## Adds one.\n## Second line.\nFUNCTION bump (n: Int) RETURNS Int DO { n },\n\n# Detached by a blank line.\n\nFUNCTION lonely RETURNS Int DO { 1 },\n\nx : 1, # trailing\nFUNCTION trailing_above RETURNS Int DO { 2 },\n\n## A shape.\nRECORD Dot Doc HAS { x (Int) },\n\n## Colours.\nENUM Hue Doc HAS { red, blue },\n\nFUNCTION plain RETURNS Int DO { 3 }\n";
 
     fn doc_of_fn(s: &Session, word: &str) -> Option<String> {
         s.interp
@@ -2039,7 +2040,7 @@ mod docs {
     #[test]
     fn doc_comments_attach_to_declarations() {
         let mut s = Session::new();
-        let src = SRC.replace("x : 1, # trailing\n", "LET (x) : 1, # trailing\n");
+        let src = SRC.replace("x : 1, # trailing\n", "LET x BE 1, # trailing\n");
         s.run(&src).unwrap();
         assert_eq!(
             doc_of_fn(&s, "bump").as_deref(),
@@ -2124,7 +2125,7 @@ mod symbols {
     fn namespaced_listing() {
         let mut s = Session::new();
         s.run(
-            "NAMESPACE : fd,\n## Search mode.\nENUM (Mode) { regex, glob },\n## Knobs.\nRECORD (Options) { port (Int . DEFAULT 8080) },\n## Finds.\nFUNCTION (find (root: String) with (options: Options)) RETURNS (Int) { 1 }\n",
+            "NAMESPACE fd,\n## Search mode.\nENUM Mode HAS { regex, glob },\n## Knobs.\nRECORD Options HAS { port (Int DEFAULT 8080) },\n## Finds.\nFUNCTION find (root: String) with (options: Options) RETURNS Int DO { 1 }\n",
         )
         .unwrap();
         let syms = s.symbols(Some("fd")).unwrap();
@@ -2155,9 +2156,9 @@ mod symbols {
             s.symbols(Some("x")).unwrap_err(),
             "unknown namespace `x`; declared namespaces: int, string"
         );
-        s.run("NAMESPACE : b,\nFUNCTION (f) RETURNS (Int) { 1 }")
+        s.run("NAMESPACE b,\nFUNCTION f RETURNS Int DO { 1 }")
             .unwrap();
-        s.run("NAMESPACE : a,\nFUNCTION (g) RETURNS (Int) { 1 }")
+        s.run("NAMESPACE a,\nFUNCTION g RETURNS Int DO { 1 }")
             .unwrap();
         assert_eq!(
             s.symbols(Some("x")).unwrap_err(),
@@ -2202,7 +2203,7 @@ mod symbols_cli {
         let dir = std::env::temp_dir().join(format!("resh-init-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let init = dir.join("init.resh");
-        std::fs::write(&init, "IMPORT : git,\n").unwrap();
+        std::fs::write(&init, "IMPORT git,\n").unwrap();
         let (out, err) = repl_with_init(&[], ":symbols\n", init.to_str().unwrap());
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(err, "");
@@ -2210,7 +2211,7 @@ mod symbols_cli {
     }
 
     // `NAMESPACE` is per REPL entry, so the declaration shares its entry.
-    const DECL: &str = "NAMESPACE : demo, ENUM (Mode) { fast, slow }\n";
+    const DECL: &str = "NAMESPACE demo, ENUM Mode HAS { fast, slow }\n";
 
     #[test]
     fn text_listing_for_a_namespace() {
@@ -2255,7 +2256,7 @@ mod symbols_cli {
     fn doc_comment_lines_are_one_entry_with_their_declaration() {
         let (out, _) = repl(
             &[],
-            "## A point.\nRECORD (Pt) { x (Int) }\n:symbols prelude\n",
+            "## A point.\nRECORD Pt HAS { x (Int) }\n:symbols prelude\n",
         );
         assert!(out.contains("  /// A point.\n  record  Pt\n"), "{out}");
     }
@@ -2268,12 +2269,12 @@ mod recursive_patterns {
     use resh::Value;
 
     const EXPR: &str = r#"
-ENUM (Color) { red, green },
-ENUM (Wrap) { w (Color), pair (Color) and (Color), deep (Wrap) },
+ENUM Color HAS { red, green },
+ENUM Wrap HAS { w (Color), pair (Color) and (Color), deep (Wrap) },
 "#;
 
     fn with(body: &str) -> String {
-        format!("{EXPR}\nFUNCTION (f (x: Wrap)) RETURNS (Int) {{ MATCH (x) {{ {body} }} }},\n")
+        format!("{EXPR}\nFUNCTION f (x: Wrap) RETURNS Int DO {{ MATCH x WITH {{ {body} }} }},\n")
     }
 
     #[test]
@@ -2343,7 +2344,7 @@ ENUM (Wrap) { w (Color), pair (Color) and (Color), deep (Wrap) },
 
     #[test]
     fn a_non_enum_slot_cannot_hold_a_nested_pattern() {
-        let src = "ENUM (Num) { num (Int) },\nFUNCTION (f (x: Num)) RETURNS (Int) { MATCH (x) { num (k (j)) : 1 } }";
+        let src = "ENUM Num HAS { num (Int) },\nFUNCTION f (x: Num) RETURNS Int DO { MATCH x WITH { num (k (j)) : 1 } }";
         let msg = run_err(src);
         assert!(msg.contains("not an enum"), "{msg}");
     }
@@ -2354,14 +2355,14 @@ mod record_patterns_in_the_matrix {
     use resh::Value;
 
     const DECLS: &str = r#"
-ENUM (Color) { red, green },
-RECORD (Dot) { color (Color), size (Int) },
-ENUM (Shape) { dot (Dot), blank },
+ENUM Color HAS { red, green },
+RECORD Dot HAS { color (Color), size (Int) },
+ENUM Shape HAS { dot (Dot), blank },
 "#;
 
     fn with(body: &str) -> String {
         format!(
-            "{DECLS}\nFUNCTION (f (x: Shape)) RETURNS (Int) {{ MATCH (x) {{ {body} }} }},\nLET (d : Dot) : {{ color (red), size (7) }},\n"
+            "{DECLS}\nFUNCTION f (x: Shape) RETURNS Int DO {{ MATCH x WITH {{ {body} }} }},\nLET (d : Dot) BE {{ color (red), size (7) }},\n"
         )
     }
 
@@ -2387,10 +2388,10 @@ ENUM (Shape) { dot (Dot), blank },
 
     #[test]
     fn refutable_record_arms_can_be_followed_by_more_arms() {
-        let src = "ENUM (Color) { red, green },\nRECORD (Dot) { color (Color), size (Int) },\nFUNCTION (f (d: Dot)) RETURNS (Int) { MATCH (d) { { color (red), size (n) } : n, { color (green), size (_) } : 0 } },\nLET (d : Dot) : { color (green), size (3) },\nf (d),";
+        let src = "ENUM Color HAS { red, green },\nRECORD Dot HAS { color (Color), size (Int) },\nFUNCTION f (d: Dot) RETURNS Int DO { MATCH d WITH { { color (red), size (n) } : n, { color (green), size (_) } : 0 } },\nLET (d : Dot) BE { color (green), size (3) },\nf (d),";
         assert_eq!(run(src).last(), Some(&Value::Int(0)));
         let msg = run_err(
-            "ENUM (Color) { red, green },\nRECORD (Dot) { color (Color), size (Int) },\nFUNCTION (f (d: Dot)) RETURNS (Int) { MATCH (d) { { color (red), size (n) } : n } }",
+            "ENUM Color HAS { red, green },\nRECORD Dot HAS { color (Color), size (Int) },\nFUNCTION f (d: Dot) RETURNS Int DO { MATCH d WITH { { color (red), size (n) } : n } }",
         );
         assert!(
             msg.contains("missing: { color (green), size (_) }"),
@@ -2400,7 +2401,7 @@ ENUM (Shape) { dot (Dot), blank },
 
     #[test]
     fn a_wildcard_matches_a_record() {
-        let src = "RECORD (Dot) { size (Int) },\nFUNCTION (f (d: Dot)) RETURNS (Int) { MATCH (d) { (_) : 1 } },\nLET (d : Dot) : { size (3) },\nf (d),";
+        let src = "RECORD Dot HAS { size (Int) },\nFUNCTION f (d: Dot) RETURNS Int DO { MATCH d WITH { (_) : 1 } },\nLET (d : Dot) BE { size (3) },\nf (d),";
         assert_eq!(run(src).last(), Some(&Value::Int(1)));
     }
 }
@@ -2471,7 +2472,7 @@ mod sed_example {
 
 #[test]
 fn unknown_variable_suggests_closest_name() {
-    let msg = run_err("LET (counter) : 1,\ncount (countr),");
+    let msg = run_err("LET counter BE 1,\ncount (countr),");
     assert!(msg.contains("Did you mean: `counter`"), "{msg}");
 }
 
@@ -2492,7 +2493,7 @@ mod anyfix_forms {
 
     #[test]
     fn if_chains_to_the_right_with_colon() {
-        let sign = "FUNCTION (sign (n: Int)) RETURNS (String) {\n    IF (n . equals 0) THEN \"zero\" ELSE : IF (n . equals 1) THEN \"one\" ELSE : \"many\"\n},\n";
+        let sign = "FUNCTION sign (n: Int) RETURNS String DO {\n    IF (n . equals 0) THEN \"zero\" ELSE : IF (n . equals 1) THEN \"one\" ELSE : \"many\"\n},\n";
         assert_eq!(
             run(&format!("{sign}sign 0, sign 1, sign 5,")),
             vec![
@@ -2505,7 +2506,7 @@ mod anyfix_forms {
 
     #[test]
     fn dot_hands_its_value_to_match_and_to_the_placeholder() {
-        let src = "ENUM (Light) { red, green },\nLET (l) : green,\nl . MATCH { red : 1, green : 2 },\n[\"a\"] . join _ with [\"b\"],";
+        let src = "ENUM Light HAS { red, green },\nLET l BE green,\nl . MATCH { red : 1, green : 2 },\n[\"a\"] . join _ with [\"b\"],";
         assert_eq!(
             run(src),
             vec![
@@ -2517,20 +2518,20 @@ mod anyfix_forms {
 
     #[test]
     fn as_states_a_type() {
-        let src = "RECORD (Apple) { x (Int) },\nFUNCTION (f (a: Apple)) RETURNS (Int) { 1 },\nf : { x 1 } AS (Apple),";
+        let src = "RECORD Apple HAS { x (Int) },\nFUNCTION f (a: Apple) RETURNS Int DO { 1 },\nf : { x 1 } AS Apple,";
         assert_eq!(run(src), vec![Value::Int(1)]);
     }
 
     #[test]
     fn a_keyword_inside_a_call_points_at_the_missing_comma() {
-        let msg = run_err("LET (x) : 1\nLET (y) : 2");
+        let msg = run_err("LET x BE: 1\nLET y BE: 2");
         assert!(msg.contains("is a `,` missing before it?"), "{msg}");
     }
 
     #[test]
     fn a_variable_fills_a_slot_in_parentheses() {
         assert_eq!(
-            run("LET (n) : 4,\n(n) to string,"),
+            run("LET n BE 4,\n(n) to string,"),
             vec![Value::Str("4".into())]
         );
     }
@@ -2543,9 +2544,9 @@ mod user_operators {
     #[test]
     fn symbol_words_once_used_by_resh_can_be_declared() {
         let src = r#"
-FUNCTION ((a: Int) = (b: Int)) RETURNS (Boolean) { a . equals (b) },
-FUNCTION ((a: Int) => (b: Int)) RETURNS (Int) { b },
-FUNCTION (* (a: Int)) RETURNS (Int) { a },
+FUNCTION (a: Int) = (b: Int) RETURNS Boolean DO { a . equals (b) },
+FUNCTION (a: Int) => (b: Int) RETURNS Int DO { b },
+FUNCTION * (a: Int) RETURNS Int DO { a },
 3 = 3,
 1 => 2,
 * 5,
@@ -2559,7 +2560,7 @@ FUNCTION (* (a: Int)) RETURNS (Int) { a },
     #[test]
     fn arrow_is_reserved_for_namespace_access() {
         let err = resh::Session::new()
-            .run("FUNCTION ((a: Int) -> (b: Int)) RETURNS (Int) { b },")
+            .run("FUNCTION (a: Int) -> (b: Int) RETURNS Int DO { b },")
             .unwrap_err();
         assert!(err.msg.contains("cannot be declared"), "{}", err.msg);
     }
@@ -2567,7 +2568,7 @@ FUNCTION (* (a: Int)) RETURNS (Int) { a },
     #[test]
     fn an_operator_chains_with_dot() {
         let src = r#"
-FUNCTION ((a: String) ++ (b: String)) RETURNS (String) { join (a) with (b) },
+FUNCTION (a: String) ++ (b: String) RETURNS String DO { join (a) with (b) },
 "a" .++ "b" .++ "c",
 "#;
         assert_eq!(run(src), vec![Value::Str("abc".into())]);
@@ -2580,10 +2581,10 @@ mod match_arms {
 
     #[test]
     fn a_wildcard_arm_is_written_in_parentheses() {
-        let src = "ENUM (Light) { red, green },\nFUNCTION (f (l: Light)) RETURNS (Int) { MATCH (l) { red : 1, (_) : 2 } },\nf (green),";
+        let src = "ENUM Light HAS { red, green },\nFUNCTION f (l: Light) RETURNS Int DO { MATCH l WITH { red : 1, (_) : 2 } },\nf (green),";
         assert_eq!(run(src).last(), Some(&Value::Int(2)));
         let msg = run_err(
-            "ENUM (Light) { red, green },\nFUNCTION (f (l: Light)) RETURNS (Int) { MATCH (l) { red : 1, _ : 2 } }",
+            "ENUM Light HAS { red, green },\nFUNCTION f (l: Light) RETURNS Int DO { MATCH l WITH { red : 1, _ : 2 } }",
         );
         assert!(msg.contains("`(_) : value`"), "{msg}");
     }
@@ -2594,8 +2595,8 @@ mod generic_records {
     use resh::Value;
 
     const BOX: &str = r#"
-RECORD (Box (T)) { value (T) },
-FUNCTION (open (b: Box (T))) RETURNS (T) { MATCH (b) { { value (v) } : v } },
+RECORD Box (T) HAS { value (T) },
+FUNCTION open (b: Box (T)) RETURNS (T) DO { MATCH b WITH { { value (v) } : v } },
 "#;
 
     #[test]
@@ -2606,9 +2607,9 @@ FUNCTION (open (b: Box (T))) RETURNS (T) { MATCH (b) { { value (v) } : v } },
 
     #[test]
     fn a_stated_type_fixes_the_parameter() {
-        let src = format!("{BOX}\nLET (b : Box (Int)) : {{ value 5 }},\nb,");
+        let src = format!("{BOX}\nLET (b : Box (Int)) BE {{ value 5 }},\nb,");
         assert_eq!(render(&src), "{ value 5 }");
-        let msg = run_err(&format!("{BOX}\nLET (b : Box (Int)) : {{ value \"x\" }},"));
+        let msg = run_err(&format!("{BOX}\nLET (b : Box (Int)) BE {{ value \"x\" }},"));
         assert!(
             msg.contains("field `value (Int)` of `Box (Int)` expects Int, found String"),
             "{msg}"
@@ -2617,7 +2618,7 @@ FUNCTION (open (b: Box (T))) RETURNS (T) { MATCH (b) { { value (v) } : v } },
 
     #[test]
     fn a_field_uses_only_declared_parameters() {
-        let msg = run_err("RECORD (Box (T)) { value (U) },");
+        let msg = run_err("RECORD Box (T) HAS { value (U) },");
         assert!(
             msg.contains("`value (U)` uses type parameter `U`, which `Box (T)` does not declare"),
             "{msg}"
@@ -2626,12 +2627,12 @@ FUNCTION (open (b: Box (T))) RETURNS (T) { MATCH (b) { { value (v) } : v } },
 
     #[test]
     fn the_parameters_are_part_of_the_name() {
-        let msg = run_err(&format!("{BOX}\nLET (b : Box) : {{ value 1 }},"));
+        let msg = run_err(&format!("{BOX}\nLET (b : Box) BE {{ value 1 }},"));
         assert!(
             msg.contains("unknown type `Box`; did you mean `Box (T)`?"),
             "{msg}"
         );
-        let msg = run_err("RECORD (Box (Int)) { value (Int) },");
+        let msg = run_err("RECORD Box (Int) HAS { value (Int) },");
         assert!(
             msg.contains("a type parameter is a single capital letter"),
             "{msg}"
@@ -2644,22 +2645,22 @@ mod modules {
     use resh::Value;
 
     const ORDER: &str = r#"
-RECORD (Order (T)) {
-    FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering),
+RECORD Order (T) HAS {
+    FUNCTION (a: T) compare (b: T) RETURNS Ordering,
 },
 ## No fold in the prelude yet, so this `max` looks at three items.
-FUNCTION (max (items: List (T)) by (order: Order (T))) RETURNS (T) {
-    LET (a) : items . item 0,
-    LET (b) : items . item 1,
-    LET (c) : items . item 2,
-    LET (ab) : MATCH (order -> (a) compare (b)) { less : b, (_) : a },
-    MATCH (order -> (ab) compare (c)) { less : c, (_) : ab }
+FUNCTION max (items: List (T)) by (order: Order (T)) RETURNS (T) DO {
+    LET a BE: items . item 0,
+    LET b BE: items . item 1,
+    LET c BE: items . item 2,
+    LET ab BE: MATCH order -> (a) compare (b) WITH { less : b, (_) : a },
+    MATCH order -> (ab) compare (c) WITH { less : c, (_) : ab }
 },
-FUNCTION (reversed (order: Order (T))) RETURNS (Order (T)) {
-    { FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) { order -> (b) compare (a) } }
+FUNCTION reversed (order: Order (T)) RETURNS Order (T) DO {
+    { FUNCTION (a: T) compare (b: T) RETURNS Ordering DO { order -> (b) compare (a) } }
 },
-LET (ints : Order (Int)) : {
-    FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { int -> (a) compare (b) }
+LET (ints : Order (Int)) BE {
+    FUNCTION (a: Int) compare (b: Int) RETURNS Ordering DO { int -> (a) compare (b) }
 },
 "#;
 
@@ -2689,7 +2690,7 @@ LET (ints : Order (Int)) : {
     #[test]
     fn a_literal_module_is_passed_directly() {
         let src = with_order(
-            "max [\"a\", \"b\", \"c\"] by { FUNCTION ((a: String) compare (b: String)) RETURNS (Ordering) { less } },",
+            "max [\"a\", \"b\", \"c\"] by { FUNCTION (a: String) compare (b: String) RETURNS Ordering DO { less } },",
         );
         assert_eq!(run(&src), vec![Value::Str("c".into())]);
     }
@@ -2697,11 +2698,11 @@ LET (ints : Order (Int)) : {
     #[test]
     fn a_member_body_captures_surrounding_variables() {
         let src = r#"
-RECORD (Greeter) { FUNCTION ((name: String) greeting) RETURNS (String) },
-FUNCTION (greeter (hello: String)) RETURNS (Greeter) {
-    { FUNCTION ((name: String) greeting) RETURNS (String) { join (hello) with (name) } }
+RECORD Greeter HAS { FUNCTION (name: String) greeting RETURNS String },
+FUNCTION greeter (hello: String) RETURNS Greeter DO {
+    { FUNCTION (name: String) greeting RETURNS String DO { join (hello) with (name) } }
 },
-LET (g) : greeter "hi ",
+LET g BE greeter "hi ",
 g -> "bo" greeting,
 "#;
         assert_eq!(run(src), vec![Value::Str("hi bo".into())]);
@@ -2710,7 +2711,7 @@ g -> "bo" greeting,
     #[test]
     fn a_member_body_does_not_see_the_other_members() {
         let msg = run_err(
-            "RECORD (Pair Fn) { FUNCTION (one) RETURNS (Int), FUNCTION (two) RETURNS (Int) },\nLET (p : Pair Fn) : { FUNCTION (one) RETURNS (Int) { 1 }, FUNCTION (two) RETURNS (Int) { one } },",
+            "RECORD Pair Fn HAS { FUNCTION one RETURNS Int, FUNCTION two RETURNS Int },\nLET (p : Pair Fn) BE { FUNCTION one RETURNS Int DO { 1 }, FUNCTION two RETURNS Int DO { one } },",
         );
         assert!(msg.contains("unknown name `one`"), "{msg}");
     }
@@ -2718,19 +2719,19 @@ g -> "bo" greeting,
     #[test]
     fn function_members_may_be_overloaded() {
         let src = r#"
-RECORD (Show) {
+RECORD Show HAS {
     name (String),
-    FUNCTION ((n: Int) shown) RETURNS (String),
-    FUNCTION ((s: String) shown) RETURNS (String),
+    FUNCTION (n: Int) shown RETURNS String,
+    FUNCTION (s: String) shown RETURNS String,
 },
-LET (show : Show) : {
+LET (show : Show) BE {
     name "plain",
-    FUNCTION ((n: Int) shown) RETURNS (String) { n . to string },
-    FUNCTION ((s: String) shown) RETURNS (String) { join "'" with (s) },
+    FUNCTION (n: Int) shown RETURNS String DO { n . to string },
+    FUNCTION (s: String) shown RETURNS String DO { join "'" with (s) },
 },
 show -> 1 shown,
 show -> "x" shown,
-MATCH (show) { { name (n) } : n },
+MATCH show WITH { { name (n) } : n },
 "#;
         assert_eq!(
             run(src),
@@ -2741,7 +2742,7 @@ MATCH (show) { { name (n) } : n },
             ]
         );
         let msg = run_err(
-            "RECORD (Show) { FUNCTION ((n: Int) shown) RETURNS (String), FUNCTION ((m: Int) shown) RETURNS (Int) },",
+            "RECORD Show HAS { FUNCTION (n: Int) shown RETURNS String, FUNCTION (m: Int) shown RETURNS Int },",
         );
         assert!(msg.contains("clashes with"), "{msg}");
     }
@@ -2750,36 +2751,36 @@ MATCH (show) { { name (n) } : n },
     fn a_literal_that_does_not_fit_names_each_member() {
         let msg = run_err(&with_order("max [1, 2, 3] by {},"));
         assert!(
-            msg.contains("missing `FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering)`"),
+            msg.contains("missing `FUNCTION (a: Int) compare (b: Int) RETURNS Ordering`"),
             "{msg}"
         );
         let msg = run_err(&with_order(
-            "max [1, 2, 3] by { FUNCTION ((a: String) compare (b: String)) RETURNS (Ordering) { less } },",
+            "max [1, 2, 3] by { FUNCTION (a: String) compare (b: String) RETURNS Ordering DO { less } },",
         ));
         assert!(
-            msg.contains("`FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering)` is wanted, but found `FUNCTION ((a: String) compare (b: String)) RETURNS (Ordering)`"),
+            msg.contains("`FUNCTION (a: Int) compare (b: Int) RETURNS Ordering` is wanted, but found `FUNCTION (a: String) compare (b: String) RETURNS Ordering`"),
             "{msg}"
         );
         let msg = run_err(&with_order(
-            "LET (o : Order (Int)) : { FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { less }, FUNCTION (extra) RETURNS (Int) { 1 } },",
+            "LET (o : Order (Int)) BE { FUNCTION (a: Int) compare (b: Int) RETURNS Ordering DO { less }, FUNCTION extra RETURNS Int DO { 1 } },",
         ));
         assert!(
-            msg.contains("`FUNCTION (extra) RETURNS (Int)` is not a function member"),
+            msg.contains("`FUNCTION extra RETURNS Int` is not a function member"),
             "{msg}"
         );
     }
 
     #[test]
     fn a_member_declaration_has_a_return_type_and_no_body() {
-        let msg = run_err("RECORD (Bad) { FUNCTION ((a: Int) f) },");
+        let msg = run_err("RECORD Bad HAS { FUNCTION (a: Int) f },");
         assert!(msg.contains("the return type is required"), "{msg}");
-        let msg = run_err("RECORD (Bad) { FUNCTION ((a: Int) f) RETURNS (Int) { a } },");
+        let msg = run_err("RECORD Bad HAS { FUNCTION (a: Int) f RETURNS Int DO { a } },");
         assert!(msg.contains("there is no body"), "{msg}");
     }
 
     #[test]
     fn the_arrow_needs_a_value_with_function_members() {
-        let msg = run_err("LET (n) : 1, n -> (1) compare (2),");
+        let msg = run_err("LET n BE 1, n -> (1) compare (2),");
         assert!(
             msg.contains("`n` is a variable of type Int, which has no function members"),
             "{msg}"
@@ -2795,7 +2796,7 @@ MATCH (show) { { name (n) } : n },
     fn a_module_prints_its_functions_and_has_no_equality() {
         assert_eq!(
             render(&with_order("ints,")),
-            "{ FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) <function> }"
+            "{ FUNCTION (a: T) compare (b: T) RETURNS Ordering <function> }"
         );
         let msg = run_err(&with_order("ints . equals (ints),"));
         assert!(msg.contains("`equals` cannot compare Order (Int)"), "{msg}");
@@ -2807,20 +2808,20 @@ mod namespaces_as_modules {
     use resh::Value;
 
     const ORDER: &str = r#"
-RECORD (Order (T)) {
-    FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering),
+RECORD Order (T) HAS {
+    FUNCTION (a: T) compare (b: T) RETURNS Ordering,
 },
-FUNCTION (max (items: List (T)) by (order: Order (T))) RETURNS (T) {
-    LET (a) : items . item 0,
-    LET (b) : items . item 1,
-    LET (c) : items . item 2,
-    LET (ab) : MATCH (order -> (a) compare (b)) { less : b, (_) : a },
-    MATCH (order -> (ab) compare (c)) { less : c, (_) : ab }
+FUNCTION max (items: List (T)) by (order: Order (T)) RETURNS (T) DO {
+    LET a BE: items . item 0,
+    LET b BE: items . item 1,
+    LET c BE: items . item 2,
+    LET ab BE: MATCH order -> (a) compare (b) WITH { less : b, (_) : a },
+    MATCH order -> (ab) compare (c) WITH { less : c, (_) : ab }
 },
-FUNCTION (reversed (order: Order (T))) RETURNS (Order (T)) {
-    { FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) { order -> (b) compare (a) } }
+FUNCTION reversed (order: Order (T)) RETURNS Order (T) DO {
+    { FUNCTION (a: T) compare (b: T) RETURNS Ordering DO { order -> (b) compare (a) } }
 },
-FUNCTION (first (order: Order (T))) RETURNS (Int) { 1 },
+FUNCTION first (order: Order (T)) RETURNS Int DO { 1 },
 "#;
 
     fn with_order(src: &str) -> String {
@@ -2847,7 +2848,7 @@ FUNCTION (first (order: Order (T))) RETURNS (Int) { 1 },
     #[test]
     fn a_stated_type_fixes_a_namespace_module() {
         let src = with_order(
-            "LET (ints : Order (Int)) : int,\nints -> (2) compare (1),\nmax [3, 1, 2] by (reversed (ints)),",
+            "LET (ints : Order (Int)) BE int,\nints -> (2) compare (1),\nmax [3, 1, 2] by (reversed (ints)),",
         );
         assert_eq!(run(&src).last(), Some(&Value::Int(1)));
     }
@@ -2858,7 +2859,7 @@ FUNCTION (first (order: Order (T))) RETURNS (Int) { 1 },
         assert!(
             msg.contains("namespace `int` cannot stand for `Order (T)`")
                 && msg.contains("no earlier argument fixes `T`")
-                && msg.contains("`LET (order : Order (T)) : int`"),
+                && msg.contains("`LET (order : Order (T)) BE int`"),
             "{msg}"
         );
         let msg = run_err(&with_order("max [3, 1, 2] by (reversed (int)),"));
@@ -2870,14 +2871,14 @@ FUNCTION (first (order: Order (T))) RETURNS (Int) { 1 },
         let msg = run_err(&with_order("max [true, false, true] by (int),"));
         assert!(
             msg.contains("namespace `int` does not fit `Order (Boolean)`")
-                && msg.contains("`FUNCTION ((a: Boolean) compare (b: Boolean)) RETURNS (Ordering)` is wanted, but found `FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering)`"),
+                && msg.contains("`FUNCTION (a: Boolean) compare (b: Boolean) RETURNS Ordering` is wanted, but found `FUNCTION (a: Int) compare (b: Int) RETURNS Ordering`"),
             "{msg}"
         );
         let msg = run_err(
-            "RECORD (Show (T)) { FUNCTION ((a: T) shown) RETURNS (String) },\nLET (s : Show (Int)) : int,",
+            "RECORD Show (T) HAS { FUNCTION (a: T) shown RETURNS String },\nLET (s : Show (Int)) BE int,",
         );
         assert!(
-            msg.contains("`int` has no `FUNCTION ((a: Int) shown) RETURNS (String)`"),
+            msg.contains("`int` has no `FUNCTION (a: Int) shown RETURNS String`"),
             "{msg}"
         );
     }
@@ -2885,7 +2886,7 @@ FUNCTION (first (order: Order (T))) RETURNS (Int) { 1 },
     #[test]
     fn a_record_with_fields_takes_no_namespace() {
         let msg = run_err(
-            "RECORD (Named (T)) { name (String), FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) },\nLET (n : Named (Int)) : int,",
+            "RECORD Named (T) HAS { name (String), FUNCTION (a: T) compare (b: T) RETURNS Ordering },\nLET (n : Named (Int)) BE int,",
         );
         assert!(msg.contains("has the field `name (String)`"), "{msg}");
     }
@@ -2893,19 +2894,48 @@ FUNCTION (first (order: Order (T))) RETURNS (Int) { 1 },
     #[test]
     fn a_variable_wins_over_a_namespace() {
         let src = with_order(
-            "LET (int : Order (Int)) : { FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { equal } },\nmax [1, 2, 3] by (int),",
+            "LET (int : Order (Int)) BE { FUNCTION (a: Int) compare (b: Int) RETURNS Ordering DO { equal } },\nmax [1, 2, 3] by (int),",
         );
         assert_eq!(run(&src).last(), Some(&Value::Int(1)));
     }
 
     #[test]
     fn a_namespace_is_still_not_a_value() {
-        let msg = run_err("IMPORT : git, git.status,");
+        let msg = run_err("IMPORT git, git.status,");
         assert!(msg.contains("`git` is a namespace, not a value"), "{msg}");
         assert!(msg.contains("`git -> status`"), "{msg}");
-        let msg = run_err("LET (x) : int,");
+        let msg = run_err("LET x BE int,");
         assert!(msg.contains("`int` is a namespace"), "{msg}");
         let msg = run_err("count (int),");
         assert!(msg.contains("`int` is a namespace, not a value"), "{msg}");
+    }
+}
+
+mod keyword_forms {
+    use super::*;
+
+    #[test]
+    fn parts_between_keywords_need_no_parentheses() {
+        let src = r#"
+RECORD Job HAS { timeout (Duration DEFAULT 30 seconds), dry run (Boolean DEFAULT false) },
+FUNCTION seconds in (job: Job) RETURNS Int DO {
+    MATCH job WITH { { timeout (t), dry run (_) } : t . seconds }
+},
+LET job BE: {} AS Job,
+seconds in (job),
+"#;
+        assert_eq!(run(src).last(), Some(&Value::Int(30)));
+    }
+
+    #[test]
+    fn a_nested_keyword_form_follows_a_colon() {
+        let src = r#"LET n BE 1, LET word BE: IF (n) equals 0 THEN "zero" ELSE : IF (n) equals 1 THEN "one" ELSE "many", word"#;
+        assert_eq!(run(src).last(), Some(&Value::Str("one".into())));
+    }
+
+    #[test]
+    fn a_nested_keyword_form_without_a_colon_is_an_error() {
+        let msg = run_err("LET x BE IF true THEN 1 ELSE 2");
+        assert!(msg.contains("`LET x BE: IF ...`"), "{msg}");
     }
 }

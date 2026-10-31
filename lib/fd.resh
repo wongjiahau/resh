@@ -1,13 +1,13 @@
 # Wrapper for `fd`, written in resh (see SYNTAX.md, "Running external commands").
 
-NAMESPACE : fd,
+NAMESPACE fd,
 
 ## Alternatives that exclude each other are one variant, so the set's
 ## duplicate check rejects `{ case (fd -> sensitive), case (fd -> insensitive) }` for free.
-ENUM (Match Mode) { regex, glob, fixed string },
-ENUM (Case Mode) { smart, sensitive, insensitive },
+ENUM Match Mode HAS { regex, glob, fixed string },
+ENUM Case Mode HAS { smart, sensitive, insensitive },
 
-ENUM (Find Option) {
+ENUM Find Option HAS {
     match (Match Mode),                  # default regex      (--glob, --fixed-strings)
     case (Case Mode),                    # default smart      (--case-sensitive, --ignore-case)
     include hidden file,                 # --hidden
@@ -26,8 +26,8 @@ ENUM (Find Option) {
 },
 
 ## One arm per option; this is the entire translation to fd's command line.
-FUNCTION ((option: Find Option) argument) RETURNS (List (String)) {
-    MATCH (option) {
+FUNCTION (option: Find Option) argument RETURNS List (String) DO {
+    MATCH option WITH {
         match (regex) : [],
         match (glob) : ["--glob"],
         match (fixed string) : ["--fixed-strings"],
@@ -39,10 +39,10 @@ FUNCTION ((option: Find Option) argument) RETURNS (List (String)) {
         follow symlink : ["--follow"],
         full path : ["--full-path"],
         kind (k) : ["--type", k . fd name],
-        extension (es) : flat map (es) with : FN (e) : ["--extension", e],
+        extension (es) : flat map (es) with : FN e DO ["--extension", e],
         min depth (n) : ["--min-depth", n . to string],
         max depth (n) : ["--max-depth", n . to string],
-        exclude (ps) : flat map (ps) with : FN (p) : ["--exclude", p],
+        exclude (ps) : flat map (ps) with : FN p DO ["--exclude", p],
         size at least (s) : ["--size", join "+" with : s . bytes text],
         size at most (s) : ["--size", join "-" with : s . bytes text],
         changed within (d) : ["--changed-within", d . seconds text],
@@ -50,24 +50,24 @@ FUNCTION ((option: Find Option) argument) RETURNS (List (String)) {
     }
 },
 
-FUNCTION ((kind: Entry Kind) fd name) RETURNS (String) {
-    MATCH (kind) { file : "file", directory : "directory", symlink : "symlink" }
+FUNCTION (kind: Entry Kind) fd name RETURNS String DO {
+    MATCH kind WITH { file : "file", directory : "directory", symlink : "symlink" }
 },
 
-FUNCTION ((size: Size) bytes text) RETURNS (String) { join (size . bytes . to string) with "b" },
-FUNCTION ((duration: Duration) seconds text) RETURNS (String) { join (duration . seconds . to string) with "s" },
+FUNCTION (size: Size) bytes text RETURNS String DO { join (size . bytes . to string) with "b" },
+FUNCTION (duration: Duration) seconds text RETURNS String DO { join (duration . seconds . to string) with "s" },
 
-FUNCTION (find (pattern: String) in (dir: String) (options: Set (Find Option)))
-    RETURNS (Result (List (String))) {
-    run ("fd", [SPREAD (flat map (options) with : FN (o) : (o) argument), "--", pattern, dir])
-        . map _ with : FN (text) : (text) lines
+FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option))
+    RETURNS Result (List (String)) DO {
+    run ("fd", [SPREAD (flat map (options) with : FN o DO (o) argument), "--", pattern, dir])
+        . map _ with : FN text DO (text) lines
 },
 
-FUNCTION (find (pattern: String) in (dir: String)) RETURNS (Result (List (String))) {
+FUNCTION find (pattern: String) in (dir: String) RETURNS Result (List (String)) DO {
     find (pattern) in (dir) {}
 },
 
-FUNCTION (find (pattern: String)) RETURNS (Result (List (String))) {
+FUNCTION find (pattern: String) RETURNS Result (List (String)) DO {
     find (pattern) in "." {}
 }
 

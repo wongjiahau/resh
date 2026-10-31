@@ -2,7 +2,7 @@
 name = "anyfix-expr"
 version = "0.1.0"
 edition = "2024"
-description = "A lossless parser for anyfix expressions, a keyword-free notation that only describes grouping"
+description = "A lossless parser for anyfix expressions, a notation that only describes grouping"
 readme = "README.md"
 repository = "https://github.com/wongjiahau/resh"
 

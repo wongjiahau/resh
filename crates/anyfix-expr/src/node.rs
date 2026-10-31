@@ -1,6 +1,6 @@
 //! The abstract view consumers read, derived from the concrete tree.
 
-use crate::lexer::is_symbol_word;
+use crate::lexer::{is_keyword, is_symbol_word};
 use crate::span::Span;
 use crate::syntax::{Expression, Group, GroupKind, Item, Run, Sequence, SyntaxTree, TokenKind};
 
@@ -32,9 +32,10 @@ pub enum NodeKind {
 }
 
 /// A run read as a call: its words form the name, and every other item fills
-/// a slot. Symbol words bind looser than the rest, so the items between them
-/// become one argument each: `my weight <= max (all)` is the call
-/// `_ <= _` of `my weight` and `max _`.
+/// a slot. Keywords bind loosest, then symbol words, so the items between
+/// them become one argument each: `my weight <= max (all)` is the call
+/// `_ <= _` of `my weight` and `max _`, and `IF x > 0 THEN x ELSE 0` is the
+/// call `IF _ THEN _ ELSE _` of `_ > _`, `x` and `0`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Call {
     pub name: Vec<NamePart>,
@@ -109,6 +110,10 @@ impl Piece {
     fn is_symbol_word(&self) -> bool {
         matches!(self, Piece::Word { text, .. } if is_symbol_word(text))
     }
+
+    fn is_keyword(&self) -> bool {
+        matches!(self, Piece::Word { text, .. } if is_keyword(text))
+    }
 }
 
 fn expression_node(expression: &Expression) -> Node {
@@ -171,24 +176,32 @@ fn run_pieces(run: &Run) -> Pieces {
 }
 
 /// No items is `Missing` and a lone non-word item is itself. Otherwise the
-/// items form a call. When symbol words are present, the items between them
-/// are first gathered into one argument each.
+/// items form a call. When keywords are present, the items between them are
+/// first gathered into one argument each, and failing that the items between
+/// symbol words are.
 fn pieces_node(pieces: Pieces) -> Node {
     let Pieces { mut items, span } = pieces;
     let kind = match items.len() {
         0 => NodeKind::Missing,
         1 if !matches!(items[0], Piece::Word { .. }) => return piece_argument(items.remove(0)),
-        _ if items.iter().any(Piece::is_symbol_word) => NodeKind::Call(split_at_symbols(items)),
+        _ if items.iter().any(Piece::is_keyword) => {
+            NodeKind::Call(split_at(items, Piece::is_keyword))
+        }
+        _ if items.iter().any(Piece::is_symbol_word) => {
+            NodeKind::Call(split_at(items, Piece::is_symbol_word))
+        }
         _ => NodeKind::Call(call(items)),
     };
     Node { kind, span }
 }
 
-fn split_at_symbols(items: Vec<Piece>) -> Call {
+/// The call named by the words `splits` picks, with the items between them
+/// as one argument each.
+fn split_at(items: Vec<Piece>, splits: fn(&Piece) -> bool) -> Call {
     let mut pieces = Vec::new();
     let mut stretch = Vec::new();
     for item in items {
-        if item.is_symbol_word() {
+        if splits(&item) {
             pieces.extend(gather(std::mem::take(&mut stretch)));
             pieces.push(item);
         } else {
@@ -199,7 +212,7 @@ fn split_at_symbols(items: Vec<Piece>) -> Call {
     call(pieces)
 }
 
-/// The items between two symbol words, as the one argument they become.
+/// The items between two splitting words, as the one argument they become.
 fn gather(stretch: Vec<Piece>) -> Option<Piece> {
     let span = stretch.first()?.span().to(stretch.last()?.span());
     Some(Piece::Argument(pieces_node(Pieces {

@@ -175,6 +175,53 @@ fn symbol_words_bind_looser_than_the_rest_of_the_run() {
 }
 
 #[test]
+fn keywords_bind_looser_than_symbol_words() {
+    assert_eq!(
+        tree("IF x > 0 THEN x ELSE 0 - x"),
+        "(`IF _ THEN _ ELSE _` (`_ > _` x 0) x (`_ - _` 0 x))"
+    );
+    assert_eq!(
+        tree("LET sign BE 1 + 2"),
+        "(`LET _ BE _` sign (`_ + _` 1 2))"
+    );
+    assert_eq!(
+        tree("FUNCTION max (items) by (order) RETURNS Item DO { x }"),
+        "(`FUNCTION _ RETURNS _ DO _` (`max _ by _` items order) Item Braces[x])"
+    );
+}
+
+#[test]
+fn keyword_forms_are_flat_and_nest_through_colon() {
+    assert_eq!(
+        tree("LET s BE IF a THEN b ELSE c"),
+        "(`LET _ BE IF _ THEN _ ELSE _` s a b c)"
+    );
+    assert_eq!(
+        tree("LET s BE: IF a THEN b ELSE : IF c THEN d ELSE e"),
+        "(`LET _ BE _` s (`IF _ THEN _ ELSE _` a b (`IF _ THEN _ ELSE _` c d e)))"
+    );
+    assert_eq!(
+        tree("x . IF _ THEN a ELSE b"),
+        "(`IF _ THEN _ ELSE _` x a b)"
+    );
+}
+
+#[test]
+fn a_keyword_is_any_all_caps_name_word() {
+    assert_eq!(tree("RETURNS T"), "`RETURNS T`");
+    assert_eq!(tree("f X1 g"), "(`_ X1 _` f g)");
+    assert_eq!(tree("If x Then y"), "`If x Then y`");
+    assert_eq!(tree("f _1 g"), "`f _1 g`");
+    assert_eq!(tree("parse URL (s)"), "(`_ URL _` parse s)");
+}
+
+#[test]
+fn empty_stretches_between_keywords_are_not_slots() {
+    assert_eq!(tree("FOR ALL [a] DO b"), "(`FOR ALL _ DO _` Brackets[a] b)");
+    assert_eq!(tree("x DONE"), "(`_ DONE` x)");
+}
+
+#[test]
 fn words_name_the_call_and_other_items_fill_its_slots() {
     assert_eq!(tree("my weight"), "`my weight`");
     assert_eq!(tree("list file in (dir)"), "(`list file in _` dir)");

@@ -3,17 +3,17 @@
 # that JSON text unchanged; ids (`w1`, `w1:t1`, `w1:p1`) are read from it by the caller.
 # Closing and server management are deliberately left out.
 
-NAMESPACE : herdr,
+NAMESPACE herdr,
 
-ENUM (Direction) { left, right, up, down },
+ENUM Direction HAS { left, right, up, down },
 
-ENUM (Read Source) { visible, recent, recent unwrapped },
+ENUM Read Source HAS { visible, recent, recent unwrapped },
 
-ENUM (Agent Kind) {
+ENUM Agent Kind HAS {
     claude, codex, gemini, opencode, pi, cursor, copilot, amp, grok
 },
 
-ENUM (Create Option) {
+ENUM Create Option HAS {
     cwd (String),                        # --cwd
     label (String),                      # --label
     focus,                               # --focus
@@ -21,33 +21,33 @@ ENUM (Create Option) {
 },
 
 ## Variant names are global to the namespace, so these differ from `Create Option`'s.
-ENUM (Split Option) {
+ENUM Split Option HAS {
     ratio (Float),                       # --ratio
     start in (String),                   # --cwd
     take focus,                          # --focus
     keep focus                           # --no-focus
 },
 
-ENUM (Read Option) {
+ENUM Read Option HAS {
     source (Read Source),                # default visible   (--source)
     lines (Int),                         # --lines
     ansi                                 # --format ansi: keep colors and styling
 },
 
-ENUM (Wait Option) {
+ENUM Wait Option HAS {
     timeout (Duration)                   # --timeout, whole seconds
 },
 
-ENUM (Agent State) { idle, working, blocked, done, unknown },
+ENUM Agent State HAS { idle, working, blocked, done, unknown },
 
-ENUM (Prompt Option) {
+ENUM Prompt Option HAS {
     wait,                                # --wait: block until the agent settles
     until (Agent State),                 # --until
     give up after (Duration)             # --timeout, whole seconds
 },
 
-FUNCTION ((option: Create Option) argument) RETURNS (List (String)) {
-    MATCH (option) {
+FUNCTION (option: Create Option) argument RETURNS List (String) DO {
+    MATCH option WITH {
         cwd (path) : ["--cwd", path],
         label (text) : ["--label", text],
         focus : ["--focus"],
@@ -55,8 +55,8 @@ FUNCTION ((option: Create Option) argument) RETURNS (List (String)) {
     }
 },
 
-FUNCTION ((option: Split Option) argument) RETURNS (List (String)) {
-    MATCH (option) {
+FUNCTION (option: Split Option) argument RETURNS List (String) DO {
+    MATCH option WITH {
         ratio (r) : ["--ratio", r . to string],
         start in (path) : ["--cwd", path],
         take focus : ["--focus"],
@@ -64,196 +64,196 @@ FUNCTION ((option: Split Option) argument) RETURNS (List (String)) {
     }
 },
 
-FUNCTION ((option: Read Option) argument) RETURNS (List (String)) {
-    MATCH (option) {
+FUNCTION (option: Read Option) argument RETURNS List (String) DO {
+    MATCH option WITH {
         source (s) : ["--source", s . herdr name],
         lines (n) : ["--lines", n . to string],
         ansi : ["--format", "ansi"]
     }
 },
 
-FUNCTION ((option: Wait Option) argument) RETURNS (List (String)) {
-    MATCH (option) {
+FUNCTION (option: Wait Option) argument RETURNS List (String) DO {
+    MATCH option WITH {
         timeout (d) : ["--timeout", d . milliseconds text]
     }
 },
 
-FUNCTION ((option: Prompt Option) argument) RETURNS (List (String)) {
-    MATCH (option) {
+FUNCTION (option: Prompt Option) argument RETURNS List (String) DO {
+    MATCH option WITH {
         wait : ["--wait"],
         until (state) : ["--until", state . herdr name],
         give up after (d) : ["--timeout", d . milliseconds text]
     }
 },
 
-FUNCTION ((direction: Direction) herdr name) RETURNS (String) {
-    MATCH (direction) { left : "left", right : "right", up : "up", down : "down" }
+FUNCTION (direction: Direction) herdr name RETURNS String DO {
+    MATCH direction WITH { left : "left", right : "right", up : "up", down : "down" }
 },
 
-FUNCTION ((source: Read Source) herdr name) RETURNS (String) {
-    MATCH (source) { visible : "visible", recent : "recent", recent unwrapped : "recent-unwrapped" }
+FUNCTION (source: Read Source) herdr name RETURNS String DO {
+    MATCH source WITH { visible : "visible", recent : "recent", recent unwrapped : "recent-unwrapped" }
 },
 
-FUNCTION ((state: Agent State) herdr name) RETURNS (String) {
-    MATCH (state) {
+FUNCTION (state: Agent State) herdr name RETURNS String DO {
+    MATCH state WITH {
         idle : "idle", working : "working", blocked : "blocked", done : "done", unknown : "unknown"
     }
 },
 
-FUNCTION ((kind: Agent Kind) herdr name) RETURNS (String) {
-    MATCH (kind) {
+FUNCTION (kind: Agent Kind) herdr name RETURNS String DO {
+    MATCH kind WITH {
         claude : "claude", codex : "codex", gemini : "gemini", opencode : "opencode",
         pi : "pi", cursor : "cursor", copilot : "copilot", amp : "amp", grok : "grok"
     }
 },
 
 ## herdr takes milliseconds; a `Duration` is whole seconds, so append three zeros.
-FUNCTION ((duration: Duration) milliseconds text) RETURNS (String) {
+FUNCTION (duration: Duration) milliseconds text RETURNS String DO {
     join (duration . seconds . to string) with "000"
 },
 
 # ---------- inspect ----------
 
-FUNCTION (list workspace) RETURNS (Result (String)) {
+FUNCTION list workspace RETURNS Result (String) DO {
     run ("herdr", ["workspace", "list"])
 },
 
-FUNCTION (list tab) RETURNS (Result (String)) {
+FUNCTION list tab RETURNS Result (String) DO {
     run ("herdr", ["tab", "list"])
 },
 
-FUNCTION (list tab in workspace (workspace: String)) RETURNS (Result (String)) {
+FUNCTION list tab in workspace (workspace: String) RETURNS Result (String) DO {
     run ("herdr", ["tab", "list", "--workspace", workspace])
 },
 
-FUNCTION (list pane) RETURNS (Result (String)) {
+FUNCTION list pane RETURNS Result (String) DO {
     run ("herdr", ["pane", "list"])
 },
 
-FUNCTION (list pane in workspace (workspace: String)) RETURNS (Result (String)) {
+FUNCTION list pane in workspace (workspace: String) RETURNS Result (String) DO {
     run ("herdr", ["pane", "list", "--workspace", workspace])
 },
 
-FUNCTION (list agent) RETURNS (Result (String)) {
+FUNCTION list agent RETURNS Result (String) DO {
     run ("herdr", ["agent", "list"])
 },
 
-FUNCTION (get workspace (id: String)) RETURNS (Result (String)) {
+FUNCTION get workspace (id: String) RETURNS Result (String) DO {
     run ("herdr", ["workspace", "get", id])
 },
 
-FUNCTION (get pane (id: String)) RETURNS (Result (String)) {
+FUNCTION get pane (id: String) RETURNS Result (String) DO {
     run ("herdr", ["pane", "get", id])
 },
 
-FUNCTION (get agent (target: String)) RETURNS (Result (String)) {
+FUNCTION get agent (target: String) RETURNS Result (String) DO {
     run ("herdr", ["agent", "get", target])
 },
 
 ## Terminal output of a pane, as text.
-FUNCTION (read pane (id: String) (options: Set (Read Option))) RETURNS (Result (String)) {
-    run ("herdr", ["pane", "read", id, SPREAD (flat map (options) with : FN (o) : (o) argument)])
+FUNCTION read pane (id: String) (options: Set (Read Option)) RETURNS Result (String) DO {
+    run ("herdr", ["pane", "read", id, SPREAD (flat map (options) with : FN o DO (o) argument)])
 },
 
-FUNCTION (read pane (id: String)) RETURNS (Result (String)) {
+FUNCTION read pane (id: String) RETURNS Result (String) DO {
     read pane (id) {}
 },
 
-FUNCTION (read agent (target: String) (options: Set (Read Option))) RETURNS (Result (String)) {
-    run ("herdr", ["agent", "read", target, SPREAD (flat map (options) with : FN (o) : (o) argument)])
+FUNCTION read agent (target: String) (options: Set (Read Option)) RETURNS Result (String) DO {
+    run ("herdr", ["agent", "read", target, SPREAD (flat map (options) with : FN o DO (o) argument)])
 },
 
-FUNCTION (read agent (target: String)) RETURNS (Result (String)) {
+FUNCTION read agent (target: String) RETURNS Result (String) DO {
     read agent (target) {}
 },
 
 # ---------- layout ----------
 
-FUNCTION (create workspace (options: Set (Create Option))) RETURNS (Result (String)) {
-    run ("herdr", ["workspace", "create", SPREAD (flat map (options) with : FN (o) : (o) argument)])
+FUNCTION create workspace (options: Set (Create Option)) RETURNS Result (String) DO {
+    run ("herdr", ["workspace", "create", SPREAD (flat map (options) with : FN o DO (o) argument)])
 },
 
-FUNCTION (create tab (options: Set (Create Option))) RETURNS (Result (String)) {
-    run ("herdr", ["tab", "create", SPREAD (flat map (options) with : FN (o) : (o) argument)])
+FUNCTION create tab (options: Set (Create Option)) RETURNS Result (String) DO {
+    run ("herdr", ["tab", "create", SPREAD (flat map (options) with : FN o DO (o) argument)])
 },
 
-FUNCTION (create tab in workspace (workspace: String) (options: Set (Create Option)))
-    RETURNS (Result (String)) {
+FUNCTION create tab in workspace (workspace: String) (options: Set (Create Option))
+    RETURNS Result (String) DO {
     run ("herdr", [
         "tab", "create", "--workspace", workspace,
-        SPREAD (flat map (options) with : FN (o) : (o) argument)
+        SPREAD (flat map (options) with : FN o DO (o) argument)
     ])
 },
 
-FUNCTION (split pane (id: String) (direction: Direction) (options: Set (Split Option)))
-    RETURNS (Result (String)) {
+FUNCTION split pane (id: String) (direction: Direction) (options: Set (Split Option))
+    RETURNS Result (String) DO {
     run ("herdr", [
         "pane", "split", id, "--direction", direction . herdr name,
-        SPREAD (flat map (options) with : FN (o) : (o) argument)
+        SPREAD (flat map (options) with : FN o DO (o) argument)
     ])
 },
 
-FUNCTION (split pane (id: String) (direction: Direction)) RETURNS (Result (String)) {
+FUNCTION split pane (id: String) (direction: Direction) RETURNS Result (String) DO {
     split pane (id) (direction) {}
 },
 
 # ---------- run things ----------
 
 ## Queues `command` and Enter in the pane; success only acknowledges admission.
-FUNCTION (run (command: String) in pane (id: String)) RETURNS (Result (String)) {
+FUNCTION run (command: String) in pane (id: String) RETURNS Result (String) DO {
     run ("herdr", ["pane", "run", id, command])
 },
 
-FUNCTION (send text (text: String) to pane (id: String)) RETURNS (Result (String)) {
+FUNCTION send text (text: String) to pane (id: String) RETURNS Result (String) DO {
     run ("herdr", ["pane", "send-text", id, text])
 },
 
-FUNCTION (send key (keys: List (String)) to pane (id: String)) RETURNS (Result (String)) {
-    run ("herdr", ["pane", "send-keys", id, SPREAD (keys)])
+FUNCTION send key (keys: List (String)) to pane (id: String) RETURNS Result (String) DO {
+    run ("herdr", ["pane", "send-keys", id, SPREAD keys])
 },
 
 ## Waits until `text` appears (as a literal substring) in the pane's output.
-FUNCTION (wait for output (text: String) in pane (id: String) (options: Set (Wait Option)))
-    RETURNS (Result (String)) {
+FUNCTION wait for output (text: String) in pane (id: String) (options: Set (Wait Option))
+    RETURNS Result (String) DO {
     run ("herdr", [
         "pane", "wait-output", id, "--match", text,
-        SPREAD (flat map (options) with : FN (o) : (o) argument)
+        SPREAD (flat map (options) with : FN o DO (o) argument)
     ])
 },
 
-FUNCTION (wait for output (text: String) in pane (id: String)) RETURNS (Result (String)) {
+FUNCTION wait for output (text: String) in pane (id: String) RETURNS Result (String) DO {
     wait for output (text) in pane (id) {}
 },
 
 # ---------- agents ----------
 
 ## `pane` must be an idle shell prompt. `name` is `[a-z][a-z0-9_-]{0,31}`.
-FUNCTION (start agent (name: String) (kind: Agent Kind) in pane (pane: String))
-    RETURNS (Result (String)) {
+FUNCTION start agent (name: String) (kind: Agent Kind) in pane (pane: String)
+    RETURNS Result (String) DO {
     run ("herdr", ["agent", "start", name, "--kind", kind . herdr name, "--pane", pane])
 },
 
-FUNCTION (prompt agent (target: String) with (text: String) (options: Set (Prompt Option)))
-    RETURNS (Result (String)) {
+FUNCTION prompt agent (target: String) with (text: String) (options: Set (Prompt Option))
+    RETURNS Result (String) DO {
     run ("herdr", [
         "agent", "prompt", target, text,
-        SPREAD (flat map (options) with : FN (o) : (o) argument)
+        SPREAD (flat map (options) with : FN o DO (o) argument)
     ])
 },
 
-FUNCTION (prompt agent (target: String) with (text: String)) RETURNS (Result (String)) {
+FUNCTION prompt agent (target: String) with (text: String) RETURNS Result (String) DO {
     prompt agent (target) with (text) {}
 },
 
 ## Without `until`, waits for the first settled state (idle, done or blocked).
-FUNCTION (wait for agent (target: String) (options: Set (Wait Option))) RETURNS (Result (String)) {
+FUNCTION wait for agent (target: String) (options: Set (Wait Option)) RETURNS Result (String) DO {
     run ("herdr", [
         "agent", "wait", target,
-        SPREAD (flat map (options) with : FN (o) : (o) argument)
+        SPREAD (flat map (options) with : FN o DO (o) argument)
     ])
 },
 
-FUNCTION (wait for agent (target: String)) RETURNS (Result (String)) {
+FUNCTION wait for agent (target: String) RETURNS Result (String) DO {
     wait for agent (target) {}
 }
 

@@ -8,21 +8,21 @@
 # Patterns are extended regexes. A replacement may use `&` and `\1`. A TAB is the script
 # delimiter, so `/` needs no escaping, but a literal tab cannot appear in a pattern or replacement.
 
-NAMESPACE : sed,
+NAMESPACE sed,
 
 ## Which lines an edit applies to.
-ENUM (Scope) { every line, line (Int), from line (Int) to line (Int), last line, matching (String) },
+ENUM Scope HAS { every line, line (Int), from line (Int) to line (Int), last line, matching (String) },
 
-ENUM (Edit) {
+ENUM Edit HAS {
     replace first (String) with (String),    # s/pattern/replacement/
     replace all (String) with (String),      # s/pattern/replacement/g
     delete line                              # d
 },
 
-ENUM (Step) { in (Scope) do (Edit) },
+ENUM Step HAS { in (Scope) do (Edit) },
 
-FUNCTION ((scope: Scope) address) RETURNS (String) {
-    MATCH (scope) {
+FUNCTION (scope: Scope) address RETURNS String DO {
+    MATCH scope WITH {
         every line : "",
         line (n) : (n) to string,
         from line (a) to line (b) : join (join (a . to string) with ",") with : b . to string,
@@ -31,26 +31,26 @@ FUNCTION ((scope: Scope) address) RETURNS (String) {
     }
 },
 
-FUNCTION (substitute (pattern: String) with (replacement: String) flags (flags: String)) RETURNS (String) {
+FUNCTION substitute (pattern: String) with (replacement: String) flags (flags: String) RETURNS String DO {
     join (join (join (join "s\t" with (pattern)) with "\t") with (replacement)) with : join "\t" with (flags)
 },
 
-FUNCTION ((edit: Edit) command) RETURNS (String) {
-    MATCH (edit) {
+FUNCTION (edit: Edit) command RETURNS String DO {
+    MATCH edit WITH {
         replace first (pattern) with (replacement) : substitute (pattern) with (replacement) flags "",
         replace all (pattern) with (replacement) : substitute (pattern) with (replacement) flags "g",
         delete line : "d"
     }
 },
 
-FUNCTION ((step: Step) script) RETURNS (String) {
-    MATCH (step) {
+FUNCTION (step: Step) script RETURNS String DO {
+    MATCH step WITH {
         in (scope) do (edit) : join (scope . address) with : edit . command
     }
 },
 
-FUNCTION (preview (path: String) with (steps: List (Step))) RETURNS (Result (String)) {
-    run ("sed", ["-E", SPREAD (flat map (steps) with : FN (s) : ["-e", s . script]), path])
+FUNCTION preview (path: String) with (steps: List (Step)) RETURNS Result (String) DO {
+    run ("sed", ["-E", SPREAD (flat map (steps) with : FN s DO ["-e", s . script]), path])
 }
 
 # Usage (outside the namespace, wrap calls in a scope block):

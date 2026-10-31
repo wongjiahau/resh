@@ -60,8 +60,8 @@ Ground rules (see CLAUDE.md and README.md):
   `{ extension ["rs"], max depth 3 }` is accepted for `Set (Find Option)`.
 
 - [x] **6. Lambdas.**
-  `FN (x) : body` (originally `(x) => body`).
-  *Done when:* `flat map (xs) with : FN (x) : [x, x]` type-checks and evaluates.
+  `FN x DO body` (originally `(x) => body`).
+  *Done when:* `flat map (xs) with : FN x DO [x, x]` type-checks and evaluates.
 
 - [x] **7. Tuples and list spread.**
   Tuple values and tuple parameters (`("fd", args)`); list literals with
@@ -99,7 +99,7 @@ Ground rules (see CLAUDE.md and README.md):
   where a record type is expected, the `Ordering` enum and the `int` and
   `string` namespaces.
   *Done when:* `max [3, 1, 2] by (int)` and `by (reversed (ints))` run (with
-  `LET (ints : Order (Int)) : int`, since `reversed (int)` has nothing to fix
+  `LET (ints : Order (Int)) BE int`, since `reversed (int)` has nothing to fix
   `T`), a namespace missing a member is a type error naming it, and the
   section drops "(planned)".
 

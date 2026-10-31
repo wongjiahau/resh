@@ -31,7 +31,7 @@ pub enum Type {
     Function(Box<Type>, Box<Type>),
     /// Two or more values of their own types: `(a, b)`.
     Tuple(Vec<Type>),
-    /// The inferred type of a `FN (x) : body` literal. Its parameter type is
+    /// The inferred type of a `FN x DO body` literal. Its parameter type is
     /// only known from a sibling argument, so it is checked against the
     /// `Function` parameter of each candidate overload.
     Lambda,
@@ -257,10 +257,24 @@ impl fmt::Display for MemberSig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "FUNCTION ({}) RETURNS ({})",
+            "FUNCTION {} RETURNS {}",
             label(&self.parts),
-            self.ret
+            returns_text(&self.ret.to_string())
         )
+    }
+}
+
+/// A return type as written after `RETURNS`: an all-caps word such as `T`
+/// would be a keyword there, so it keeps its parentheses.
+pub fn returns_text(ty: &str) -> String {
+    let keyword = ty.chars().any(char::is_uppercase)
+        && !ty
+            .chars()
+            .any(|c| c.is_lowercase() || c.is_whitespace() || c == '(');
+    if keyword {
+        format!("({ty})")
+    } else {
+        ty.to_string()
     }
 }
 
@@ -392,7 +406,7 @@ impl FieldDef {
 
 #[derive(Debug, Clone)]
 pub struct RecordDef {
-    /// Type parameters, as in `RECORD (Order (T))`.
+    /// Type parameters, as in `RECORD Order (T)`.
     pub params: Vec<String>,
     pub fields: Vec<FieldDef>,
     /// Function members, called with `value -> call`. At run time they follow
@@ -660,7 +674,7 @@ fn nested_namespace(chain: &str, span: Span) -> Diag {
     Diag::new(
         span,
         format!(
-            "namespaces are not nested: a file has one `NAMESPACE : name`, so `{chain}` cannot be resolved; write a single qualifier, e.g. `name -> call`"
+            "namespaces are not nested: a file has one `NAMESPACE name`, so `{chain}` cannot be resolved; write a single qualifier, e.g. `name -> call`"
         ),
     )
 }
@@ -1232,7 +1246,7 @@ impl Checker {
                     self.records.insert(
                         key,
                         RecordDef {
-                            params: type_params(params, "RECORD (Order (T)) { ... }")?,
+                            params: type_params(params, "RECORD Order (T) HAS { ... }")?,
                             fields: vec![],
                             functions: vec![],
                             doc: doc.clone(),
@@ -1258,7 +1272,7 @@ impl Checker {
                     target,
                     span,
                 } => {
-                    let params = type_params(&pattern.args, "TYPE (Result (T)) : ...")?;
+                    let params = type_params(&pattern.args, "TYPE Result (T) BE ...")?;
                     let key = self.qualify(&pattern.name);
                     if self.aliases.contains_key(&key) {
                         return Err(Diag::new(
@@ -1416,7 +1430,7 @@ impl Checker {
             Some(p) => Err(Diag::new(
                 span,
                 format!(
-                    "`{what}` uses type parameter `{p}`, which `{}` does not declare; add it to the record's name as a slot, e.g. `RECORD (Box ({p})) {{ ... }}`",
+                    "`{what}` uses type parameter `{p}`, which `{}` does not declare; add it to the record's name as a slot, e.g. `RECORD Box ({p}) HAS {{ ... }}`",
                     self.record_display(key),
                 ),
             )),
@@ -2042,7 +2056,7 @@ impl Checker {
             }
             ExprKind::Spread(_) => Err(Diag::new(
                 e.span,
-                "`SPREAD` only works inside a list literal, e.g. `[SPREAD (xs), 1]`",
+                "`SPREAD` only works inside a list literal, e.g. `[SPREAD xs, 1]`",
             )),
             ExprKind::Tuple(xs) => {
                 let mut irs = Vec::new();
@@ -2730,7 +2744,7 @@ impl Checker {
                             open.dedup();
                             let open: Vec<String> = open.iter().map(|p| format!("`{p}`")).collect();
                             format!(
-                                "namespace `{ns}` cannot stand for `{shown}` in argument `{pname}` of `{}`: a namespace has no type of its own, and no earlier argument fixes {}. State the type first, with {} replaced by the type you mean: `LET ({pname} : {shown}) : {ns}`, then pass `({pname})`",
+                                "namespace `{ns}` cannot stand for `{shown}` in argument `{pname}` of `{}`: a namespace has no type of its own, and no earlier argument fixes {}. State the type first, with {} replaced by the type you mean: `LET ({pname} : {shown}) BE {ns}`, then pass `({pname})`",
                                 label(cand.parts),
                                 open.join(", "),
                                 open.join(", "),
@@ -2769,7 +2783,7 @@ impl Checker {
                         failures.push(Diag::new(
                             arg_span,
                             format!(
-                                "the parameter type of `FN ({x}) : ...` is not known yet: `{}` is only fixed by an argument written after the lambda; move the lambda after it",
+                                "the parameter type of `FN {x} DO ...` is not known yet: `{}` is only fixed by an argument written after the lambda; move the lambda after it",
                                 label(cand.parts)
                             ),
                         ));
@@ -2977,7 +2991,7 @@ impl Checker {
             let mut hint = top_matches(scored);
             if self.namespaces.contains(w.as_str()) {
                 hint = format!(
-                    " `{w}` is a namespace: call its functions with `{w} -> call`, or pass it where a record type is expected to use it as a module (`by ({w})`, or `LET (m : Record Type) : {w}`).{hint}"
+                    " `{w}` is a namespace: call its functions with `{w} -> call`, or pass it where a record type is expected to use it as a module (`by ({w})`, or `LET (m : Record Type) BE {w}`).{hint}"
                 );
             }
             return Diag::new(

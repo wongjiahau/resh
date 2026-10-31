@@ -114,7 +114,7 @@ impl Session {
     }
 
     /// Declares the library `name` with source `src`, which must start with
-    /// `NAMESPACE : name`.
+    /// `NAMESPACE name`.
     fn load(&mut self, name: &str, src: &str, span: Span) -> Result<(), Diag> {
         let in_library = |d: Diag| Diag::new(d.span, format!("in library `{name}`: {}", d.msg));
         let items = parser::parse_program(src).map_err(in_library)?;

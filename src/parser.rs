@@ -1,8 +1,8 @@
 //! Reads resh source as anyfix expressions (`crates/anyfix-expr`) and turns
-//! the tree into resh's AST. The notation does all the grouping; this module
-//! only gives the calls a meaning: uppercase keywords (`FUNCTION`, `MATCH`,
-//! ...) mark the language's own forms, and every other call is flattened into
-//! a `Seq` of words and arguments. Calls are NOT resolved here: the checker
+//! the tree into resh's AST. The notation does all the grouping, splitting a
+//! run at its all-caps keywords first; this module only gives the calls a
+//! meaning: keywords (`FUNCTION`, `MATCH`, ...) mark the language's own forms,
+//! and every other call is flattened into a `Seq` of words and arguments. Calls are NOT resolved here: the checker
 //! matches each `Seq` against the declared signatures.
 
 use std::collections::HashMap;
@@ -32,6 +32,10 @@ pub const KEYWORDS: &[&str] = &[
     "THEN",
     "ELSE",
     "RETURNS",
+    "DO",
+    "HAS",
+    "BE",
+    "WITH",
     "FN",
     "SPREAD",
     "NATIVE",
@@ -206,7 +210,7 @@ impl Reader<'_> {
         Ok(())
     }
 
-    /// `KEYWORD : name`, as in `NAMESPACE : fd` and `IMPORT : git`.
+    /// `KEYWORD name`, as in `NAMESPACE fd` and `IMPORT git`.
     fn single_name(&self, node: &Node, keyword: &str) -> Res<String> {
         match flatten(node).as_slice() {
             [Flat::Word(_, _), Flat::Arg(name)] if single_word(name).is_some() => {
@@ -215,7 +219,7 @@ impl Reader<'_> {
             _ => self.err(
                 node.span,
                 format!(
-                    "`{keyword}` is written `{keyword} : name`, with a single-word name; {SEPARATE}"
+                    "`{keyword}` is written `{keyword} name`, with a single-word name; {SEPARATE}"
                 ),
             ),
         }
@@ -223,9 +227,9 @@ impl Reader<'_> {
 
     // ---------- declarations ----------
 
-    /// A declaration is one call of a fixed shape, its parts in slots:
-    /// `FUNCTION (signature) RETURNS (Type) { body }`, `FUNCTION (signature) { body }`,
-    /// `RECORD (Name) { ... }`, `ENUM (Name) { ... }`, `TYPE (Pattern) : Type`.
+    /// A declaration is one call of a fixed shape, its parts between keywords:
+    /// `FUNCTION signature RETURNS Type DO { body }`, `FUNCTION signature DO { body }`,
+    /// `RECORD Name HAS { ... }`, `ENUM Name HAS { ... }`, `TYPE Pattern BE Type`.
     fn decl(&self, node: &Node) -> Res<Option<Decl>> {
         let flat = flatten(node);
         let doc = self.docs.get(&self.at(node.span).line).cloned();
@@ -236,14 +240,19 @@ impl Reader<'_> {
                 Flat::Arg(sig),
                 Flat::Word("RETURNS", _),
                 Flat::Arg(ret),
+                Flat::Word("DO", _),
                 Flat::Arg(body),
             ] => self.function(sig, Some(self.ty(ret)?), body, doc).map(Some),
-            [Flat::Word("FUNCTION", _), Flat::Arg(sig), Flat::Arg(body)] => {
-                self.function(sig, None, body, doc).map(Some)
-            }
+            [
+                Flat::Word("FUNCTION", _),
+                Flat::Arg(sig),
+                Flat::Word("DO", _),
+                Flat::Arg(body),
+            ] => self.function(sig, None, body, doc).map(Some),
             [
                 Flat::Word(keyword @ "RECORD", _),
                 Flat::Arg(name),
+                Flat::Word("HAS", _),
                 Flat::Arg(body),
             ] => {
                 let Some(body) = braces(body) else {
@@ -269,7 +278,7 @@ impl Reader<'_> {
                         [Flat::Word("FUNCTION", _), ..] => {
                             return self.err(
                                 member.span,
-                                "a function member of a record declaration is written `FUNCTION (signature) RETURNS (Type)`: the return type is required and there is no body (a record literal gives the body)",
+                                "a function member of a record declaration is written `FUNCTION signature RETURNS Type`: the return type is required and there is no body (a record literal gives the body)",
                             );
                         }
                         _ => fields.push(self.field(member)?),
@@ -287,6 +296,7 @@ impl Reader<'_> {
             [
                 Flat::Word(keyword @ "ENUM", _),
                 Flat::Arg(name),
+                Flat::Word("HAS", _),
                 Flat::Arg(body),
             ] => {
                 let Some(body) = braces(body) else {
@@ -302,13 +312,16 @@ impl Reader<'_> {
                     doc,
                 }))
             }
-            [Flat::Word("TYPE", _), Flat::Arg(pattern), Flat::Arg(target)] => {
-                Ok(Some(Decl::Alias {
-                    pattern: self.ty(pattern)?,
-                    target: self.ty(target)?,
-                    span,
-                }))
-            }
+            [
+                Flat::Word("TYPE", _),
+                Flat::Arg(pattern),
+                Flat::Word("BE", _),
+                Flat::Arg(target),
+            ] => Ok(Some(Decl::Alias {
+                pattern: self.ty(pattern)?,
+                target: self.ty(target)?,
+                span,
+            })),
             [
                 Flat::Word(k @ ("FUNCTION" | "RECORD" | "ENUM" | "TYPE"), _),
                 ..,
@@ -324,15 +337,15 @@ impl Reader<'_> {
     fn decl_shape<T>(&self, node: &Node, keyword: &str) -> Res<T> {
         let shape = match keyword {
             "FUNCTION" => {
-                "`FUNCTION (signature) RETURNS (Type) { body }`, or `FUNCTION (signature) { body }` without a return type"
+                "`FUNCTION signature RETURNS Type DO { body }`, or `FUNCTION signature DO { body }` without a return type"
             }
-            "RECORD" => "`RECORD (Name) { field (Type), ... }` or `RECORD (Name (T)) { ... }`",
-            "ENUM" => "`ENUM (Name) { variant, ... }`",
-            _ => "`TYPE (Name (T)) : Type`",
+            "RECORD" => "`RECORD Name HAS { field (Type), ... }` or `RECORD Name (T) HAS { ... }`",
+            "ENUM" => "`ENUM Name HAS { variant, ... }`",
+            _ => "`TYPE Name (T) BE Type`",
         };
         self.err(
             node.span,
-            format!("`{keyword}` is written {shape}; the signature or name goes in parentheses, and is a `,` missing after a `}}`? ({SEPARATE})"),
+            format!("`{keyword}` is written {shape}; a type parameter or return type that is a single all-caps word goes in parentheses (`RETURNS (T)`), and is a `,` missing after a `}}`? ({SEPARATE})"),
         )
     }
 
@@ -442,7 +455,7 @@ impl Reader<'_> {
     }
 
     /// A record field: words and type-only slots, each slot optionally
-    /// `Type . DEFAULT value`, e.g. `port (Int . DEFAULT 8080)`.
+    /// `Type DEFAULT value`, e.g. `port (Int DEFAULT 8080)`.
     fn field(&self, node: &Node) -> Res<FieldAst> {
         let mut parts = Vec::new();
         for item in flatten(node) {
@@ -463,10 +476,8 @@ impl Reader<'_> {
                             (self.ty(ty)?, Some(self.expr(value)?))
                         }
                         items if items.iter().any(|f| matches!(f, Flat::Word("DEFAULT", _))) => {
-                            return self.err(
-                                slot.span,
-                                "a default is written `(Type . DEFAULT value)`, with a longer value in parentheses",
-                            );
+                            return self
+                                .err(slot.span, "a default is written `(Type DEFAULT value)`");
                         }
                         _ => (self.ty(slot)?, None),
                     };
@@ -588,19 +599,21 @@ impl Reader<'_> {
         let span = self.at(node.span);
         match flat.as_slice() {
             [Flat::Word("LET", _), rest @ ..] => match rest {
-                [Flat::Arg(binding), Flat::Arg(value)] => match flatten(binding).as_slice() {
-                    [Flat::Word(name, _)] if !is_symbol(name) => {
-                        Ok(Stmt::Let(name.to_string(), self.expr(value)?, span))
+                [Flat::Arg(binding), Flat::Word("BE", _), Flat::Arg(value)] => {
+                    match flatten(binding).as_slice() {
+                        [Flat::Word(name, _)] if !is_symbol(name) => {
+                            Ok(Stmt::Let(name.to_string(), self.expr(value)?, span))
+                        }
+                        [Flat::Word(name, _), Flat::Arg(ty)] if !is_symbol(name) => {
+                            let value = Expr {
+                                k: ExprKind::Ascribe(Box::new(self.expr(value)?), self.ty(ty)?),
+                                span,
+                            };
+                            Ok(Stmt::Let(name.to_string(), value, span))
+                        }
+                        _ => self.let_shape(node),
                     }
-                    [Flat::Word(name, _), Flat::Arg(ty)] if !is_symbol(name) => {
-                        let value = Expr {
-                            k: ExprKind::Ascribe(Box::new(self.expr(value)?), self.ty(ty)?),
-                            span,
-                        };
-                        Ok(Stmt::Let(name.to_string(), value, span))
-                    }
-                    _ => self.let_shape(node),
-                },
+                }
                 _ => self.let_shape(node),
             },
             [Flat::Arg(ns), Flat::Word(ARROW, _), Flat::Arg(body)] if braces(body).is_some() => {
@@ -629,7 +642,7 @@ impl Reader<'_> {
     fn let_shape<T>(&self, node: &Node) -> Res<T> {
         self.err(
             node.span,
-            "`LET` is written `LET (name) : value` or `LET (name : Type) : value`; a variable name is a single word",
+            "`LET` is written `LET name BE value` or `LET (name : Type) BE value`; a variable name is a single word, and a value that holds `.` or another keyword form goes after `BE:` (`LET n BE: files . count _`, `LET x BE: IF ...`)",
         )
     }
 
@@ -666,6 +679,7 @@ impl Reader<'_> {
                             Flat::Arg(sig),
                             Flat::Word("RETURNS", _),
                             Flat::Arg(ret),
+                            Flat::Word("DO", _),
                             Flat::Arg(body),
                         ] if braces(body).is_some() => functions.push(MemberLiteral {
                             sig: self.signature(&flatten(sig), false, sig.span)?,
@@ -676,7 +690,7 @@ impl Reader<'_> {
                         [Flat::Word("FUNCTION", _), ..] => {
                             return self.err(
                                 entry.span,
-                                "a function member of a record literal is written `FUNCTION (signature) RETURNS (Type) { body }`; the return type is required",
+                                "a function member of a record literal is written `FUNCTION signature RETURNS Type DO { body }`; the return type is required",
                             );
                         }
                         items => phrases.push(BraceEntry {
@@ -746,11 +760,16 @@ impl Reader<'_> {
                     Box::new(self.expr(no)?),
                 ));
             }
-            [Flat::Word("FN", _), Flat::Arg(param), Flat::Arg(body)] => {
+            [
+                Flat::Word("FN", _),
+                Flat::Arg(param),
+                Flat::Word("DO", _),
+                Flat::Arg(body),
+            ] => {
                 let Some(name) = single_word(param) else {
                     return self.err(
                         param.span,
-                        "a lambda is written `FN (name) : body`: exactly one parameter name in parentheses",
+                        "a lambda is written `FN name DO body`: exactly one parameter name",
                     );
                 };
                 return mk(ExprKind::Lambda(
@@ -764,7 +783,12 @@ impl Reader<'_> {
             _ => {}
         }
         match items {
-            [Flat::Word("MATCH", _), Flat::Arg(subject), Flat::Arg(arms)]
+            [
+                Flat::Word("MATCH", _),
+                Flat::Arg(subject),
+                Flat::Word("WITH", _),
+                Flat::Arg(arms),
+            ]
             | [Flat::Arg(subject), Flat::Word("MATCH", _), Flat::Arg(arms)] => {
                 return self.match_expr(subject, arms, first);
             }
@@ -793,22 +817,24 @@ impl Reader<'_> {
             _ => {}
         }
         for (keyword, shape) in [
-            ("IF", "`IF (condition) THEN (value) ELSE (value)`"),
-            ("THEN", "`IF (condition) THEN (value) ELSE (value)`"),
-            ("ELSE", "`IF (condition) THEN (value) ELSE (value)`"),
+            ("IF", "`IF condition THEN value ELSE value`"),
+            ("THEN", "`IF condition THEN value ELSE value`"),
+            ("ELSE", "`IF condition THEN value ELSE value`"),
             (
                 "MATCH",
-                "`MATCH (value) { arms }` or `value . MATCH { arms }`",
+                "`MATCH value WITH { arms }` or `value . MATCH { arms }`",
             ),
-            ("AS", "`(value) AS (Type)`"),
-            ("FN", "`FN (name) : body`"),
-            ("SPREAD", "`SPREAD (list)`"),
+            ("WITH", "`MATCH value WITH { arms }`"),
+            ("AS", "`value AS Type`"),
+            ("FN", "`FN name DO body`"),
+            ("DO", "`FN name DO body`"),
+            ("SPREAD", "`SPREAD list`"),
         ] {
             if let Some(i) = word_at(keyword) {
                 return self.err(
                     flat_span(&items[i]),
                     format!(
-                        "`{keyword}` is part of the call {shape}: each part is one item, so a longer expression goes in parentheses (or a `,` is missing before it)"
+                        "`{keyword}` is part of the call {shape}: every keyword in a run joins one call, so a keyword form nested in another goes after `:` or in parentheses (`ELSE : IF ...`, `BE: MATCH ...`), and a part that holds `.` goes in parentheses (or a `,` is missing before it)"
                     ),
                 );
             }
@@ -838,7 +864,7 @@ impl Reader<'_> {
         ))
     }
 
-    /// `MATCH (subject) { arms }` or `subject . MATCH { arms }`.
+    /// `MATCH subject WITH { arms }` or `subject . MATCH { arms }`.
     fn match_expr(&self, subject: &Node, arms_node: &Node, span: anyfix_expr::Span) -> Res<Expr> {
         if braces(arms_node).is_none() {
             return self.err(

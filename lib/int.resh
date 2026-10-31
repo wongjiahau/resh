@@ -1,6 +1,6 @@
 # Operations on `Int`, available without IMPORT. Pass `int` where a module is
 # expected: `max (items) by (int)`.
-NAMESPACE : int,
+NAMESPACE int,
 
 ## `less` when `a` comes before `b`.
-FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { NATIVE "compare" },
+FUNCTION (a: Int) compare (b: Int) RETURNS Ordering DO { NATIVE "compare" },

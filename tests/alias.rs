@@ -4,9 +4,9 @@ use resh::Session;
 fn result_alias_equals_full_form() {
     let mut s = Session::new();
     s.run(
-        r#"FUNCTION (a) RETURNS (Result (String)) { run ("true", []) },
-FUNCTION (b) RETURNS (Result (String) Or (String)) { a },
-FUNCTION (c) RETURNS (Result (String)) { b }"#,
+        r#"FUNCTION a RETURNS Result (String) DO { run ("true", []) },
+FUNCTION b RETURNS Result (String) Or (String) DO { a },
+FUNCTION c RETURNS Result (String) DO { b }"#,
     )
     .unwrap_or_else(|d| panic!("{d}"));
 }
@@ -14,9 +14,9 @@ FUNCTION (c) RETURNS (Result (String)) { b }"#,
 #[test]
 fn alias_with_wrong_arity_is_an_error() {
     let mut s = Session::new();
-    assert!(s.run("FUNCTION (a) RETURNS (Result) { 1 }").is_err());
+    assert!(s.run("FUNCTION a RETURNS Result DO { 1 }").is_err());
     assert!(
-        s.run("FUNCTION (b) RETURNS (Result (Int) (Int)) { 1 }")
+        s.run("FUNCTION b RETURNS Result (Int) (Int) DO { 1 }")
             .is_err()
     );
 }

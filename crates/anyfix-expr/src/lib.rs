@@ -1,4 +1,4 @@
-//! Anyfix expressions: a keyword-free notation that only describes grouping.
+//! Anyfix expressions: a notation that only describes grouping.
 //! It gives nothing a meaning; that is the consumer's job. See `README.md`
 //! for the specification.
 //!

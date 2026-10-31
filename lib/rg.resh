@@ -2,12 +2,12 @@
 # `search` returns typed `Match` values, parsed from `path:line:column:text` lines (rg is always
 # run with `--no-heading --line-number --column`); `search raw` returns those lines unparsed. rg exits 1 when nothing matches, which `run` reports as `Err`.
 
-NAMESPACE : rg,
+NAMESPACE rg,
 
-ENUM (Match Mode) { regex, fixed string, whole word, whole line },
-ENUM (Case Mode) { smart, sensitive, insensitive },
+ENUM Match Mode HAS { regex, fixed string, whole word, whole line },
+ENUM Case Mode HAS { smart, sensitive, insensitive },
 
-ENUM (Search Option) {
+ENUM Search Option HAS {
     match (Match Mode),                  # default regex      (--fixed-strings, --word-regexp, --line-regexp)
     case (Case Mode),                    # default smart      (--case-sensitive, --ignore-case)
     invert match,                        # --invert-match
@@ -27,8 +27,8 @@ ENUM (Search Option) {
 },
 
 ## One arm per option; this is the entire translation to rg's command line.
-FUNCTION ((option: Search Option) argument) RETURNS (List (String)) {
-    MATCH (option) {
+FUNCTION (option: Search Option) argument RETURNS List (String) DO {
+    MATCH option WITH {
         match (regex) : [],
         match (fixed string) : ["--fixed-strings"],
         match (whole word) : ["--word-regexp"],
@@ -42,8 +42,8 @@ FUNCTION ((option: Search Option) argument) RETURNS (List (String)) {
         include hidden file : ["--hidden"],
         ignore nothing : ["--no-ignore"],
         follow symlink : ["--follow"],
-        file type (ts) : flat map (ts) with : FN (t) : ["--type", t],
-        glob (gs) : flat map (gs) with : FN (g) : ["--glob", g],
+        file type (ts) : flat map (ts) with : FN t DO ["--type", t],
+        glob (gs) : flat map (gs) with : FN g DO ["--glob", g],
         max depth (n) : ["--max-depth", n . to string],
         max count (n) : ["--max-count", n . to string],
         max file size (s) : ["--max-filesize", s . bytes . to string],
@@ -54,18 +54,18 @@ FUNCTION ((option: Search Option) argument) RETURNS (List (String)) {
 },
 
 ## One matching line. `rg` reports 1-based line and column numbers.
-RECORD (Match) { path (String), line (Int), column (Int), text (String) },
+RECORD Match HAS { path (String), line (Int), column (Int), text (String) },
 
 ## Parses one `path:line:column:text` line into a `Match`; a context line
 ## (`path-line-text`) or a `--` separator has no such shape and gives `[]`.
-FUNCTION ((output: String) match) RETURNS (List (Match)) {
-    LET (parts) : output . split on ":" at most 4,
+FUNCTION (output: String) match RETURNS List (Match) DO {
+    LET parts BE: output . split on ":" at most 4,
     IF (count (parts) . equals 4) THEN (
-        MATCH (parts . item 1 . to int) {
-            ok (line) : MATCH (parts . item 2 . to int) {
+        MATCH (parts . item 1 . to int) WITH {
+            ok (line) : MATCH (parts . item 2 . to int) WITH {
                 ok (column) : [
                     { path : parts . item 0, line (line), column (column), text : parts . item 3 }
-                        AS (Match)
+                        AS Match
                 ],
                 error (_) : []
             },
@@ -76,27 +76,27 @@ FUNCTION ((output: String) match) RETURNS (List (Match)) {
 
 ## The matching lines as typed values. Context options add lines that are not
 ## matches, so they are dropped here; use `search raw` to see them.
-FUNCTION (search (pattern: String) in (dir: String) (options: Set (Search Option)))
-    RETURNS (Result (List (Match))) {
+FUNCTION search (pattern: String) in (dir: String) (options: Set (Search Option))
+    RETURNS Result (List (Match)) DO {
     search raw (pattern) in (dir) (options)
-        . map _ with : FN (lines) : flat map (lines) with : FN (l) : (l) match
+        . map _ with : FN lines DO flat map (lines) with : FN l DO (l) match
 },
 
-FUNCTION (search raw (pattern: String) in (dir: String) (options: Set (Search Option)))
-    RETURNS (Result (List (String))) {
+FUNCTION search raw (pattern: String) in (dir: String) (options: Set (Search Option))
+    RETURNS Result (List (String)) DO {
     run ("rg", [
         "--no-heading", "--line-number", "--column",
-        SPREAD (flat map (options) with : FN (o) : (o) argument),
+        SPREAD (flat map (options) with : FN o DO (o) argument),
         "--", pattern, dir
     ])
-        . map _ with : FN (text) : (text) lines
+        . map _ with : FN text DO (text) lines
 },
 
-FUNCTION (search (pattern: String) in (dir: String)) RETURNS (Result (List (Match))) {
+FUNCTION search (pattern: String) in (dir: String) RETURNS Result (List (Match)) DO {
     search (pattern) in (dir) {}
 },
 
-FUNCTION (search (pattern: String)) RETURNS (Result (List (Match))) {
+FUNCTION search (pattern: String) RETURNS Result (List (Match)) DO {
     search (pattern) in "." {}
 }
 

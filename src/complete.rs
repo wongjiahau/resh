@@ -155,7 +155,7 @@ mod tests {
     fn session() -> Completions {
         let mut s = Session::new();
         s.set_library_dir(None);
-        s.run("IMPORT : rg").unwrap();
+        s.run("IMPORT rg").unwrap();
         Completions::of(&s)
     }
 
@@ -181,7 +181,7 @@ mod tests {
         let (start, got) = c.candidates("rg -> sea", 9);
         assert_eq!(start, 6);
         assert_eq!(got, ["search"]);
-        let (start, got) = c.candidates("LET (r) : rg->sea", 17);
+        let (start, got) = c.candidates("LET r BE: rg->sea", 17);
         assert_eq!(start, 14);
         assert_eq!(got, ["search"]);
     }
@@ -189,8 +189,8 @@ mod tests {
     #[test]
     fn completes_library_names_after_import() {
         let c = session();
-        let (start, got) = c.candidates("IMPORT : g", 10);
-        assert_eq!(start, 9);
+        let (start, got) = c.candidates("IMPORT g", 8);
+        assert_eq!(start, 7);
         assert_eq!(got, ["git"]);
     }
 }

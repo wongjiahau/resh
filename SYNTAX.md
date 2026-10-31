@@ -6,15 +6,15 @@ otherwise.
 ## Quick start
 
 ```
-$ resh -c 'IMPORT : git, git -> status'       # run one snippet
+$ resh -c 'IMPORT git, git -> status'       # run one snippet
 $ resh                                         # a REPL; :symbols lists what is available
 $ resh run script.resh                         # run a file
 $ resh run script.resh --raw                   # plain text instead of `ok ("...")`
 ```
 
 ```
-IMPORT : git,
-LET (recent) : git -> log { max count 3 },     # ok ([...]) or error ("...")
+IMPORT git,
+LET recent BE git -> log { max count 3 },     # ok ([...]) or error ("...")
 recent,
 git -> { diff { staged } },                    # a scope block: names of `git` unqualified
 ```
@@ -40,9 +40,14 @@ the calls a meaning.
 - Newlines and indentation are plain whitespace, and a call may span lines.
 - Comments start with `#` and run to the end of the line. `##` lines directly
   above a declaration are its docs (see "Inspecting symbols").
-- Keywords are uppercase words: `FUNCTION`, `RECORD`, `ENUM`, `TYPE`,
-  `NAMESPACE`, `IMPORT`, `LET`, `MATCH`, `IF`, `THEN`, `ELSE`, `DEFAULT`, `AS`,
-  `NATIVE`. Lowercase `match` or `if` stay free for your own names.
+- Keywords are all-caps words. The notation splits a run at them before
+  anything else, so the parts between keywords need no parentheses (see
+  "Keyword forms"). resh's own are `FUNCTION`, `RETURNS`, `DO`, `RECORD`,
+  `ENUM`, `HAS`, `TYPE`, `BE`, `NAMESPACE`, `IMPORT`, `LET`, `MATCH`, `WITH`,
+  `IF`, `THEN`, `ELSE`, `FN`, `SPREAD`, `DEFAULT`, `AS` and `NATIVE`.
+  Lowercase `match` or `if` stay free for your own names.
+- Any other all-caps word splits a run too, so a single-letter type
+  parameter standing alone is written in parentheses: `RETURNS (T)`.
 - Words are letters, digits and `_`. Symbol characters (`-`, `'`, `+`, ...)
   make their own words, so `dry-run` is three words; write `dry run`.
 
@@ -56,8 +61,8 @@ the calls a meaning.
   drops it and returns `Unit`.
 
 ```
-LET (files) : list file in "src",
-FUNCTION (answer) RETURNS (Int) { LET (x) : 41, x },
+LET files BE list file in "src",
+FUNCTION answer RETURNS Int DO { LET x BE 41, x },
 answer,
 ```
 
@@ -96,10 +101,10 @@ print (1 mb)         # a call is several items, parentheses required
   `.` is left associative and binds tighter than `:`, so it reads as a
   pipeline: `files . filter _ by extension "rs" . count _`.
 - `f : x` puts `x` in a new last slot: `f (x)`. `:` is right associative and
-  binds loosest; `LET`, `ELSE` chains and `MATCH` arms use it.
-- Both take whole runs, including symbol words like `++`. A MATCH arm or a
-  lambda takes its body after a `:`, so the body may use `.` freely:
-  `FN (t) : t . lines`.
+  binds loosest; `ELSE` chains, `MATCH` arms and nested keyword forms use it.
+- Both take whole runs, including symbol words like `++` and keywords. `.`
+  binds looser than a keyword form, so a `LET` value or a lambda body that
+  uses `.` follows a `:`: `LET n BE: files . count _`, `FN t DO: t . lines`.
 
 Prefer them to parentheses. A value in a call's first slot goes before a `.`,
 and a long value in its last slot after a `:`; both give the same tree as the
@@ -109,28 +114,28 @@ parenthesized form:
 | --- | --- |
 | `(n) to string` | `n . to string` |
 | `((parts) item 1) to int` | `parts . item 1 . to int` |
-| `flat map (xs) with (FN (x) : [x, x])` | `flat map (xs) with : FN (x) : [x, x]` |
+| `flat map (xs) with (FN x DO [x, x])` | `flat map (xs) with : FN x DO [x, x]` |
 | `{ timeout (2 minutes) }` | `{ timeout : 2 minutes }` |
 
 Keep the parentheses when a call has several slots of the same kind, so they
 read alike: `size between (1 mb) and (5 gb)`.
 
 ```
-run ("git", ["log"]) . map _ with (FN (text) : (text) lines)
+run ("git", ["log"]) . map _ with (FN text DO (text) lines)
 IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ```
 
 ## Namespaces
 
 ```
-NAMESPACE : git,
+NAMESPACE git,
 
-RECORD (Commit) { hash (String), message (String) },
+RECORD Commit HAS { hash (String), message (String) },
 
-FUNCTION (commit (message: String)) RETURNS (Result (Commit)) { ... }
+FUNCTION commit (message: String) RETURNS Result (Commit) DO { ... }
 ```
 
-- `NAMESPACE : name` applies file-wide: it must come first in the file, and every
+- `NAMESPACE name` applies file-wide: it must come first in the file, and every
   declaration in the file belongs to it. One namespace per file. Members do not
   repeat the prefix.
 - `ns -> call` qualifies a call: `git -> commit "x"` is the call `commit _`
@@ -152,7 +157,7 @@ FUNCTION (commit (message: String)) RETURNS (Result (Commit)) { ... }
 - The right of `->` is one call, so a call with symbol words of its own goes
   in parentheses: `ns -> (a + b)`, since `ns -> a + b` is the call
   `_ -> _ + _`.
-- Namespaces do not nest: a file has one `NAMESPACE : name` (a single word),
+- Namespaces do not nest: a file has one `NAMESPACE name` (a single word),
   and the left of `->` is a single namespace name, so `a -> b -> c` and
   `a .-> b .-> c` are errors. Use flat anyfix names
   (`git -> remote add (name) (url)`). See the README objective
@@ -163,7 +168,7 @@ FUNCTION (commit (message: String)) RETURNS (Result (Commit)) { ... }
 
 ```
 git -> commit "fix bug",
-LET (c : git -> Commit) : ...,
+LET (c : git -> Commit) BE ...,
 ```
 
 ### Scope blocks
@@ -192,14 +197,14 @@ rg -> {
 
 ## Importing libraries
 
-`IMPORT : name` loads the wrapper library `name`, so its namespace can be used:
+`IMPORT name` loads the wrapper library `name`, so its namespace can be used:
 
 ```
-IMPORT : git,
+IMPORT git,
 git -> status,
 ```
 
-- A library is a `.resh` file that starts with `NAMESPACE : name`. `resh` looks
+- A library is a `.resh` file that starts with `NAMESPACE name`. `resh` looks
   for `name.resh` in the user library directory first (`$RESH_LIB_DIR`, else
   `$XDG_CONFIG_HOME/resh/lib`, else `~/.config/resh/lib`), then among the
   libraries bundled in the binary (`fd`, `git`, `herdr`, `rg`, `sed`). A user
@@ -220,8 +225,8 @@ When the REPL starts it runs the init file, if it exists: `$RESH_INIT`, else
 tab completion):
 
 ```
-IMPORT : git,
-IMPORT : rg,
+IMPORT git,
+IMPORT rg,
 ```
 
 Its results are not printed, and an error in it is reported without stopping the
@@ -229,53 +234,64 @@ REPL. `resh run`, `resh check` and `resh -c` do not read it.
 
 ## Let bindings
 
-`LET (name) : value` binds a single-word name. `:` binds loosest, so the value
-may be a whole pipeline: `LET (n) : files . count _`. A type may be stated with
-`LET (name : Type) : value`, which means `LET (name) : (value) AS (Type)`.
+`LET name BE value` binds a single-word name. The value may hold symbol words
+(`LET n BE 1 + 2`). A value that uses `.`, or is a keyword form of its own,
+follows `BE:` instead, since `:` binds loosest: `LET n BE: files . count _`,
+`LET word BE: IF (n) equals 0 THEN "zero" ELSE "some"`. A type may be stated with
+`LET (name : Type) BE value`, which means `LET name BE: value AS Type`.
 
-`(value) AS (Type)` states the type an expression must fit anywhere, e.g. to
-give a record literal its record: `f ({ x 1 } AS (Apple))`.
+`value AS Type` states the type an expression must fit anywhere, e.g. to give
+a record literal its record: `f ({ x 1 } AS Apple)`.
 
 ## Keyword forms
 
-Each of resh's own forms is one call of a fixed shape: the keywords are its
-name words and every other part is one item. The parser recognises the form by
-its name alone, so a condition, a branch or a value longer than one item goes
-in parentheses.
+Each of resh's own forms is one call of a fixed shape whose name words are its
+keywords. The notation splits a run at its keywords first, so each part
+between two keywords is one argument however long it is: a signature, a type,
+a condition or a value needs no parentheses. The parser recognises the form by
+its name alone.
 
 | Form | Call |
 | --- | --- |
-| `IF (c) THEN (a) ELSE (b)` | `IF _ THEN _ ELSE _` |
-| `MATCH (value) { arms }`, `value . MATCH { arms }` | `MATCH _ _`, `_ MATCH _` |
-| `(value) AS (Type)` | `_ AS _` |
-| `LET (name) : value`, `LET (name : Type) : value` | `LET _ _` |
-| `FN (param) : body` | `FN _ _` |
+| `IF c THEN a ELSE b` | `IF _ THEN _ ELSE _` |
+| `MATCH value WITH { arms }`, `value . MATCH { arms }` | `MATCH _ WITH _`, `_ MATCH _` |
+| `value AS Type` | `_ AS _` |
+| `LET name BE value`, `LET (name : Type) BE value` | `LET _ BE _` |
+| `FN param DO body` | `FN _ DO _` |
 | `pattern : value` (a MATCH arm), `(_) : value` | the pattern with the value as its last slot |
-| `SPREAD (list)` | `SPREAD _` |
-| `(Type . DEFAULT value)` in a field slot | `_ DEFAULT _` |
-| `FUNCTION (signature) RETURNS (Type) { body }` | `FUNCTION _ RETURNS _ _` |
-| `FUNCTION (signature) RETURNS (Type)` in a `RECORD` (a function member) | `FUNCTION _ RETURNS _` |
-| `FUNCTION (signature) { body }` (returns `Unit`) | `FUNCTION _ _` |
-| `RECORD (Name) { fields }`, `ENUM (Name) { variants }` | `RECORD _ _`, `ENUM _ _` |
-| `TYPE (Name (T)) : Type` | `TYPE _ _` |
-| `NAMESPACE : name`, `IMPORT : name` | `NAMESPACE _`, `IMPORT _` |
+| `SPREAD list` | `SPREAD _` |
+| `(Type DEFAULT value)` in a field slot | `_ DEFAULT _` |
+| `FUNCTION signature RETURNS Type DO { body }` | `FUNCTION _ RETURNS _ DO _` |
+| `FUNCTION signature RETURNS Type` in a `RECORD` (a function member) | `FUNCTION _ RETURNS _` |
+| `FUNCTION signature DO { body }` (returns `Unit`) | `FUNCTION _ DO _` |
+| `RECORD Name HAS { fields }`, `ENUM Name HAS { variants }` | `RECORD _ HAS _`, `ENUM _ HAS _` |
+| `TYPE Name (T) BE Type` | `TYPE _ BE _` |
+| `NAMESPACE name`, `IMPORT name` | `NAMESPACE _`, `IMPORT _` |
 | `ns -> call`, `ns -> Type`, `ns -> { statements }`, `module -> call` | `_ -> _` |
 
-A declaration's signature or name goes in parentheses, since bare words would
-otherwise join the keyword in one call name: `FUNCTION (status) { ... }`, not
-`FUNCTION status { ... }`.
+A block or a `{ ... }` list always follows a keyword (`DO`, `HAS`, `WITH`):
+next to other items it would join them in one argument.
+
+Keywords have no precedence among themselves: every keyword in a run belongs
+to one call. A keyword form nested in another therefore goes after a `:` or
+in parentheses, even as the last part. `LET x BE IF a THEN b ELSE c` is the one
+call `LET _ BE IF _ THEN _ ELSE _`; write `LET x BE: IF a THEN b ELSE c`.
+
+`.` binds looser than any run, so a part that uses `.` goes in parentheses,
+or after a `:` when it is the last part: `IF (n . equals 0) THEN ...`,
+`LET n BE: files . count _`.
 
 A MATCH arm `pattern : value` is the pattern's call with the value in a new last
 slot. A wildcard arm is `(_) : value`, because in `_ : value` the `:` fills the
 `_` itself.
 
-Every keyword is an uppercase word. Apart from `->` (namespace and module access), resh's
+Every keyword is an all-caps word. Apart from `->` (namespace and module access), resh's
 own forms never use a symbol word, so every other symbol word is free for your
 own operators:
 
 ```
-FUNCTION ((a: String) ++ (b: String)) RETURNS (String) { join (a) with (b) },
-FUNCTION ((a: Int) = (b: Int)) RETURNS (Boolean) { a . equals (b) },
+FUNCTION (a: String) ++ (b: String) RETURNS String DO { join (a) with (b) },
+FUNCTION (a: Int) = (b: Int) RETURNS Boolean DO { a . equals (b) },
 "a" ++ "b",
 "a" .++ "b" .++ "c",
 1 = 1
@@ -283,7 +299,7 @@ FUNCTION ((a: Int) = (b: Int)) RETURNS (Boolean) { a . equals (b) },
 
 ## Conditionals and MATCH
 
-`IF (condition) THEN (a) ELSE (b)` needs a `Boolean` condition, and both
+`IF condition THEN a ELSE b` needs a `Boolean` condition, and both
 branches must have the same type. Chain it to the right with `:`, which fills
 the `ELSE` slot with the rest:
 
@@ -291,14 +307,14 @@ the `ELSE` slot with the rest:
 IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ```
 
-`MATCH (value) { pattern : result, ... }` takes the value to match either after
+`MATCH value WITH { pattern : result, ... }` takes the value to match either after
 the keyword or before it: `(option) MATCH { ... }`, usually written
 `option . MATCH { ... }`. Patterns are described in
 "Enum variants and patterns" and "Destructuring".
 
 ## Type aliases
 
-`TYPE (Result (T)) : Result (T) Or (String)` gives a shorter name to a type. The
+`TYPE Result (T) BE Result (T) Or (String)` gives a shorter name to a type. The
 left side is an anyfix pattern whose slots are single capital letters; the right
 side is any type, which may use those letters. `Result (_)` and `Result (_) Or (_)`
 are different identifiers, so both exist: the prelude declares the first as the
@@ -313,10 +329,10 @@ it declares the same field; the parenthesized form is the norm. Field words are
 lowercase.
 
 ```
-RECORD (Server Config) {
-    host (String . DEFAULT "localhost"),
-    port (Int . DEFAULT 8080),
-    timeout (Duration . DEFAULT (30 seconds))
+RECORD Server Config HAS {
+    host (String DEFAULT "localhost"),
+    port (Int DEFAULT 8080),
+    timeout (Duration DEFAULT 30 seconds)
 }
 ```
 
@@ -325,17 +341,17 @@ RECORD (Server Config) {
   `Boolean` slot. In a literal, a bare `Boolean` field name is sugar for
   `true`: `{ verbose }` means `{ verbose (true) }`. (Optional flags belong in a
   `Set (E)`; see below.)
-- A slot may carry `DEFAULT value`, where the value is one item:
-  `(Boolean . DEFAULT (false))`, `(Int . DEFAULT 8080)`. Each slot of a multi-slot field has its own
+- A slot may carry `DEFAULT value`: `(Boolean DEFAULT false)`,
+  `(Duration DEFAULT 30 seconds)`. Each slot of a multi-slot field has its own
   default.
 - A field may be omitted in a literal only if every slot has a `DEFAULT`.
   There are no optional fields, so destructuring always sees every field.
 - A record may take type parameters, written like an alias pattern (single
-  capital letters in slots): `RECORD (Box (T)) { value (T) }`. They are part of
+  capital letters in slots): `RECORD Box (T) HAS { value (T) }`. They are part of
   its name, so the type is always written with them: `Box (Int)`, `Box (T)`.
   A field may only use the record's own parameters. A literal passed to a
   `Box (T)` parameter fixes `T` from its slot values; elsewhere state the type:
-  `LET (b : Box (Int)) : { value 5 }`.
+  `LET (b : Box (Int)) BE { value 5 }`.
 
 ### Literals
 
@@ -357,7 +373,7 @@ Record literals are unnamed (and so are set literals). Entries are anyfix phrase
   *Overload resolution*.
 - A literal fits a record where one is declared: a parameter, an `AS (Type)`,
   a `DEFAULT`, or the return type of the function whose last statement it is
-  (`FUNCTION (origin) RETURNS (Point) { { x 0, y 0 } }`). Anywhere else it has no
+  (`FUNCTION origin RETURNS Point DO { { x 0, y 0 } }`). Anywhere else it has no
   type of its own and is an error.
 
 ### Destructuring
@@ -366,7 +382,7 @@ There are no accessor functions. The only way to take values out of a record is
 a `MATCH` with a record pattern:
 
 ```
-MATCH (config) {
+MATCH config WITH {
     { host (h), port (p), timeout (t) } : ...
 }
 ```
@@ -389,11 +405,11 @@ there is no instance resolution. The caller passes them as an ordinary
 argument, a *module*: a record whose members include functions.
 
 ```
-RECORD (Order (T)) {
-    FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering),
+RECORD Order (T) HAS {
+    FUNCTION (a: T) compare (b: T) RETURNS Ordering,
 },
 
-FUNCTION (max (items: List (T)) by (order: Order (T))) RETURNS (T) {
+FUNCTION max (items: List (T)) by (order: Order (T)) RETURNS (T) DO {
     ... order -> (a) compare (b) ...
 },
 
@@ -403,12 +419,12 @@ max [3, 1, 2] by (int),
 ### Function members
 
 - A record declaration may list function members next to its fields:
-  `FUNCTION (signature) RETURNS (Type)`, with no body. The return type is
+  `FUNCTION signature RETURNS Type`, with no body. The return type is
   required.
 - A record may take type parameters (see "Records"):
-  `RECORD (Order (T)) { ... }`.
+  `RECORD Order (T) HAS { ... }`.
 - A record literal gives each function member a body:
-  `{ FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { ... } }`. The body
+  `{ FUNCTION (a: Int) compare (b: Int) RETURNS Ordering DO { ... } }`. The body
   sees the variables around the literal, like a lambda, but not the
   literal's other members (there is no `this`).
 - A function member may only use the record's type parameters, and two
@@ -420,7 +436,7 @@ max [3, 1, 2] by (int),
 - A literal fits a record type when it gives exactly the record's function
   members, with the same signatures once the type parameters are substituted.
   A literal can fix the type parameters itself:
-  `{ FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { ... } }` is an
+  `{ FUNCTION (a: Int) compare (b: Int) RETURNS Ordering DO { ... } }` is an
   `Order (Int)`. A mismatch names each missing, extra or differently typed
   member with both signatures.
 - Fields keep the rules of "Records": a literal gives each field a value, and
@@ -428,7 +444,7 @@ max [3, 1, 2] by (int),
   fields only, not the function members.
 - A value with function members prints each function as its declaration
   followed by `<function>`:
-  `{ FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) <function> }`. `equals`
+  `{ FUNCTION (a: T) compare (b: T) RETURNS Ordering <function> }`. `equals`
   rejects it at check time, and any other value holding a function.
 
 ### Namespaces as modules
@@ -441,14 +457,14 @@ max [3, 1, 2] by (int),
 - A record that has fields cannot be stood for by a namespace; pass a literal.
 - Like a lambda, a namespace argument has no type of its own. Its type
   parameters must be fixed by earlier arguments of the same call (`T = Int`
-  from `[3, 1, 2]`), or by a stated type: `LET (o : Order (Int)) : int`. The
+  from `[3, 1, 2]`), or by a stated type: `LET (o : Order (Int)) BE int`. The
   namespace's own signatures never fix them, so `reversed (int)` (where no
   other argument fixes `T`) is an error that suggests the stated type.
 - A namespace that does not fit names each missing or differently typed
   member, with the signature wanted and the one the namespace has.
 - Anywhere else, a namespace is not a value: `git.status` is still an error
   pointing to `git -> status`.
-- The prelude declares `ENUM (Ordering) { less, equal, greater }` and the
+- The prelude declares `ENUM Ordering HAS { less, equal, greater }` and the
   namespaces `int` and `string`, available without `IMPORT`, each with
   `(a) compare (b)` returning an `Ordering` (`string` compares by Unicode code
   point).
@@ -458,12 +474,12 @@ max [3, 1, 2] by (int),
 A function that takes or returns a module needs nothing extra:
 
 ```
-FUNCTION (reversed (order: Order (T))) RETURNS (Order (T)) {
-    { FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) { order -> (b) compare (a) } }
+FUNCTION reversed (order: Order (T)) RETURNS Order (T) DO {
+    { FUNCTION (a: T) compare (b: T) RETURNS Ordering DO { order -> (b) compare (a) } }
 },
-FUNCTION (list order (order: Order (T))) RETURNS (Order (List (T))) { ... },
+FUNCTION list order (order: Order (T)) RETURNS Order (List (T)) DO { ... },
 
-LET (ints : Order (Int)) : int,
+LET (ints : Order (Int)) BE int,
 sort (xs) by (reversed (ints)),
 sort (rows) by (list order (ints)),
 ```
@@ -474,7 +490,7 @@ sort (rows) by (list order (ints)),
 - Several constraints are several parameters:
   `show (items) sorted by (order) shown with (format)`.
 - To call members of a module returned by a call, bind it first:
-  `LET (desc) : reversed (ints), desc -> (1) compare (2)`.
+  `LET desc BE reversed (ints), desc -> (1) compare (2)`.
 
 ### Overloads keep concrete calls short
 
@@ -483,7 +499,7 @@ instance resolution. Declare a concrete overload where a generic call is
 common:
 
 ```
-FUNCTION (max (items: List (Int))) RETURNS (Int) { max (items) by (int) },
+FUNCTION max (items: List (Int)) RETURNS Int DO { max (items) by (int) },
 max [3, 1, 2],
 ```
 
@@ -524,7 +540,7 @@ once. It is the way to take optional, order-independent flags: absence is the
 natural state, so there is no `Option`, no sentinel default and no `some`.
 
 ```
-ENUM (Find Option) {
+ENUM Find Option HAS {
     include hidden file,
     extension (List (String)),
     max depth (Int),
@@ -562,14 +578,15 @@ Use a record with `DEFAULT`s for values that are always present, and a
 
 ## Lambdas
 
-A function value is written `FN (x) : body`. In a call's last slot it follows a
-`:`; elsewhere it is parenthesized:
+A function value is written `FN x DO body`, or `FN x DO: body` when the body
+uses `.`. In a call's last slot it follows a `:`; elsewhere it is
+parenthesized:
 
 ```
-flat map (patterns) with : FN (p) : ["--exclude", p]
+flat map (patterns) with : FN p DO ["--exclude", p]
 ```
 
-- A lambda takes exactly one parameter name: `FN (x) : ...`.
+- A lambda takes exactly one parameter name: `FN x DO ...`.
 - Its type is `Function (A) To (B)`, the type of a function parameter such as
   `f` in `flat map (items: List (T)) with (f: Function (T) To (List (U)))`.
 - A lambda has no type of its own, so the parameter type comes from the
@@ -594,7 +611,7 @@ parentheses inside the slot (this is how `run` is declared below). The
 components are bound as variables in the body:
 
 ```
-FUNCTION (run ((command: String, args: List (String)))) RETURNS (...) { ... }
+FUNCTION run ((command: String, args: List (String))) RETURNS (...) DO { ... }
 ```
 
 - A tuple has two or more components; `(x)` is just parentheses.
@@ -609,12 +626,12 @@ FUNCTION (run ((command: String, args: List (String)))) RETURNS (...) { ... }
 List literals accept `SPREAD` to splice a list in place:
 
 ```
-[SPREAD (a), "x", SPREAD (b)]
+[SPREAD a, "x", SPREAD b]
 ```
 
-- `SPREAD` is only valid as an element of a list literal; its operand is one
-  item, so a variable or a longer expression goes in parentheses:
-  `SPREAD (paths)`, `SPREAD (flat map ...)`.
+- `SPREAD` is only valid as an element of a list literal. Its operand runs to
+  the next `,`: `SPREAD paths`, `SPREAD flat map (xs) with (f)`; one that uses
+  `.` goes in parentheses or after `SPREAD :`.
 - The operand must be a `List (T)`; element types are joined as for any other
   list literal. Spreading a `Set (E)` is not supported.
 
@@ -638,9 +655,9 @@ List literals accept `SPREAD` to splice a list in place:
 A unit is an ordinary suffix function. There is no special syntax.
 
 ```
-FUNCTION ((n: Int) kb) RETURNS (Size) { ... },
-FUNCTION ((n: Int) mb) RETURNS (Size) { ... },
-FUNCTION ((n: Int) days) RETURNS (Duration) { ... }
+FUNCTION (n: Int) kb RETURNS Size DO { ... },
+FUNCTION (n: Int) mb RETURNS Size DO { ... },
+FUNCTION (n: Int) days RETURNS Duration DO { ... }
 ```
 
 `Size` (held in bytes, decimal: `1 kb` = 1000) and `Duration` (held in seconds)
@@ -682,7 +699,7 @@ Wrappers around existing CLI tools are written in resh itself, on top of a
 single primitive:
 
 ```
-FUNCTION (run ((command: String, args: List (String)))) RETURNS (Result (String)) { NATIVE "run" }
+FUNCTION run ((command: String, args: List (String))) RETURNS Result (String) DO { NATIVE "run" }
 ```
 
 Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
@@ -702,28 +719,28 @@ Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
 A wrapper builds a `List (String)` from its typed options and calls `run`:
 
 ```
-NAMESPACE : fd,
+NAMESPACE fd,
 
-ENUM (Find Option) {
+ENUM Find Option HAS {
     include hidden file,
     extension (String),
     max depth (Int),
     exclude (List (String))
 },
 
-FUNCTION ((option: Find Option) argument) RETURNS (List (String)) {
-    MATCH (option) {
+FUNCTION (option: Find Option) argument RETURNS List (String) DO {
+    MATCH option WITH {
         include hidden file : ["--hidden"],
         extension (e) : ["--extension", e],
         max depth (n) : ["--max-depth", n . to string],
-        exclude (patterns) : flat map (patterns) with : FN (p) : ["--exclude", p]
+        exclude (patterns) : flat map (patterns) with : FN p DO ["--exclude", p]
     }
 },
 
-FUNCTION (find (pattern: String) in (dir: String) (options: Set (Find Option)))
-    RETURNS (Result (List (String))) {
-    run ("fd", [SPREAD (flat map (options) with : FN (o) : (o) argument), pattern, dir])
-        . map _ with : FN (text) : (text) lines
+FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option))
+    RETURNS Result (List (String)) DO {
+    run ("fd", [SPREAD (flat map (options) with : FN o DO (o) argument), pattern, dir])
+        . map _ with : FN text DO (text) lines
 }
 ```
 
@@ -737,11 +754,11 @@ fd -> find "" in "src" { extension ["rs"], max depth 3 },
 
 A wrapper is a library (see "Importing libraries") for one CLI tool. Put it in
 `name.resh` in the user library directory (`resh libs` prints it), starting with
-`NAMESPACE : name`. Look at `resh libs show git` and `resh libs show fd` for the
-shape: an `ENUM` of options, a `FUNCTION ((option: ...) argument) RETURNS (List (String))`
+`NAMESPACE name`. Look at `resh libs show git` and `resh libs show fd` for the
+shape: an `ENUM` of options, a `FUNCTION (option: ...) argument RETURNS List (String)`
 that maps each option to argv, and one function per command that calls `run`.
 `##` comments above declarations are their docs (shown by `:symbols`). Check it
-with `resh check name.resh`, then use it with `IMPORT : name`. `resh skill install`
+with `resh check name.resh`, then use it with `IMPORT name`. `resh skill install`
 installs a Claude Code skill that writes wrappers for you.
 
 Wrappers run the tool in resh's current directory. Change it with
@@ -761,10 +778,10 @@ the declared ones.
 line between) are its docs, and `:symbols` shows them. In the REPL a
 comment-only `##` line waits for the declaration below it. `NAMESPACE` applies per
 REPL entry, so put it on the same line as the declaration:
-`NAMESPACE : demo, ENUM (Mode) { fast, slow }`.
+`NAMESPACE demo, ENUM Mode HAS { fast, slow }`.
 
 ```
-resh> NAMESPACE : demo, ENUM (Mode) { fast, slow }
+resh> NAMESPACE demo, ENUM Mode HAS { fast, slow }
 resh> :symbols
 namespaces
   prelude
@@ -777,7 +794,7 @@ demo
 ```
 
 ```
-$ printf 'NAMESPACE : demo, ENUM (Mode) { fast, slow }\n:symbols demo\n' | resh --json
+$ printf 'NAMESPACE demo, ENUM Mode HAS { fast, slow }\n:symbols demo\n' | resh --json
 {"namespace":"demo","symbols":[{"kind":"enum","name":"Mode","doc":null,"members":[{"signature":"fast","defaults":[]},{"signature":"slow","defaults":[]}],"returns":null}]}
 ```
 
