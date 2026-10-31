@@ -139,8 +139,8 @@ FUNCTION (commit (message: String)) RETURNS (Result (Commit)) { ... }
   declared as an operator.
 - A namespace is not a value. `git.commit "x"` is the call `_ commit _` with
   `git` in its first slot, so it is an error that points to `git -> commit "x"`.
-  (Planned: a namespace passed where a record type is expected; see
-  "Modules".)
+  The one exception: passed where a record type is expected, a namespace
+  stands for a module (see "Modules").
 - Everything can be namespaced: functions, types, enums, records.
 - Outside the namespace, names are qualified. Inside the file, they resolve
   unqualified.
@@ -381,11 +381,7 @@ MATCH (config) {
   slot is refutable; further arms are checked like any other (an arm after an
   irrefutable one is unreachable). `(_)` matches a whole record.
 
-## Modules (planned)
-
-Generic records, function members and `->` on a variable are implemented;
-"Namespaces as modules" and the prelude's `Ordering`, `int` and `string` are
-not yet.
+## Modules
 
 Generic code can require operations on its type parameters (constrained
 polymorphism), but the checker never looks for those operations itself:
@@ -393,8 +389,6 @@ there is no instance resolution. The caller passes them as an ordinary
 argument, a *module*: a record whose members include functions.
 
 ```
-ENUM (Ordering) { less, equal, greater },
-
 RECORD (Order (T)) {
     FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering),
 },
@@ -444,13 +438,20 @@ max [3, 1, 2] by (int),
   member of the record type, the namespace has a function with the same
   signature once the type parameters are substituted. Extra functions in the
   namespace are ignored.
+- A record that has fields cannot be stood for by a namespace; pass a literal.
 - Like a lambda, a namespace argument has no type of its own. Its type
   parameters must be fixed by earlier arguments of the same call (`T = Int`
-  from `[3, 1, 2]`), or by a stated type: `LET (o : Order (Int)) : int`.
+  from `[3, 1, 2]`), or by a stated type: `LET (o : Order (Int)) : int`. The
+  namespace's own signatures never fix them, so `reversed (int)` (where no
+  other argument fixes `T`) is an error that suggests the stated type.
+- A namespace that does not fit names each missing or differently typed
+  member, with the signature wanted and the one the namespace has.
 - Anywhere else, a namespace is not a value: `git.status` is still an error
   pointing to `git -> status`.
-- The prelude provides namespaces such as `int` and `string`, each with
-  `(a) compare (b)`.
+- The prelude declares `ENUM (Ordering) { less, equal, greater }` and the
+  namespaces `int` and `string`, available without `IMPORT`, each with
+  `(a) compare (b)` returning an `Ordering` (`string` compares by Unicode code
+  point).
 
 ### Functors are functions
 
@@ -462,16 +463,18 @@ FUNCTION (reversed (order: Order (T))) RETURNS (Order (T)) {
 },
 FUNCTION (list order (order: Order (T))) RETURNS (Order (List (T))) { ... },
 
-sort (xs) by (reversed (int)),
-sort (rows) by (list order (int)),
+LET (ints : Order (Int)) : int,
+sort (xs) by (reversed (ints)),
+sort (rows) by (list order (ints)),
 ```
 
 - Several instances for one type are just several modules: `by (int)` or
-  `by (reversed (int))`.
+  `by (reversed (ints))`. A namespace passed straight to a functor
+  (`reversed (int)`) has nothing to fix `T`, so state its type first.
 - Several constraints are several parameters:
   `show (items) sorted by (order) shown with (format)`.
 - To call members of a module returned by a call, bind it first:
-  `LET (desc) : reversed (int), desc -> (1) compare (2)`.
+  `LET (desc) : reversed (ints), desc -> (1) compare (2)`.
 
 ### Overloads keep concrete calls short
 

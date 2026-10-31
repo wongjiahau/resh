@@ -950,7 +950,12 @@ impl Checker {
         let [SeqItem::Atom(first), _, ..] = items else {
             return None;
         };
-        let ExprKind::Seq(inner) = &first.k else {
+        self.namespace_word(first, sc)
+    }
+
+    /// `e` when it is a bare namespace name that no variable shadows.
+    fn namespace_word<'a>(&self, e: &'a Expr, sc: &Scope) -> Option<&'a str> {
+        let ExprKind::Seq(inner) = &e.k else {
             return None;
         };
         let [SeqItem::Word(w, _)] = inner.as_slice() else {
@@ -958,6 +963,70 @@ impl Checker {
         };
         (self.namespaces.contains(w.as_str()) && !sc.iter().any(|(n, _)| n == w))
             .then_some(w.as_str())
+    }
+
+    /// Namespace `ns` standing for the record type `want`: a record of
+    /// functions, one per function member, each calling the namespace
+    /// function with the same signature. `want` must have no unbound type
+    /// parameters, and no fields.
+    fn namespace_module(&self, ns: &str, want: &Type) -> Result<Ir, String> {
+        let Type::Record(rn, args) = want else {
+            unreachable!("only called for a record type")
+        };
+        let rd = &self.records[rn];
+        if let Some(f) = rd.fields.first() {
+            return Err(format!(
+                "namespace `{ns}` cannot stand for `{want}`: a namespace has functions only, and `{want}` has the field `{}`; pass a record literal instead",
+                f.signature()
+            ));
+        }
+        let members = rd.functions_at(args);
+        let offered: Vec<(usize, MemberSig)> = self
+            .defs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| {
+                d.ns.as_deref() == Some(ns) && !matches!(d.kind, FnKind::Variant { .. })
+            })
+            .map(|(i, d)| {
+                (
+                    i,
+                    MemberSig {
+                        parts: d.parts.clone(),
+                        ret: d.ret.clone(),
+                    },
+                )
+            })
+            .collect();
+        let sigs: Vec<MemberSig> = offered.iter().map(|(_, m)| m.clone()).collect();
+        let problems = self.member_problems(&members, &sigs, true);
+        if !problems.is_empty() {
+            return Err(format!(
+                "namespace `{ns}` does not fit `{want}`: {}",
+                problems
+                    .iter()
+                    .map(|p| p.replacen("missing ", &format!("`{ns}` has no "), 1))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+        let functions = members
+            .iter()
+            .map(|w| {
+                let (id, m) = offered
+                    .iter()
+                    .find(|(_, g)| Self::member_matches(w, g))
+                    .expect("checked by `member_problems`");
+                let params: Vec<String> = m
+                    .parts
+                    .iter()
+                    .filter_map(|p| p.slot().map(|(n, _)| n))
+                    .collect();
+                let call = Ir::Call(*id, params.iter().cloned().map(Ir::Var).collect());
+                Ir::Lambda(params, Box::new(call))
+            })
+            .collect();
+        Ok(Ir::MkRecord(rn.clone(), functions))
     }
 
     fn known_namespace(&self, q: &str, span: Span) -> Res<()> {
@@ -1920,19 +1989,7 @@ impl Checker {
                     "`_` can only be used where `.` or `:` fills it: `x . f _ with (y)`",
                 )),
             },
-            ExprKind::Seq(items) => {
-                if let Some(ns) = self.namespace_argument(items, sc) {
-                    return Err(Diag::new(
-                        e.span,
-                        format!(
-                            "`{ns}` is a namespace, not a value, so it cannot fill a slot of `{}`; qualify the call with `->`: `{ns} -> {}`",
-                            seq_text(items).replace("<arg>", "_"),
-                            seq_source(&items[1..])
-                        ),
-                    ));
-                }
-                self.seq(items, e.span, sc, None)
-            }
+            ExprKind::Seq(items) => self.seq(items, e.span, sc, None),
             ExprKind::Qualified { qualifier, call } => {
                 // A variable wins over a namespace of the same name.
                 if let Some((_, t)) = sc.iter().rev().find(|(n, _)| n == qualifier) {
@@ -2014,6 +2071,14 @@ impl Checker {
             ExprKind::Match(s, arms) => self.matching(s, arms, e.span, sc),
             ExprKind::Ascribe(inner, ty) => {
                 let target = self.resolve_ty(ty)?;
+                if let Some(ns) = self.namespace_word(inner, sc)
+                    && matches!(target, Type::Record(..))
+                {
+                    let ir = self
+                        .namespace_module(ns, &target)
+                        .map_err(|why| Diag::new(inner.span, why))?;
+                    return Ok((ir, target));
+                }
                 let (ir, t) = self.infer(inner, sc)?;
                 if !self.fits(&t, &target) {
                     return Err(Diag::new(
@@ -2502,6 +2567,25 @@ impl Checker {
                 cands = inner;
             }
         }
+        // `git.status`: a namespace in the first slot, where no candidate takes
+        // a module, was meant as `git -> status`.
+        if let Some(ns) = self.namespace_argument(items, sc)
+            && !cands.iter().any(|&i| {
+                matches!(
+                    self.defs[i].parts.first(),
+                    Some(PartT::Param(_, Type::Record(..)))
+                )
+            })
+        {
+            return Err(Diag::new(
+                span,
+                format!(
+                    "`{ns}` is a namespace, not a value, so it cannot fill a slot of `{}`; qualify the call with `->`: `{ns} -> {}`",
+                    seq_text(items).replace("<arg>", "_"),
+                    seq_source(&items[1..])
+                ),
+            ));
+        }
         if cands.is_empty() {
             return Err(self.no_match(items, span, sc, qual));
         }
@@ -2635,6 +2719,40 @@ impl Checker {
                     unreachable!("`matches` lets only arguments fill slots")
                 };
                 let arg_span = arg.span;
+                // A namespace stands for a module where a record is expected.
+                if let Some(ns) = self.namespace_word(arg, sc) {
+                    let failure = match pty {
+                        Type::Record(..) if unbound_param(pty, &map) => {
+                            let shown = subst(pty, &map, true);
+                            let mut open = Vec::new();
+                            params_in(&shown, &mut open);
+                            open.retain(|p| !map.contains_key(p));
+                            open.dedup();
+                            let open: Vec<String> = open.iter().map(|p| format!("`{p}`")).collect();
+                            format!(
+                                "namespace `{ns}` cannot stand for `{shown}` in argument `{pname}` of `{}`: a namespace has no type of its own, and no earlier argument fixes {}. State the type first, with {} replaced by the type you mean: `LET ({pname} : {shown}) : {ns}`, then pass `({pname})`",
+                                label(cand.parts),
+                                open.join(", "),
+                                open.join(", "),
+                            )
+                        }
+                        Type::Record(..) => {
+                            match self.namespace_module(ns, &subst(pty, &map, false)) {
+                                Ok(ir) => {
+                                    lams.insert(i, ir);
+                                    continue;
+                                }
+                                Err(why) => why,
+                            }
+                        }
+                        _ => format!(
+                            "`{ns}` is a namespace, not a value, so it cannot fill argument `{pname}: {pty}` of `{}`; a namespace stands for a module only where a record type is expected",
+                            label(cand.parts)
+                        ),
+                    };
+                    failures.push(Diag::new(arg_span, failure));
+                    continue 'cand;
+                }
                 let inferred = args[i].get_or_insert_with(|| self.infer(arg, sc));
                 let aty = match inferred {
                     Ok((_, t)) => t.clone(),
@@ -2856,7 +2974,12 @@ impl Checker {
                 .filter_map(|v| near(w, v).map(|d| (d, v.to_string())))
                 .collect();
             scored.extend(self.similar_defs(w, true));
-            let hint = top_matches(scored);
+            let mut hint = top_matches(scored);
+            if self.namespaces.contains(w.as_str()) {
+                hint = format!(
+                    " `{w}` is a namespace: call its functions with `{w} -> call`, or pass it where a record type is expected to use it as a module (`by ({w})`, or `LET (m : Record Type) : {w}`).{hint}"
+                );
+            }
             return Diag::new(
                 *s,
                 format!(

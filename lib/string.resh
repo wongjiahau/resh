@@ -1,0 +1,6 @@
+# Operations on `String`, available without IMPORT. Pass `string` where a
+# module is expected: `max (names) by (string)`.
+NAMESPACE : string,
+
+## `less` when `a` sorts before `b`, by Unicode code point.
+FUNCTION ((a: String) compare (b: String)) RETURNS (Ordering) { NATIVE "compare" },

@@ -1,5 +1,8 @@
 # Standard library. Written in resh itself; bodies are native Rust.
 
+## The result of comparing two values; see the `int` and `string` namespaces.
+ENUM (Ordering) { less, equal, greater },
+
 ENUM (Sort Key) { name, size, modified time, extension, unsorted },
 
 ## Mirrors `ls`: recursive = -R, include hidden file = -A, directory itself = -d,

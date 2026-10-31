@@ -29,6 +29,7 @@ pub const NATIVES: &[&str] = &[
     "string_to_int",
     "join_with",
     "equals",
+    "compare",
     "unwrap",
     "flat_map",
     "map_result",
@@ -423,6 +424,19 @@ impl Interp {
                 _ => Err("unit: not a Size or Duration".into()),
             },
             "equals" => Ok(Value::Bool(a[0] == a[1])),
+            "compare" => {
+                let order = match (&a[0], &a[1]) {
+                    (Value::Int(x), Value::Int(y)) => x.cmp(y),
+                    (Value::Str(x), Value::Str(y)) => x.cmp(y),
+                    _ => return Err("compare: not two Ints or two Strings".into()),
+                };
+                let idx = match order {
+                    std::cmp::Ordering::Less => 0,
+                    std::cmp::Ordering::Equal => 1,
+                    std::cmp::Ordering::Greater => 2,
+                };
+                Ok(Value::Variant("Ordering".into(), idx, vec![]))
+            }
             "unwrap" => match &a[0] {
                 Value::Variant(_, 0, args) => Ok(args[0].clone()),
                 other => Err(format!("unwrap failed: {}", self.render(other, false))),

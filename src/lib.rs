@@ -17,6 +17,13 @@ use eval::Interp;
 
 const PRELUDE: &str = include_str!("../lib/prelude.resh");
 
+/// Namespaces loaded with the prelude, so they need no `IMPORT`, as
+/// `(namespace, source)`.
+const PRELUDE_NAMESPACES: &[(&str, &str)] = &[
+    ("int", include_str!("../lib/int.resh")),
+    ("string", include_str!("../lib/string.resh")),
+];
+
 /// Wrapper libraries shipped inside the binary, as `(namespace, source)`.
 pub const BUNDLED: &[(&str, &str)] = &[
     ("fd", include_str!("../lib/fd.resh")),
@@ -46,6 +53,10 @@ impl Session {
     pub fn new() -> Session {
         let mut s = Session::bare();
         s.run(PRELUDE).expect("prelude must be valid");
+        for (name, src) in PRELUDE_NAMESPACES {
+            s.load(name, src, Span { line: 1, col: 1 })
+                .expect("prelude namespaces must be valid");
+        }
         s
     }
 
@@ -99,8 +110,14 @@ impl Session {
                 ),
             ));
         };
+        self.load(name, &src, span)
+    }
+
+    /// Declares the library `name` with source `src`, which must start with
+    /// `NAMESPACE : name`.
+    fn load(&mut self, name: &str, src: &str, span: Span) -> Result<(), Diag> {
         let in_library = |d: Diag| Diag::new(d.span, format!("in library `{name}`: {}", d.msg));
-        let items = parser::parse_program(&src).map_err(in_library)?;
+        let items = parser::parse_program(src).map_err(in_library)?;
         let declares = items
             .iter()
             .any(|i| matches!(i, Item::Decl(Decl::Namespace { name: n, .. }) if n == name));

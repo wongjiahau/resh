@@ -472,7 +472,7 @@ mod qualifiers {
         let d = check_err(r#"git -> commit "x","#);
         assert!(
             d.msg
-                .contains("unknown namespace `git`; declared namespaces: none"),
+                .contains("unknown namespace `git`; declared namespaces: int, string"),
             "{}",
             d.msg
         );
@@ -2153,7 +2153,7 @@ mod symbols {
         let mut s = Session::new();
         assert_eq!(
             s.symbols(Some("x")).unwrap_err(),
-            "unknown namespace `x`; declared namespaces: none"
+            "unknown namespace `x`; declared namespaces: int, string"
         );
         s.run("NAMESPACE : b,\nFUNCTION (f) RETURNS (Int) { 1 }")
             .unwrap();
@@ -2161,7 +2161,7 @@ mod symbols {
             .unwrap();
         assert_eq!(
             s.symbols(Some("x")).unwrap_err(),
-            "unknown namespace `x`; declared namespaces: a, b"
+            "unknown namespace `x`; declared namespaces: a, b, int, string"
         );
     }
 }
@@ -2206,7 +2206,7 @@ mod symbols_cli {
         let (out, err) = repl_with_init(&[], ":symbols\n", init.to_str().unwrap());
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(err, "");
-        assert_eq!(out, "namespaces\n  prelude\n  git\n");
+        assert_eq!(out, "namespaces\n  prelude\n  git\n  int\n  string\n");
     }
 
     // `NAMESPACE` is per REPL entry, so the declaration shares its entry.
@@ -2233,9 +2233,12 @@ mod symbols_cli {
     #[test]
     fn bare_symbols_lists_namespaces() {
         let (out, _) = repl(&[], &format!("{DECL}:symbols\n"));
-        assert_eq!(out, "namespaces\n  prelude\n  demo\n");
+        assert_eq!(out, "namespaces\n  prelude\n  demo\n  int\n  string\n");
         let (out, _) = repl(&["--json"], &format!("{DECL}:symbols\n"));
-        assert_eq!(out, "{\"namespaces\":[\"prelude\",\"demo\"]}\n");
+        assert_eq!(
+            out,
+            "{\"namespaces\":[\"prelude\",\"demo\",\"int\",\"string\"]}\n"
+        );
     }
 
     #[test]
@@ -2641,7 +2644,6 @@ mod modules {
     use resh::Value;
 
     const ORDER: &str = r#"
-ENUM (Ordering) { less, equal, greater },
 RECORD (Order (T)) {
     FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering),
 },
@@ -2656,12 +2658,8 @@ FUNCTION (max (items: List (T)) by (order: Order (T))) RETURNS (T) {
 FUNCTION (reversed (order: Order (T))) RETURNS (Order (T)) {
     { FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) { order -> (b) compare (a) } }
 },
-## Orders 1 < 2 < 3 by hand; the prelude has no Int comparison yet.
 LET (ints : Order (Int)) : {
-    FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) {
-        IF (a . equals (b)) THEN (equal) ELSE : IF (a . equals 3) THEN (greater) ELSE :
-        IF (b . equals 3) THEN (less) ELSE : IF (a . equals 2) THEN (greater) ELSE (less)
-    }
+    FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { int -> (a) compare (b) }
 },
 "#;
 
@@ -2801,5 +2799,113 @@ MATCH (show) { { name (n) } : n },
         );
         let msg = run_err(&with_order("ints . equals (ints),"));
         assert!(msg.contains("`equals` cannot compare Order (Int)"), "{msg}");
+    }
+}
+
+mod namespaces_as_modules {
+    use super::{run, run_err};
+    use resh::Value;
+
+    const ORDER: &str = r#"
+RECORD (Order (T)) {
+    FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering),
+},
+FUNCTION (max (items: List (T)) by (order: Order (T))) RETURNS (T) {
+    LET (a) : items . item 0,
+    LET (b) : items . item 1,
+    LET (c) : items . item 2,
+    LET (ab) : MATCH (order -> (a) compare (b)) { less : b, (_) : a },
+    MATCH (order -> (ab) compare (c)) { less : c, (_) : ab }
+},
+FUNCTION (reversed (order: Order (T))) RETURNS (Order (T)) {
+    { FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) { order -> (b) compare (a) } }
+},
+FUNCTION (first (order: Order (T))) RETURNS (Int) { 1 },
+"#;
+
+    fn with_order(src: &str) -> String {
+        format!("{ORDER}\n{src}")
+    }
+
+    #[test]
+    fn the_prelude_compares_ints_and_strings() {
+        let src = "int -> (1) compare (2), string -> \"b\" compare \"a\",";
+        let rendered: Vec<String> = {
+            let mut s = resh::Session::new();
+            let vs = s.run(src).unwrap();
+            vs.iter().map(|v| s.render(v, false)).collect()
+        };
+        assert_eq!(rendered, vec!["less", "greater"]);
+    }
+
+    #[test]
+    fn a_namespace_is_passed_as_a_module() {
+        let src = with_order("max [3, 1, 2] by (int), max [\"b\", \"c\", \"a\"] by (string),");
+        assert_eq!(run(&src), vec![Value::Int(3), Value::Str("c".into())]);
+    }
+
+    #[test]
+    fn a_stated_type_fixes_a_namespace_module() {
+        let src = with_order(
+            "LET (ints : Order (Int)) : int,\nints -> (2) compare (1),\nmax [3, 1, 2] by (reversed (ints)),",
+        );
+        assert_eq!(run(&src).last(), Some(&Value::Int(1)));
+    }
+
+    #[test]
+    fn the_type_parameters_must_be_fixed_first() {
+        let msg = run_err(&with_order("first (int),"));
+        assert!(
+            msg.contains("namespace `int` cannot stand for `Order (T)`")
+                && msg.contains("no earlier argument fixes `T`")
+                && msg.contains("`LET (order : Order (T)) : int`"),
+            "{msg}"
+        );
+        let msg = run_err(&with_order("max [3, 1, 2] by (reversed (int)),"));
+        assert!(msg.contains("no earlier argument fixes `T`"), "{msg}");
+    }
+
+    #[test]
+    fn a_namespace_missing_a_member_is_named() {
+        let msg = run_err(&with_order("max [true, false, true] by (int),"));
+        assert!(
+            msg.contains("namespace `int` does not fit `Order (Boolean)`")
+                && msg.contains("`FUNCTION ((a: Boolean) compare (b: Boolean)) RETURNS (Ordering)` is wanted, but found `FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering)`"),
+            "{msg}"
+        );
+        let msg = run_err(
+            "RECORD (Show (T)) { FUNCTION ((a: T) shown) RETURNS (String) },\nLET (s : Show (Int)) : int,",
+        );
+        assert!(
+            msg.contains("`int` has no `FUNCTION ((a: Int) shown) RETURNS (String)`"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn a_record_with_fields_takes_no_namespace() {
+        let msg = run_err(
+            "RECORD (Named (T)) { name (String), FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) },\nLET (n : Named (Int)) : int,",
+        );
+        assert!(msg.contains("has the field `name (String)`"), "{msg}");
+    }
+
+    #[test]
+    fn a_variable_wins_over_a_namespace() {
+        let src = with_order(
+            "LET (int : Order (Int)) : { FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { equal } },\nmax [1, 2, 3] by (int),",
+        );
+        assert_eq!(run(&src).last(), Some(&Value::Int(1)));
+    }
+
+    #[test]
+    fn a_namespace_is_still_not_a_value() {
+        let msg = run_err("IMPORT : git, git.status,");
+        assert!(msg.contains("`git` is a namespace, not a value"), "{msg}");
+        assert!(msg.contains("`git -> status`"), "{msg}");
+        let msg = run_err("LET (x) : int,");
+        assert!(msg.contains("`int` is a namespace"), "{msg}");
+        let msg = run_err("count (int),");
+        assert!(msg.contains("`int` is a namespace, not a value"), "{msg}");
     }
 }
