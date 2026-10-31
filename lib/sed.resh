@@ -25,14 +25,14 @@ FUNCTION (scope: Scope) address -> String {
     MATCH (scope) {
         every line => "",
         line (n) => (n) to string,
-        from line (a) to line (b) => join (join ((a) to string) with ",") with ((b) to string),
+        from line (a) to line (b) => join (join (a . to string) with ",") with : b . to string,
         last line => "$",
         matching (pattern) => join (join "\\\t" with (pattern)) with "\t"
     }
 },
 
 FUNCTION substitute (pattern: String) with (replacement: String) flags (flags: String) -> String {
-    join (join (join (join "s\t" with (pattern)) with "\t") with (replacement)) with (join "\t" with (flags))
+    join (join (join (join "s\t" with (pattern)) with "\t") with (replacement)) with : join "\t" with (flags)
 },
 
 FUNCTION (edit: Edit) command -> String {
@@ -45,12 +45,12 @@ FUNCTION (edit: Edit) command -> String {
 
 FUNCTION (step: Step) script -> String {
     MATCH (step) {
-        in (scope) do (edit) => join ((scope) address) with ((edit) command)
+        in (scope) do (edit) => join (scope . address) with : edit . command
     }
 },
 
 FUNCTION preview (path: String) with (steps: List (Step)) -> Result (String) {
-    run ("sed", ["-E", *(flat map (steps) with ((s) => ["-e", (s) script])), path])
+    run ("sed", ["-E", *(flat map (steps) with : (s) => ["-e", s . script]), path])
 }
 
 # Usage (outside the namespace, wrap calls in a scope block):

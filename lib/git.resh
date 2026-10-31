@@ -44,11 +44,11 @@ FUNCTION (option: Status Option) argument -> List (String) {
 
 FUNCTION (option: Log Option) argument -> List (String) {
     MATCH (option) {
-        max count (n) => ["--max-count", (n) to string],
+        max count (n) => ["--max-count", n . to string],
         author (name) => ["--author", name],
         message matching (pattern) => ["--grep", pattern],
-        changed within (d) => [join "--since=" with (join ((d) seconds text) with " seconds ago")],
-        changed before (d) => [join "--until=" with (join ((d) seconds text) with " seconds ago")],
+        changed within (d) => [join "--since=" with : join (d . seconds text) with " seconds ago"],
+        changed before (d) => [join "--until=" with : join (d . seconds text) with " seconds ago"],
         no merge => ["--no-merges"],
         oldest first => ["--reverse"],
         first parent => ["--first-parent"]
@@ -62,15 +62,15 @@ FUNCTION (option: Diff Option) argument -> List (String) {
         name only => ["--name-only"],
         stat => ["--stat"],
         ignore whitespace => ["--ignore-all-space"],
-        context (n) => ["--unified", (n) to string]
+        context (n) => ["--unified", n . to string]
     }
 },
 
-FUNCTION (duration: Duration) seconds text -> String { ((duration) seconds) to string },
+FUNCTION (duration: Duration) seconds text -> String { duration . seconds . to string },
 
 FUNCTION status (options: Set (Status Option)) -> Result (List (String)) {
-    run ("git", ["status", "--porcelain=v1", *(flat map (options) with ((o) => (o) argument))])
-        . map _ with ((text) => (text) lines)
+    run ("git", ["status", "--porcelain=v1", *(flat map (options) with : (o) => (o) argument)])
+        . map _ with : (text) => (text) lines
 },
 
 FUNCTION status -> Result (List (String)) {
@@ -82,10 +82,10 @@ FUNCTION log (options: Set (Log Option)) touching (paths: List (String)) ->
 {
     run ("git", [
         "log", "--format=%h %s",
-        *(flat map (options) with ((o) => (o) argument)),
+        *(flat map (options) with : (o) => (o) argument),
         "--", *paths
     ])
-        . map _ with ((text) => (text) lines)
+        . map _ with : (text) => (text) lines
 },
 
 FUNCTION log (options: Set (Log Option)) -> Result (List (String)) {
@@ -97,7 +97,7 @@ FUNCTION log -> Result (List (String)) {
 },
 
 FUNCTION diff (options: Set (Diff Option)) touching (paths: List (String)) -> Result (String) {
-    run ("git", ["diff", *(flat map (options) with ((o) => (o) argument)), "--", *paths])
+    run ("git", ["diff", *(flat map (options) with : (o) => (o) argument), "--", *paths])
 },
 
 FUNCTION diff (options: Set (Diff Option)) -> Result (String) {

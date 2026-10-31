@@ -100,9 +100,23 @@ print (1 mb)         # a call is several items, parentheses required
 - Both take whole runs, including symbol words like `=>`. In a MATCH arm or a
   lambda, a body that uses `.` needs parentheses: `(t) => (t . lines)`.
 
+Prefer them to parentheses. A value in a call's first slot goes before a `.`,
+and a long value in its last slot after a `:`; both give the same tree as the
+parenthesized form:
+
+| Parenthesized | Preferred |
+| --- | --- |
+| `(n) to string` | `n . to string` |
+| `((parts) item 1) to int` | `parts . item 1 . to int` |
+| `flat map (xs) with ((x) => [x, x])` | `flat map (xs) with : (x) => [x, x]` |
+| `{ timeout (2 minutes) }` | `{ timeout : 2 minutes }` |
+
+Keep the parentheses when a call has several slots of the same kind, so they
+read alike: `size between (1 mb) and (5 gb)`.
+
 ```
 run ("git", ["log"]) . map _ with ((text) => (text) lines)
-IF ((n) equals 0) THEN "zero" ELSE : IF ((n) equals 1) THEN "one" ELSE : "many"
+IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ```
 
 ## Namespaces
@@ -150,7 +164,7 @@ variants and types are written unqualified.
 
 ```
 rg.{
-    search "error" in "src" { match (whole word), case (insensitive) },
+    search "error" in "src" { match : whole word, case (insensitive) },
     search "TODO",
 }
 ```
@@ -237,7 +251,7 @@ branches must have the same type. Chain it to the right with `:`, which fills
 the `ELSE` slot with the rest:
 
 ```
-IF ((n) equals 0) THEN "zero" ELSE : IF ((n) equals 1) THEN "one" ELSE : "many"
+IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ```
 
 `MATCH (value) { pattern => result, ... }` takes the value to match either after
@@ -285,7 +299,7 @@ Record literals are unnamed (and so are set literals). Entries are anyfix phrase
 
 ```
 { host "example.com", port 443 }
-{ timeout (2 minutes) }
+{ timeout : 2 minutes }
 {}
 ```
 
@@ -387,7 +401,7 @@ A function value is written `(x) => body`, reusing the arrow from `MATCH` arms.
 Being a slot value of more than one token, it is parenthesized:
 
 ```
-flat map (patterns) with ((p) => ["--exclude", p])
+flat map (patterns) with : (p) => ["--exclude", p]
 ```
 
 - A lambda takes exactly one parameter name, and is written only as a
@@ -536,16 +550,16 @@ FUNCTION (option: Find Option) argument -> List (String) {
     MATCH (option) {
         include hidden file => ["--hidden"],
         extension (e) => ["--extension", e],
-        max depth (n) => ["--max-depth", (n) to string],
-        exclude (patterns) => flat map (patterns) with ((p) => ["--exclude", p])
+        max depth (n) => ["--max-depth", n . to string],
+        exclude (patterns) => flat map (patterns) with : (p) => ["--exclude", p]
     }
 },
 
 FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
     Result (List (String))
 {
-    run ("fd", [*(flat map (options) with ((o) => (o) argument)), pattern, dir])
-        . map _ with ((text) => (text) lines)
+    run ("fd", [*(flat map (options) with : (o) => (o) argument), pattern, dir])
+        . map _ with : (text) => (text) lines
 }
 ```
 

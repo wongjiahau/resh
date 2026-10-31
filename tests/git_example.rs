@@ -69,7 +69,7 @@ fn log_options_and_paths() {
 #[test]
 fn log_since_uses_duration_units() {
     assert_eq!(
-        argv("git.{ log { changed within (7 days) } },"),
+        argv("git.{ log { changed within : 7 days } },"),
         strs(&["log", "--format=%h %s", "--since=604800 seconds ago", "--"])
     );
 }

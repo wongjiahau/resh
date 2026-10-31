@@ -42,14 +42,14 @@ FUNCTION (option: Search Option) argument -> List (String) {
         include hidden file => ["--hidden"],
         ignore nothing => ["--no-ignore"],
         follow symlink => ["--follow"],
-        file type (ts) => flat map (ts) with ((t) => ["--type", t]),
-        glob (gs) => flat map (gs) with ((g) => ["--glob", g]),
-        max depth (n) => ["--max-depth", (n) to string],
-        max count (n) => ["--max-count", (n) to string],
-        max file size (s) => ["--max-filesize", ((s) bytes) to string],
-        context (n) => ["--context", (n) to string],
-        before context (n) => ["--before-context", (n) to string],
-        after context (n) => ["--after-context", (n) to string]
+        file type (ts) => flat map (ts) with : (t) => ["--type", t],
+        glob (gs) => flat map (gs) with : (g) => ["--glob", g],
+        max depth (n) => ["--max-depth", n . to string],
+        max count (n) => ["--max-count", n . to string],
+        max file size (s) => ["--max-filesize", s . bytes . to string],
+        context (n) => ["--context", n . to string],
+        before context (n) => ["--before-context", n . to string],
+        after context (n) => ["--after-context", n . to string]
     }
 },
 
@@ -59,12 +59,12 @@ RECORD Match { path (String), line (Int), column (Int), text (String) },
 ## Parses one `path:line:column:text` line into a `Match`; a context line
 ## (`path-line-text`) or a `--` separator has no such shape and gives `[]`.
 FUNCTION (output: String) match -> List (Match) {
-    LET parts : (output) split on ":" at most 4,
-    IF ((count (parts)) equals 4) THEN (
-        MATCH (((parts) item 1) to int) {
-            ok (line) => MATCH (((parts) item 2) to int) {
+    LET parts : output . split on ":" at most 4,
+    IF (count (parts) . equals 4) THEN (
+        MATCH (parts . item 1 . to int) {
+            ok (line) => MATCH (parts . item 2 . to int) {
                 ok (column) => [
-                    { path ((parts) item 0), line (line), column (column), text ((parts) item 3) }
+                    { path : parts . item 0, line (line), column (column), text : parts . item 3 }
                         AS (Match)
                 ],
                 error (_) => []
@@ -80,7 +80,7 @@ FUNCTION search (pattern: String) in (dir: String) (options: Set (Search Option)
     Result (List (Match))
 {
     search raw (pattern) in (dir) (options)
-        . map _ with ((lines) => flat map (lines) with ((l) => (l) match))
+        . map _ with : (lines) => flat map (lines) with : (l) => (l) match
 },
 
 FUNCTION search raw (pattern: String) in (dir: String) (options: Set (Search Option)) ->
@@ -88,10 +88,10 @@ FUNCTION search raw (pattern: String) in (dir: String) (options: Set (Search Opt
 {
     run ("rg", [
         "--no-heading", "--line-number", "--column",
-        *(flat map (options) with ((o) => (o) argument)),
+        *(flat map (options) with : (o) => (o) argument),
         "--", pattern, dir
     ])
-        . map _ with ((text) => (text) lines)
+        . map _ with : (text) => (text) lines
 },
 
 FUNCTION search (pattern: String) in (dir: String) -> Result (List (Match)) {

@@ -40,7 +40,7 @@ FUNCTION describe (s: Shape) -> String {
 #[test]
 fn anyfix_constructors_and_match() {
     let src =
-        format!("{SHAPES}\ndescribe (3.0 by 4.0),\ndescribe (circle 1.0),\ndescribe (empty),");
+        format!("{SHAPES}\ndescribe : 3.0 by 4.0,\ndescribe : circle 1.0,\ndescribe (empty),");
     assert_eq!(
         run(&src),
         vec![
@@ -108,7 +108,7 @@ fn dot_takes_at_most_one_placeholder() {
 fn user_function_with_infix_signature_and_generics() {
     let src = r#"
 FUNCTION (a: List (T)) has more than (b: List (T)) -> Boolean {
-    IF ((count (a)) equals (count (b))) THEN (false) ELSE (true)
+    IF (count (a) . equals : count (b)) THEN (false) ELSE (true)
 },
 [1, 2, 3] has more than [1],
 "#;
@@ -198,7 +198,7 @@ FUNCTION f (b: Banana) -> Int { 2 }
     assert!(msg.contains("ambiguous call"), "{msg}");
     assert!(msg.contains("{ ... } AS Record Name"), "{msg}");
     assert_eq!(
-        run(&format!("{src},\nf ({{ x 1 }} AS (Banana)),")),
+        run(&format!("{src},\nf : {{ x 1 }} AS (Banana),")),
         vec![Value::Int(2)]
     );
 }
@@ -481,7 +481,7 @@ FUNCTION helper -> Int { 41 },
 FUNCTION find (pattern: String) in (dir: String) -> String {
     join (pattern) with (dir)
 },
-FUNCTION find (pattern: String) -> Int { (helper) equals 41 . IF _ THEN (count [pattern]) ELSE 0 },
+FUNCTION find (pattern: String) -> Int { helper . equals 41 . IF _ THEN (count [pattern]) ELSE 0 },
 "#;
 
     fn session_with_fd() -> Session {
@@ -1088,12 +1088,12 @@ mod lambdas {
     #[test]
     fn flat_map_with_a_lambda_checks_and_evaluates() {
         assert_eq!(
-            run("LET xs : [1, 2, 3],\nflat map (xs) with ((x) => [x, x]),"),
+            run("LET xs : [1, 2, 3],\nflat map (xs) with : (x) => [x, x],"),
             vec![ints(&[1, 1, 2, 2, 3, 3])]
         );
         // The result type comes from the lambda body.
         assert_eq!(
-            run("flat map ([\"a\"]) with ((s) => [s, \"!\"]),"),
+            run("flat map ([\"a\"]) with : (s) => [s, \"!\"],"),
             vec![Value::List(vec![
                 Value::Str("a".into()),
                 Value::Str("!".into())
@@ -1104,7 +1104,7 @@ mod lambdas {
     #[test]
     fn lambda_captures_variables_in_scope() {
         assert_eq!(
-            run("LET k : 7,\nflat map ([1, 2]) with ((x) => [x, k]),"),
+            run("LET k : 7,\nflat map ([1, 2]) with : (x) => [x, k],"),
             vec![ints(&[1, 7, 2, 7])]
         );
     }
@@ -1112,7 +1112,7 @@ mod lambdas {
     #[test]
     fn lambda_parameter_type_comes_from_the_earlier_argument() {
         // `x` is an Int, so it cannot be joined as a String.
-        let msg = run_err("flat map ([1]) with ((x) => [join (x) with \"a\"]),");
+        let msg = run_err("flat map ([1]) with : (x) => [join (x) with \"a\"],");
         // (`join` is overloaded, so the message lists its candidates.)
         assert!(msg.contains("join <arg> with <arg>"), "{msg}");
         assert!(msg.contains("expects String, found Int"), "{msg}");
@@ -1133,13 +1133,13 @@ mod lambdas {
     fn bare_lambda_has_no_type_and_non_functions_reject_it() {
         let msg = run_err("LET f : ((x) => x),");
         assert!(msg.contains("no type of its own"), "{msg}");
-        let msg = run_err("count ((x) => x),");
+        let msg = run_err("count : (x) => x,");
         assert!(msg.contains("lambda"), "{msg}");
     }
 
     #[test]
     fn lambda_needs_exactly_one_parameter_name() {
-        let msg = run_err("flat map ([1]) with ((x y) => [x]),");
+        let msg = run_err("flat map ([1]) with : (x y) => [x],");
         assert!(msg.contains("exactly one parameter name"), "{msg}");
     }
 }
@@ -1159,7 +1159,7 @@ mod tuples_and_spread {
         );
         // The operand may be a parenthesized call, and `[]` spreads to nothing.
         assert_eq!(
-            run("[*(flat map ([\"a\"]) with ((s) => [s, s])), *[]],"),
+            run("[*(flat map ([\"a\"]) with : (s) => [s, s]), *[]],"),
             vec![strs(&["a", "a"])]
         );
     }
@@ -1243,7 +1243,7 @@ mod prelude_functions {
     #[test]
     fn flat_map_over_a_set_returns_a_list() {
         let src = format!(
-            "{COLORS}FUNCTION twice (cs: Set (Color)) -> List (Color) {{ flat map (cs) with ((c) => [c, c]) }},\ntwice {{ red, green }},"
+            "{COLORS}FUNCTION twice (cs: Set (Color)) -> List (Color) {{ flat map (cs) with : (c) => [c, c] }},\ntwice {{ red, green }},"
         );
         assert_eq!(render(&src), "[red, red, green, green]");
     }
@@ -1251,7 +1251,7 @@ mod prelude_functions {
     #[test]
     fn flat_map_over_a_set_type_checks_the_lambda_body() {
         let src = format!(
-            "{COLORS}FUNCTION bad (cs: Set (Color)) -> List (Int) {{ flat map (cs) with ((c) => 1) }}"
+            "{COLORS}FUNCTION bad (cs: Set (Color)) -> List (Int) {{ flat map (cs) with : (c) => 1 }}"
         );
         let msg = run_err(&src);
         assert!(msg.contains("flat map"), "{msg}");
@@ -1259,30 +1259,30 @@ mod prelude_functions {
 
     #[test]
     fn flat_map_on_a_non_collection_is_an_error() {
-        let msg = run_err("flat map (1) with ((x) => [x]),");
+        let msg = run_err("flat map (1) with : (x) => [x],");
         assert!(msg.contains("flat map"), "{msg}");
     }
 
     #[test]
     fn int_to_string() {
-        assert_eq!(run("(42) to string,"), vec![Value::Str("42".into())]);
+        assert_eq!(run("42 . to string,"), vec![Value::Str("42".into())]);
     }
 
     #[test]
     fn float_to_string() {
-        assert_eq!(run("(1.5) to string,"), vec![Value::Str("1.5".into())]);
+        assert_eq!(run("1.5 . to string,"), vec![Value::Str("1.5".into())]);
     }
 
     #[test]
     fn to_string_rejects_other_types() {
-        let msg = run_err("(\"a\") to string,");
+        let msg = run_err("\"a\" . to string,");
         assert!(msg.contains("to string"), "{msg}");
     }
 
     #[test]
     fn map_result_applies_to_ok() {
         assert_eq!(
-            render("map (ok 1) with ((n) => (n) to string),"),
+            render("map (ok 1) with : (n) => (n) to string,"),
             "ok (\"1\")"
         );
     }
@@ -1290,14 +1290,14 @@ mod prelude_functions {
     #[test]
     fn map_result_keeps_error() {
         let src =
-            "LET r : read file \"/definitely/not/here\",\nmap (r) with ((s) => count ((s) lines)),";
+            "LET r : read file \"/definitely/not/here\",\nmap (r) with : (s) => count : s . lines,";
         let out = render(src);
         assert!(out.starts_with("error"), "{out}");
     }
 
     #[test]
     fn map_result_needs_a_result() {
-        let msg = run_err("map ([1]) with ((n) => n),");
+        let msg = run_err("map ([1]) with : (n) => n,");
         assert!(msg.contains("map"), "{msg}");
     }
 
@@ -1312,7 +1312,7 @@ mod prelude_functions {
     #[test]
     fn join_lists() {
         assert_eq!(
-            run("join ([1, 2]) with ([3]),"),
+            run("join ([1, 2]) with : [3],"),
             vec![Value::List(vec![
                 Value::Int(1),
                 Value::Int(2),
@@ -1323,9 +1323,9 @@ mod prelude_functions {
 
     #[test]
     fn join_mismatched_types_is_an_error() {
-        let msg = run_err("join ([1]) with ([\"a\"]),");
+        let msg = run_err("join ([1]) with : [\"a\"],");
         assert!(msg.contains("join"), "{msg}");
-        let msg = run_err("join (\"a\") with ([\"a\"]),");
+        let msg = run_err("join (\"a\") with : [\"a\"],");
         assert!(msg.contains("join"), "{msg}");
     }
 }
@@ -1364,14 +1364,14 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
     #[test]
     fn size_at_least_one_mb_type_checks() {
         let v = session()
-            .run(r#"fd.find "" in "." { size at least (1 mb) },"#)
+            .run(r#"fd.find "" in "." { size at least : 1 mb },"#)
             .unwrap_or_else(|d| panic!("{d}"));
         assert_eq!(v, vec![Value::Int(1)]);
     }
 
     #[test]
     fn size_at_least_five_days_is_a_type_error() {
-        let msg = match session().run(r#"fd.find "" in "." { size at least (5 days) },"#) {
+        let msg = match session().run(r#"fd.find "" in "." { size at least : 5 days },"#) {
             Ok(v) => panic!("expected an error, got {v:?}"),
             Err(d) => d.msg,
         };
@@ -1381,52 +1381,52 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
     #[test]
     fn duration_units_fit_duration_slots() {
         session()
-            .run(r#"fd.find "" in "." { changed within (2 hours), max depth 1 },"#)
+            .run(r#"fd.find "" in "." { changed within : 2 hours, max depth 1 },"#)
             .unwrap_or_else(|d| panic!("{d}"));
         session()
-            .run(r#"fd.find "" in "." { changed within ((3 days) ago) },"#)
+            .run(r#"fd.find "" in "." { changed within : 3 days . ago },"#)
             .unwrap_or_else(|d| panic!("{d}"));
     }
 
     #[test]
     fn size_accessor_gives_bytes() {
-        assert_eq!(eval("(1 kb) bytes,"), Value::Int(1_000));
-        assert_eq!(eval("(2 mb) bytes,"), Value::Int(2_000_000));
-        assert_eq!(eval("(3 gb) bytes,"), Value::Int(3_000_000_000));
+        assert_eq!(eval("1 kb . bytes,"), Value::Int(1_000));
+        assert_eq!(eval("2 mb . bytes,"), Value::Int(2_000_000));
+        assert_eq!(eval("3 gb . bytes,"), Value::Int(3_000_000_000));
     }
 
     #[test]
     fn duration_accessor_gives_seconds() {
-        assert_eq!(eval("(90 seconds) seconds,"), Value::Int(90));
-        assert_eq!(eval("(2 minutes) seconds,"), Value::Int(120));
-        assert_eq!(eval("(1 hours) seconds,"), Value::Int(3_600));
-        assert_eq!(eval("(5 days) seconds,"), Value::Int(432_000));
-        assert_eq!(eval("((5 days) ago) seconds,"), Value::Int(432_000));
+        assert_eq!(eval("90 seconds . seconds,"), Value::Int(90));
+        assert_eq!(eval("2 minutes . seconds,"), Value::Int(120));
+        assert_eq!(eval("1 hours . seconds,"), Value::Int(3_600));
+        assert_eq!(eval("5 days . seconds,"), Value::Int(432_000));
+        assert_eq!(eval("5 days . ago . seconds,"), Value::Int(432_000));
     }
 
     #[test]
     fn accessor_name_is_resolved_by_argument_type() {
         // `seconds` is both a constructor (Int) and an accessor (Duration).
         assert_eq!(
-            eval("((10 seconds) seconds) to string,"),
+            eval("10 seconds . seconds . to string,"),
             Value::Str("10".into())
         );
     }
 
     #[test]
     fn wrong_unit_argument_is_a_type_error() {
-        let msg = match Session::new().run("(1 mb) seconds,") {
+        let msg = match Session::new().run("1 mb . seconds,") {
             Ok(v) => panic!("expected an error, got {v:?}"),
             Err(d) => d.msg,
         };
         assert!(msg.contains("seconds") && msg.contains("Size"), "{msg}");
-        let msg = match Session::new().run("(1 days) bytes,") {
+        let msg = match Session::new().run("1 days . bytes,") {
             Ok(v) => panic!("expected an error, got {v:?}"),
             Err(d) => d.msg,
         };
         assert!(msg.contains("bytes") && msg.contains("Duration"), "{msg}");
-        assert!(Session::new().run("(\"a\") mb,").is_err());
-        assert!(Session::new().run("(1 mb) ago,").is_err());
+        assert!(Session::new().run("\"a\" . mb,").is_err());
+        assert!(Session::new().run("1 mb . ago,").is_err());
     }
 }
 
@@ -1590,7 +1590,7 @@ mod fd_example {
     fn usage_kind_size_duration() {
         assert_eq!(
             argv(
-                r#"fd.find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) },"#
+                r#"fd.find "test" in "." { kind (file), size at least : 1 mb, changed within : 7 days },"#
             ),
             strs(&[
                 "--type",
@@ -1610,7 +1610,7 @@ mod fd_example {
     fn usage_glob_hidden_exclude() {
         assert_eq!(
             argv(
-                r#"fd.find "*.log" in "/var" { match (fd.glob), include hidden file, exclude ["old"] },"#
+                r#"fd.find "*.log" in "/var" { match : fd.glob, include hidden file, exclude ["old"] },"#
             ),
             strs(&[
                 "--glob",
@@ -1672,11 +1672,11 @@ mod fd_example {
             .unwrap_err();
         assert!(e.msg.contains("max depth"), "{}", e.msg);
         let e = s
-            .run(r#"fd.find "" in "." { case (fd.sensitive), case (fd.insensitive) },"#)
+            .run(r#"fd.find "" in "." { case : fd.sensitive, case : fd.insensitive },"#)
             .unwrap_err();
         assert!(e.msg.contains("case"), "{}", e.msg);
         let e = s
-            .run(r#"fd.find "" in "." { size at least (5 days) },"#)
+            .run(r#"fd.find "" in "." { size at least : 5 days },"#)
             .unwrap_err();
         assert!(e.msg.contains("Size"), "{}", e.msg);
         let e = s.run(r#"find "x","#).unwrap_err();
@@ -1778,7 +1778,7 @@ mod rg_example {
     fn usage_word_case_context() {
         assert_eq!(
             argv(
-                r#"rg.search "error" in "." { match (rg.whole word), case (rg.insensitive), context 2 },"#
+                r#"rg.search "error" in "." { match : rg.whole word, case : rg.insensitive, context 2 },"#
             ),
             expected(
                 &["--word-regexp", "--ignore-case", "--context", "2"],
@@ -1791,7 +1791,7 @@ mod rg_example {
     fn usage_hidden_glob_size() {
         assert_eq!(
             argv(
-                r#"rg.search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size (1 mb) },"#
+                r#"rg.search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size : 1 mb },"#
             ),
             expected(
                 &[
@@ -1846,7 +1846,7 @@ mod rg_example {
         assert_eq!(
             argv(
                 r#"rg.{
-                    search "error" in "." { match (whole word), case (insensitive), context 2 },
+                    search "error" in "." { match : whole word, case (insensitive), context 2 },
                 }"#
             ),
             expected(
@@ -1863,7 +1863,7 @@ mod rg_example {
         let e = s.run(r#"search "x","#).unwrap_err();
         assert!(e.msg.contains("rg."), "{}", e.msg);
         let e = s
-            .run(r#"search "x" in "." { match (whole word) },"#)
+            .run(r#"search "x" in "." { match : whole word },"#)
             .unwrap_err();
         assert!(e.msg.contains("rg."), "{}", e.msg);
     }
@@ -1876,7 +1876,7 @@ mod rg_example {
             .unwrap_err();
         assert!(e.msg.contains("max count"), "{}", e.msg);
         let e = s
-            .run(r#"rg.search "" in "." { max file size (5 days) },"#)
+            .run(r#"rg.search "" in "." { max file size : 5 days },"#)
             .unwrap_err();
         assert!(e.msg.contains("Size"), "{}", e.msg);
         let e = s.run(r#"search "x","#).unwrap_err();
@@ -1947,7 +1947,7 @@ mod statements {
             vec![Value::Int(99)]
         );
         assert_eq!(
-            s.run("zz.{ (5) to string, }").unwrap(),
+            s.run("zz.{ 5 . to string, }").unwrap(),
             vec![Value::Str("5".into())]
         );
     }
@@ -2225,14 +2225,14 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) },
     #[test]
     fn nests_to_any_depth_and_binds_inside() {
         let src = format!(
-            "{}\nf (deep (deep (w (green)))),",
+            "{}\nf : deep : deep : w (green),",
             with(
-                "w (red) => 1, w (green) => 2, pair (a) and (b) => 3, deep (deep (w (red))) => 4, deep (deep (w (green))) => 5, deep (_) => 6"
+                "w (red) => 1, w (green) => 2, pair (a) and (b) => 3, deep (deep : w (red)) => 4, deep (deep : w (green)) => 5, deep (_) => 6"
             )
         );
         assert_eq!(run(&src).last(), Some(&Value::Int(5)));
         let src = format!(
-            "{}\nf (deep (w (red))),",
+            "{}\nf : deep : w (red),",
             with(
                 "w (_) => 1, pair (a) and (b) => 3, deep (deep (_)) => 4, deep (w (_)) => 7, deep (pair (_) and (_)) => 8"
             )
@@ -2243,7 +2243,7 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) },
     #[test]
     fn two_nested_slots_in_one_arm_are_checked_as_a_matrix() {
         let arms = "w (_) => 0, deep (_) => 0, pair (red) and (red) => 1, pair (green) and (green) => 2, pair (red) and (green) => 3, pair (green) and (red) => 4";
-        let src = format!("{}\nf (pair (green) and (red)),", with(arms));
+        let src = format!("{}\nf : pair (green) and (red),", with(arms));
         assert_eq!(run(&src).last(), Some(&Value::Int(4)));
         let missing = "w (_) => 0, deep (_) => 0, pair (red) and (red) => 1, pair (green) and (green) => 2, pair (red) and (green) => 3";
         let msg = run_err(&with(missing));
@@ -2256,7 +2256,7 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) },
     #[test]
     fn missing_cases_name_the_deepest_hole() {
         let msg = run_err(&with(
-            "w (_) => 0, pair (_) and (_) => 0, deep (deep (w (red))) => 1",
+            "w (_) => 0, pair (_) and (_) => 0, deep (deep : w (red)) => 1",
         ));
         assert!(
             msg.contains("deep (w (_))") && msg.contains("deep (pair (_) and (_))"),
@@ -2281,7 +2281,7 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) },
     #[test]
     fn a_wildcard_arm_after_partial_arms_is_exhaustive() {
         let src = format!(
-            "{}\nf (w (green)),",
+            "{}\nf : w (green),",
             with("w (red) => 1, deep (deep (_)) => 2, _ => 3")
         );
         assert_eq!(run(&src).last(), Some(&Value::Int(3)));
@@ -2314,7 +2314,7 @@ ENUM Shape { dot (Dot), blank },
     #[test]
     fn a_record_pattern_nests_inside_an_enum_pattern() {
         let src = format!(
-            "{}f (dot (d)),",
+            "{}f : dot (d),",
             with(
                 "dot ({ color (red), size (n) }) => n, dot ({ color (green), size (_) }) => 0, blank => 9"
             )
@@ -2393,7 +2393,7 @@ mod sed_example {
     fn replace_all_on_every_line() {
         assert_eq!(
             argv(
-                r#"sed.{ preview "f.txt" with [ in (every line) do (replace all "a/b" with "c") ] },"#
+                r#"sed.{ preview "f.txt" with [ in (every line) do : replace all "a/b" with "c" ] },"#
             ),
             expected(&["s\ta/b\tc\tg"])
         );
@@ -2404,10 +2404,10 @@ mod sed_example {
         assert_eq!(
             argv(
                 r#"sed.{ preview "f.txt" with [
-                    in (from line 1 to line 10) do (replace first "x" with "y"),
-                    in (matching "^#") do (delete line),
-                    in (last line) do (delete line),
-                    in (line 3) do (delete line)
+                    in (from line 1 to line 10) do : replace first "x" with "y",
+                    in (matching "^#") do : delete line,
+                    in (last line) do : delete line,
+                    in (line 3) do : delete line
                 ] },"#
             ),
             expected(&["1,10s\tx\ty\t", "\\\t^#\td", "$d", "3d"])
@@ -2438,7 +2438,7 @@ mod anyfix_forms {
 
     #[test]
     fn if_chains_to_the_right_with_colon() {
-        let sign = "FUNCTION sign (n: Int) -> String {\n    IF ((n) equals 0) THEN \"zero\" ELSE : IF ((n) equals 1) THEN \"one\" ELSE : \"many\"\n},\n";
+        let sign = "FUNCTION sign (n: Int) -> String {\n    IF (n . equals 0) THEN \"zero\" ELSE : IF (n . equals 1) THEN \"one\" ELSE : \"many\"\n},\n";
         assert_eq!(
             run(&format!("{sign}sign 0, sign 1, sign 5,")),
             vec![
@@ -2463,7 +2463,7 @@ mod anyfix_forms {
 
     #[test]
     fn as_states_a_type() {
-        let src = "RECORD Apple { x (Int) },\nFUNCTION f (a: Apple) -> Int { 1 },\nf ({ x 1 } AS (Apple)),";
+        let src = "RECORD Apple { x (Int) },\nFUNCTION f (a: Apple) -> Int { 1 },\nf : { x 1 } AS (Apple),";
         assert_eq!(run(src), vec![Value::Int(1)]);
     }
 

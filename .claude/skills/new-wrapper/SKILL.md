@@ -17,6 +17,9 @@ bundled ones. It needs the `resh` binary on `PATH`.
    - No "of" in names: `(self) file name`, not `file name of (self)`.
    - Every word of a type name is capitalised: `Sort Key`, `Entry Kind`.
    - Type names are anyfix like functions: `List (Entry)`, `Result (T)`.
+   - A variable fills a slot in parentheses, but prefer `.` for a call's first
+     slot and `:` for a long last one: `n . to string`,
+     `flat map (options) with : (o) => (o) argument`.
 2. **Learn the tool.** Run `<tool> --help`, `<tool> <subcommand> --help` and
    `man <tool>` (all read-only). Pick the commands and flags people actually use;
    don't mirror every flag. Prefer machine-readable output flags (`--porcelain`,

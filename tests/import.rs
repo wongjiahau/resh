@@ -107,7 +107,7 @@ fn raw_unwraps_results_and_unescapes_strings() {
     s.set_runner(Box::new(|_, _| Ok("a\nb\n".to_string())));
     let mut seen = Vec::new();
     s.run_with(
-        "run (\"x\", []),\nrun (\"x\", []) . map _ with ((t) => (t) lines),",
+        "run (\"x\", []),\nrun (\"x\", []) . map _ with : (t) => (t) lines,",
         &mut |i, v| seen.push(i.raw(v)),
     )
     .unwrap();
@@ -118,7 +118,7 @@ fn raw_unwraps_results_and_unescapes_strings() {
 #[test]
 fn adjacent_arguments_error_shows_the_arguments_and_how_to_fix() {
     let err = session()
-        .run("IMPORT git,\ngit.log { max count 1 } touching (\"a\" \"b\"),")
+        .run("IMPORT git,\ngit.log { max count 1 } touching : \"a\" \"b\",")
         .unwrap_err();
     assert!(err.msg.contains("`\"a\" \"b\"`"), "{}", err.msg);
     assert!(

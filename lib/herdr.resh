@@ -57,7 +57,7 @@ FUNCTION (option: Create Option) argument -> List (String) {
 
 FUNCTION (option: Split Option) argument -> List (String) {
     MATCH (option) {
-        ratio (r) => ["--ratio", (r) to string],
+        ratio (r) => ["--ratio", r . to string],
         start in (path) => ["--cwd", path],
         take focus => ["--focus"],
         keep focus => ["--no-focus"]
@@ -66,23 +66,23 @@ FUNCTION (option: Split Option) argument -> List (String) {
 
 FUNCTION (option: Read Option) argument -> List (String) {
     MATCH (option) {
-        source (s) => ["--source", (s) herdr name],
-        lines (n) => ["--lines", (n) to string],
+        source (s) => ["--source", s . herdr name],
+        lines (n) => ["--lines", n . to string],
         ansi => ["--format", "ansi"]
     }
 },
 
 FUNCTION (option: Wait Option) argument -> List (String) {
     MATCH (option) {
-        timeout (d) => ["--timeout", (d) milliseconds text]
+        timeout (d) => ["--timeout", d . milliseconds text]
     }
 },
 
 FUNCTION (option: Prompt Option) argument -> List (String) {
     MATCH (option) {
         wait => ["--wait"],
-        until (state) => ["--until", (state) herdr name],
-        give up after (d) => ["--timeout", (d) milliseconds text]
+        until (state) => ["--until", state . herdr name],
+        give up after (d) => ["--timeout", d . milliseconds text]
     }
 },
 
@@ -109,7 +109,7 @@ FUNCTION (kind: Agent Kind) herdr name -> String {
 
 ## herdr takes milliseconds; a `Duration` is whole seconds, so append three zeros.
 FUNCTION (duration: Duration) milliseconds text -> String {
-    join (((duration) seconds) to string) with "000"
+    join (duration . seconds . to string) with "000"
 },
 
 # ---------- inspect ----------
@@ -152,7 +152,7 @@ FUNCTION get agent (target: String) -> Result (String) {
 
 ## Terminal output of a pane, as text.
 FUNCTION read pane (id: String) (options: Set (Read Option)) -> Result (String) {
-    run ("herdr", ["pane", "read", id, *(flat map (options) with ((o) => (o) argument))])
+    run ("herdr", ["pane", "read", id, *(flat map (options) with : (o) => (o) argument)])
 },
 
 FUNCTION read pane (id: String) -> Result (String) {
@@ -160,7 +160,7 @@ FUNCTION read pane (id: String) -> Result (String) {
 },
 
 FUNCTION read agent (target: String) (options: Set (Read Option)) -> Result (String) {
-    run ("herdr", ["agent", "read", target, *(flat map (options) with ((o) => (o) argument))])
+    run ("herdr", ["agent", "read", target, *(flat map (options) with : (o) => (o) argument)])
 },
 
 FUNCTION read agent (target: String) -> Result (String) {
@@ -170,11 +170,11 @@ FUNCTION read agent (target: String) -> Result (String) {
 # ---------- layout ----------
 
 FUNCTION create workspace (options: Set (Create Option)) -> Result (String) {
-    run ("herdr", ["workspace", "create", *(flat map (options) with ((o) => (o) argument))])
+    run ("herdr", ["workspace", "create", *(flat map (options) with : (o) => (o) argument)])
 },
 
 FUNCTION create tab (options: Set (Create Option)) -> Result (String) {
-    run ("herdr", ["tab", "create", *(flat map (options) with ((o) => (o) argument))])
+    run ("herdr", ["tab", "create", *(flat map (options) with : (o) => (o) argument)])
 },
 
 FUNCTION create tab in workspace (workspace: String) (options: Set (Create Option)) ->
@@ -182,7 +182,7 @@ FUNCTION create tab in workspace (workspace: String) (options: Set (Create Optio
 {
     run ("herdr", [
         "tab", "create", "--workspace", workspace,
-        *(flat map (options) with ((o) => (o) argument))
+        *(flat map (options) with : (o) => (o) argument)
     ])
 },
 
@@ -190,8 +190,8 @@ FUNCTION split pane (id: String) (direction: Direction) (options: Set (Split Opt
     Result (String)
 {
     run ("herdr", [
-        "pane", "split", id, "--direction", (direction) herdr name,
-        *(flat map (options) with ((o) => (o) argument))
+        "pane", "split", id, "--direction", direction . herdr name,
+        *(flat map (options) with : (o) => (o) argument)
     ])
 },
 
@@ -220,7 +220,7 @@ FUNCTION wait for output (text: String) in pane (id: String) (options: Set (Wait
 {
     run ("herdr", [
         "pane", "wait-output", id, "--match", text,
-        *(flat map (options) with ((o) => (o) argument))
+        *(flat map (options) with : (o) => (o) argument)
     ])
 },
 
@@ -234,7 +234,7 @@ FUNCTION wait for output (text: String) in pane (id: String) -> Result (String) 
 FUNCTION start agent (name: String) (kind: Agent Kind) in pane (pane: String) ->
     Result (String)
 {
-    run ("herdr", ["agent", "start", name, "--kind", (kind) herdr name, "--pane", pane])
+    run ("herdr", ["agent", "start", name, "--kind", kind . herdr name, "--pane", pane])
 },
 
 FUNCTION prompt agent (target: String) with (text: String) (options: Set (Prompt Option)) ->
@@ -242,7 +242,7 @@ FUNCTION prompt agent (target: String) with (text: String) (options: Set (Prompt
 {
     run ("herdr", [
         "agent", "prompt", target, text,
-        *(flat map (options) with ((o) => (o) argument))
+        *(flat map (options) with : (o) => (o) argument)
     ])
 },
 
@@ -254,7 +254,7 @@ FUNCTION prompt agent (target: String) with (text: String) -> Result (String) {
 FUNCTION wait for agent (target: String) (options: Set (Wait Option)) -> Result (String) {
     run ("herdr", [
         "agent", "wait", target,
-        *(flat map (options) with ((o) => (o) argument))
+        *(flat map (options) with : (o) => (o) argument)
     ])
 },
 

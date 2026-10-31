@@ -54,7 +54,7 @@ fn read_pane_plain() {
 #[test]
 fn read_pane_options() {
     assert_eq!(
-        argv(r#"herdr.{ read pane "w1:p1" { lines 50, source (recent unwrapped), ansi } },"#),
+        argv(r#"herdr.{ read pane "w1:p1" { lines 50, source : recent unwrapped, ansi } },"#),
         strs(&[
             "pane",
             "read",
@@ -113,7 +113,7 @@ fn run_in_pane() {
 #[test]
 fn wait_for_output_timeout_is_milliseconds() {
     assert_eq!(
-        argv(r#"herdr.{ wait for output "ok" in pane "w1:p2" { timeout (120 seconds) } },"#),
+        argv(r#"herdr.{ wait for output "ok" in pane "w1:p2" { timeout : 120 seconds } },"#),
         strs(&[
             "pane",
             "wait-output",
@@ -140,7 +140,7 @@ fn start_agent() {
 fn prompt_agent_and_wait() {
     assert_eq!(
         argv(
-            r#"herdr.{ prompt agent "reviewer" with "go" { wait, give up after (30 seconds) } },"#
+            r#"herdr.{ prompt agent "reviewer" with "go" { wait, give up after : 30 seconds } },"#
         ),
         strs(&[
             "agent",
