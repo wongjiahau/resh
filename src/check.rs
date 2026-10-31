@@ -44,9 +44,9 @@ pub enum Type {
     Never,
     /// The inferred type of a `{ ... }` literal: one entry per field phrase,
     /// as its signature key (`port _`, `size between _ and _`) and the types of
-    /// its slot values. It only becomes a `Record` when it meets a record
-    /// parameter or a `AS Record Name` annotation.
-    Struct(Vec<(String, Vec<Type>)>),
+    /// its slot values, then its function members. It only becomes a `Record`
+    /// when it meets a record parameter or a `AS Record Name` annotation.
+    Struct(Vec<(String, Vec<Type>)>, Vec<MemberSig>),
 }
 
 impl fmt::Display for Type {
@@ -79,16 +79,16 @@ impl fmt::Display for Type {
             }
             Type::Param(p) => write!(f, "{p}"),
             Type::Never => write!(f, "Never"),
-            Type::Struct(fs) if fs.is_empty() => write!(f, "record literal {{}}"),
-            Type::Struct(fs) => {
-                write!(f, "record literal {{ ")?;
-                for (i, (k, ts)) in fs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", signature(k, ts))?;
-                }
-                write!(f, " }}")
+            Type::Struct(fs, ms) if fs.is_empty() && ms.is_empty() => {
+                write!(f, "record literal {{}}")
+            }
+            Type::Struct(fs, ms) => {
+                let entries: Vec<String> = fs
+                    .iter()
+                    .map(|(k, ts)| signature(k, ts))
+                    .chain(ms.iter().map(MemberSig::to_string))
+                    .collect();
+                write!(f, "record literal {{ {} }}", entries.join(", "))
             }
         }
     }
@@ -216,7 +216,7 @@ fn signature(key: &str, slots: &[Type]) -> String {
         .join(" ")
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PartT {
     Word(String),
     Param(String, Type),
@@ -243,6 +243,74 @@ impl PartT {
             )),
         }
     }
+}
+
+/// The signature of a function member of a record (or of a function a
+/// namespace offers as one): `(a: T) compare (b: T)` returning `Ordering`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberSig {
+    pub parts: Vec<PartT>,
+    pub ret: Type,
+}
+
+impl fmt::Display for MemberSig {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "FUNCTION ({}) RETURNS ({})",
+            label(&self.parts),
+            self.ret
+        )
+    }
+}
+
+impl MemberSig {
+    /// The member with type parameters replaced by `map`.
+    fn subst(&self, map: &HashMap<String, Type>, keep_unbound: bool) -> MemberSig {
+        let ty = |t: &Type| subst(t, map, keep_unbound);
+        MemberSig {
+            parts: self
+                .parts
+                .iter()
+                .map(|p| match p {
+                    PartT::Word(w) => PartT::Word(w.clone()),
+                    PartT::Param(n, t) => PartT::Param(n.clone(), ty(t)),
+                    PartT::Tuple(cs) => {
+                        PartT::Tuple(cs.iter().map(|(n, t)| (n.clone(), ty(t))).collect())
+                    }
+                })
+                .collect(),
+            ret: ty(&self.ret),
+        }
+    }
+
+    /// The types of its parameter slots, in order.
+    fn slot_types(&self) -> Vec<Type> {
+        self.parts
+            .iter()
+            .filter_map(|p| p.slot().map(|(_, t)| t))
+            .collect()
+    }
+}
+
+/// Same words in the same positions, and slots in the same positions.
+fn same_layout(a: &[PartT], b: &[PartT]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| match (x, y) {
+            (PartT::Word(x), PartT::Word(y)) => x == y,
+            (PartT::Word(_), _) | (_, PartT::Word(_)) => false,
+            _ => true,
+        })
+}
+
+/// Could a call not choose between `a` and `b`? Same layout, and every
+/// parameter could receive the same argument type.
+fn clashes(a: &[PartT], b: &[PartT]) -> bool {
+    same_layout(a, b)
+        && a.iter().zip(b).all(|(x, y)| match (x.slot(), y.slot()) {
+            (Some((_, x)), Some((_, y))) => overlap(&x, &y),
+            _ => true,
+        })
 }
 
 #[derive(Debug, Clone)]
@@ -327,6 +395,9 @@ pub struct RecordDef {
     /// Type parameters, as in `RECORD (Order (T))`.
     pub params: Vec<String>,
     pub fields: Vec<FieldDef>,
+    /// Function members, called with `value -> call`. At run time they follow
+    /// the field slots in the record value, in this order.
+    pub functions: Vec<MemberSig>,
     /// The `//` comment lines directly above the declaration, if any.
     pub doc: Option<String>,
 }
@@ -350,6 +421,20 @@ impl RecordDef {
                     .collect(),
             })
             .collect()
+    }
+
+    /// The function members of the record type with arguments `args`.
+    pub fn functions_at(&self, args: &[Type]) -> Vec<MemberSig> {
+        let map: HashMap<String, Type> = self.params.iter().cloned().zip(args.to_vec()).collect();
+        self.functions
+            .iter()
+            .map(|m| m.subst(&map, false))
+            .collect()
+    }
+
+    /// How many values the fields hold: where the function members start.
+    pub fn slot_count(&self) -> usize {
+        self.fields.iter().map(|f| f.slots.len()).sum()
     }
 }
 
@@ -403,8 +488,9 @@ pub enum Ir {
     /// Record type name; every slot value in declaration order.
     MkRecord(String, Vec<Ir>),
     /// A `{ ... }` literal not yet fitted to a record; never reaches `eval`.
-    /// Each entry is its signature key and its slot values.
-    Struct(Vec<(String, Vec<Ir>)>),
+    /// Each entry is its signature key and its slot values; then the
+    /// function members, as `Lambda`s.
+    Struct(Vec<(String, Vec<Ir>)>, Vec<Ir>),
     If(Box<Ir>, Box<Ir>, Box<Ir>),
     Match(Box<Ir>, Vec<IrArm>),
     Tuple(Vec<Ir>),
@@ -412,8 +498,11 @@ pub enum Ir {
     Spread(Box<Ir>),
     /// Binds the components of the tuple held by a variable, in the body.
     Untuple(String, Vec<String>, Box<Ir>),
-    /// A function value: parameter name and body.
-    Lambda(String, Box<Ir>),
+    /// A function value: parameter names and body.
+    Lambda(Vec<String>, Box<Ir>),
+    /// `value -> call` on a function member: the record, the index of the
+    /// member's value in it, and the arguments.
+    CallMember(Box<Ir>, usize, Vec<Ir>),
 }
 
 pub type Scope = Vec<(String, Type)>;
@@ -421,9 +510,26 @@ pub type Scope = Vec<(String, Type)>;
 /// A record pattern's field: its slot patterns and the variables they bind.
 type FieldMatch = (Vec<Pat>, Vec<(String, Type)>);
 
-/// An overload that fits: its id, the type variables it bound, and the
-/// checked lambdas by argument position.
+/// An overload that fits: its index among the candidates, the type
+/// variables it bound, and the checked lambdas by argument position.
 type PassingCandidate = (usize, HashMap<String, Type>, HashMap<usize, Ir>);
+
+/// A signature a call may resolve to: a declared function or a function
+/// member of a record.
+struct Candidate<'a> {
+    parts: &'a [PartT],
+    ret: &'a Type,
+}
+
+/// The candidate a call resolved to, with its fitted arguments and the
+/// result type.
+struct Resolved {
+    index: usize,
+    args: Vec<Ir>,
+    /// The type of each argument, in slot order.
+    arg_types: Vec<Type>,
+    ret: Type,
+}
 
 #[derive(Debug, Clone)]
 pub struct Checker {
@@ -541,11 +647,11 @@ fn expr_source(e: &Expr) -> String {
             [SeqItem::Word(w, _)] => w.clone(),
             _ => format!("({})", seq_source(items)),
         },
-        ExprKind::Qualified { namespace, call } => {
-            format!("({namespace} -> {})", seq_source(call))
+        ExprKind::Qualified { qualifier, call } => {
+            format!("({qualifier} -> {})", seq_source(call))
         }
         ExprKind::List(_) => "[...]".to_string(),
-        ExprKind::Brace(_) => "{...}".to_string(),
+        ExprKind::Brace(..) => "{...}".to_string(),
         _ => "(...)".to_string(),
     }
 }
@@ -1013,17 +1119,7 @@ impl Checker {
         for d in &self.defs {
             // Same words in the same positions, and every parameter could
             // receive the same argument type: a call could not choose.
-            let same = d.ns == self.cur_ns
-                && d.parts.len() == parts.len()
-                && d.parts.iter().zip(&parts).all(|(a, b)| match (a, b) {
-                    (PartT::Word(x), PartT::Word(y)) => x == y,
-                    (PartT::Word(_), _) | (_, PartT::Word(_)) => false,
-                    (a, b) => match (a.slot(), b.slot()) {
-                        (Some((_, x)), Some((_, y))) => overlap(&x, &y),
-                        _ => false,
-                    },
-                });
-            if same {
+            if d.ns == self.cur_ns && clashes(&d.parts, &parts) {
                 return Err(Diag::new(
                     span,
                     format!(
@@ -1069,6 +1165,7 @@ impl Checker {
                         RecordDef {
                             params: type_params(params, "RECORD (Order (T)) { ... }")?,
                             fields: vec![],
+                            functions: vec![],
                             doc: doc.clone(),
                         },
                     );
@@ -1108,16 +1205,51 @@ impl Checker {
         let mut pending = Vec::new();
         for d in decls {
             match d {
-                Decl::Record { name, fields, .. } => {
+                Decl::Record {
+                    name,
+                    fields,
+                    functions,
+                    ..
+                } => {
                     let key = self.qualify(name);
                     let mut fds: Vec<FieldDef> = Vec::new();
                     for f in fields {
                         let fd = self.mk_field(f)?;
-                        self.check_declared_params(&key, &fd, f.span)?;
+                        let mut used = Vec::new();
+                        fd.slots.iter().for_each(|s| params_in(&s.ty, &mut used));
+                        self.check_declared_params(&key, &fd.signature(), &used, f.span)?;
                         self.check_field_clash(&key, &fds, &fd, f.span)?;
                         fds.push(fd);
                     }
-                    self.records.get_mut(&key).unwrap().fields = fds;
+                    let mut members: Vec<MemberSig> = Vec::new();
+                    for m in functions {
+                        let member = MemberSig {
+                            parts: self.mk_parts(&m.sig)?,
+                            ret: self.resolve_ty(&m.ret)?,
+                        };
+                        let mut used = Vec::new();
+                        member
+                            .slot_types()
+                            .iter()
+                            .for_each(|t| params_in(t, &mut used));
+                        params_in(&member.ret, &mut used);
+                        self.check_declared_params(&key, &member.to_string(), &used, m.sig.span)?;
+                        if let Some(other) =
+                            members.iter().find(|o| clashes(&o.parts, &member.parts))
+                        {
+                            return Err(Diag::new(
+                                m.sig.span,
+                                format!(
+                                    "function member `{member}` of `{}` clashes with `{other}`: a call could not tell them apart. Overloaded members must differ in a parameter type",
+                                    self.record_display(&key)
+                                ),
+                            ));
+                        }
+                        members.push(member);
+                    }
+                    let rd = self.records.get_mut(&key).unwrap();
+                    rd.fields = fds;
+                    rd.functions = members;
                 }
                 Decl::Enum { name, variants, .. } => {
                     let key = self.qualify(name);
@@ -1207,17 +1339,15 @@ impl Checker {
         })
     }
 
-    /// A field may only use the record's own type parameters.
-    fn check_declared_params(&self, key: &str, fd: &FieldDef, span: Span) -> Res<()> {
+    /// A field or function member (`what`) may only use the record's own
+    /// type parameters.
+    fn check_declared_params(&self, key: &str, what: &str, used: &[String], span: Span) -> Res<()> {
         let rd = &self.records[key];
-        let mut used = Vec::new();
-        fd.slots.iter().for_each(|s| params_in(&s.ty, &mut used));
         match used.iter().find(|p| !rd.params.contains(p)) {
             Some(p) => Err(Diag::new(
                 span,
                 format!(
-                    "field `{}` uses type parameter `{p}`, which `{}` does not declare; add it to the record's name as a slot, e.g. `RECORD (Box ({p})) {{ ... }}`",
-                    fd.signature(),
+                    "`{what}` uses type parameter `{p}`, which `{}` does not declare; add it to the record's name as a slot, e.g. `RECORD (Box ({p})) {{ ... }}`",
                     self.record_display(key),
                 ),
             )),
@@ -1316,9 +1446,27 @@ impl Checker {
 
     fn check_fn_body(&self, id: usize, body: &FnBody, span: Span) -> Res<Ir> {
         let def = &self.defs[id];
-        let mut sc: Scope = Vec::new();
+        let FnBody::Block(stmts) = body else {
+            unreachable!()
+        };
+        self.function_body(&def.parts, &def.ret, stmts, &mut Vec::new(), span)
+    }
+
+    /// Checks the body of a function with these parameters in scope `sc`
+    /// (empty for a declaration, the surrounding variables for a function
+    /// member of a literal). Its value must fit `ret`; a record literal as
+    /// the last statement is fitted to `ret`, like an argument.
+    fn function_body(
+        &self,
+        parts: &[PartT],
+        ret: &Type,
+        stmts: &[Stmt],
+        sc: &mut Scope,
+        span: Span,
+    ) -> Res<Ir> {
+        let mark = sc.len();
         let mut tuples: Vec<(String, Vec<String>)> = Vec::new();
-        for p in &def.parts {
+        for p in parts {
             match p {
                 PartT::Word(_) => {}
                 PartT::Param(n, t) => sc.push((n.clone(), t.clone())),
@@ -1329,25 +1477,38 @@ impl Checker {
                 }
             }
         }
-        let FnBody::Block(stmts) = body else {
-            unreachable!()
-        };
-        let (mut ir, mut t) = self.block(stmts, &mut sc)?;
+        let checked = self.block_with(stmts, sc, true);
+        sc.truncate(mark);
+        let (mut ir, mut t) = checked?;
+        if matches!(t, Type::Struct(..)) {
+            if !self.fits(&t, ret) {
+                return Err(Diag::new(
+                    span,
+                    self.mismatch(&format!("the body of `{}`", label(parts)), ret, &t),
+                ));
+            }
+            if let Ir::Block(irs) = &mut ir
+                && let Some(last) = irs.pop()
+            {
+                irs.push(self.fit(last, &t, ret));
+            }
+            t = ret.clone();
+        }
         // A function without a return type discards its body's value.
-        if def.ret == Type::Unit {
+        if *ret == Type::Unit {
             ir = Ir::Block(vec![ir, Ir::Lit(Value::Unit)]);
             t = Type::Unit;
         }
         for (var, names) in tuples.into_iter().rev() {
             ir = Ir::Untuple(var, names, Box::new(ir));
         }
-        if !sub(&t, &def.ret) {
+        if !sub(&t, ret) {
             return Err(Diag::new(
                 span,
                 format!(
                     "function `{}` is declared to return {} but its body has type {}",
-                    label(&def.parts),
-                    def.ret,
+                    label(parts),
+                    ret,
                     t
                 ),
             ));
@@ -1361,11 +1522,11 @@ impl Checker {
     /// record literals fitting a record whose fields they cover.
     pub fn fits(&self, a: &Type, b: &Type) -> bool {
         match (a, b) {
-            (Type::Struct(fs), Type::Record(rn, args)) => {
-                self.struct_problem(fs, rn, args).is_none()
+            (Type::Struct(fs, ms), Type::Record(rn, args)) => {
+                self.struct_problem(fs, ms, rn, args).is_none()
             }
-            (Type::Struct(fs), Type::Set(e)) => self.set_problem(fs, e).is_none(),
-            (Type::Struct(_), _) => false,
+            (Type::Struct(fs, ms), Type::Set(e)) => self.set_problem(fs, ms, e).is_none(),
+            (Type::Struct(..), _) => false,
             _ => sub(a, b),
         }
     }
@@ -1418,10 +1579,20 @@ impl Checker {
     }
 
     /// Why a `{ ... }` literal with these entries is not a `Set (e)`.
-    fn set_problem(&self, fs: &[(String, Vec<Type>)], e: &Type) -> Option<String> {
+    fn set_problem(
+        &self,
+        fs: &[(String, Vec<Type>)],
+        ms: &[MemberSig],
+        e: &Type,
+    ) -> Option<String> {
         let Type::Enum(en, _) = e else {
             return Some(format!("`Set ({e})` does not hold the variants of an enum"));
         };
+        if let Some(m) = ms.first() {
+            return Some(format!(
+                "a `Set ({e})` holds variants, not function members like `{m}`"
+            ));
+        }
         for (k, ts) in fs {
             let Some((_, fid)) = self.variant_for(e, k, ts.len()) else {
                 let known: Vec<String> = self.enums[en.as_str()]
@@ -1458,9 +1629,18 @@ impl Checker {
     fn struct_problem(
         &self,
         fs: &[(String, Vec<Type>)],
+        ms: &[MemberSig],
         rn: &str,
         args: &[Type],
     ) -> Option<String> {
+        let problems = self.member_problems(&self.records[rn].functions_at(args), ms, false);
+        if !problems.is_empty() {
+            let rn = Type::Record(rn.to_string(), args.to_vec());
+            return Some(format!(
+                "the function members do not fit `{rn}`: {}",
+                problems.join("; ")
+            ));
+        }
         let fields = self.records[rn].fields_at(args);
         let rn = Type::Record(rn.to_string(), args.to_vec());
         let mut given = vec![false; fields.len()];
@@ -1508,11 +1688,78 @@ impl Checker {
         None
     }
 
+    /// Does `got` stand for the declared member `want`? The same layout and
+    /// the same types; type parameters are only equal to themselves.
+    fn member_matches(want: &MemberSig, got: &MemberSig) -> bool {
+        same_layout(&want.parts, &got.parts)
+            && want.ret == got.ret
+            && want.slot_types() == got.slot_types()
+    }
+
+    /// Binds the parameters of `want` left unbound in `m` from the types of
+    /// `got`, when it has the same layout and the bound types are equal.
+    fn bind_member(&self, want: &MemberSig, got: &MemberSig, m: &mut HashMap<String, Type>) {
+        if !same_layout(&want.parts, &got.parts) {
+            return;
+        }
+        let mut trial = m.clone();
+        let wants = want.slot_types().into_iter().chain([want.ret.clone()]);
+        let gots = got.slot_types().into_iter().chain([got.ret.clone()]);
+        if wants.zip(gots).all(|(w, g)| self.unify(&w, &g, &mut trial))
+            && Self::member_matches(&want.subst(&trial, true), got)
+        {
+            *m = trial;
+        }
+    }
+
+    /// Which declared members `want` the functions `got` leave missing or
+    /// give with other types, each named with both signatures. `extra`
+    /// allows functions no member asks for (a namespace has more).
+    fn member_problems(&self, want: &[MemberSig], got: &[MemberSig], extra: bool) -> Vec<String> {
+        let mut problems = Vec::new();
+        for w in want {
+            let fitting = got.iter().filter(|g| Self::member_matches(w, g)).count();
+            if fitting == 1 {
+                continue;
+            }
+            if fitting > 1 {
+                problems.push(format!("`{w}` is given more than once"));
+                continue;
+            }
+            let near: Vec<String> = got
+                .iter()
+                .filter(|g| same_layout(&w.parts, &g.parts))
+                .map(|g| format!("`{g}`"))
+                .collect();
+            problems.push(if near.is_empty() {
+                format!("missing `{w}`")
+            } else {
+                format!("`{w}` is wanted, but found {}", near.join(", "))
+            });
+        }
+        if !extra {
+            for g in got {
+                if !want.iter().any(|w| same_layout(&w.parts, &g.parts)) {
+                    let known: Vec<String> = want.iter().map(|w| format!("`{w}`")).collect();
+                    problems.push(format!(
+                        "`{g}` is not a function member; the function members are: {}",
+                        if known.is_empty() {
+                            "none".to_string()
+                        } else {
+                            known.join(", ")
+                        }
+                    ));
+                }
+            }
+        }
+        problems
+    }
+
     /// Turns an expression of type `ty` that `fits` `target` into one whose
     /// runtime shape is `target`'s: record literals become real records, with
     /// omitted slots filled from their `DEFAULT`.
     fn fit(&self, ir: Ir, ty: &Type, target: &Type) -> Ir {
-        if let (Ir::Struct(given), Type::Struct(tys), Type::Set(e)) = (&ir, ty, target) {
+        if let (Ir::Struct(given, _), Type::Struct(tys, _), Type::Set(e)) = (&ir, ty, target) {
             let irs = given
                 .iter()
                 .zip(tys)
@@ -1535,7 +1782,8 @@ impl Checker {
                 .collect();
             return Ir::List(irs);
         }
-        let (Ir::Struct(given), Type::Struct(tys), Type::Record(rn, args)) = (&ir, ty, target)
+        let (Ir::Struct(given, functions), Type::Struct(tys, ms), Type::Record(rn, args)) =
+            (&ir, ty, target)
         else {
             return ir;
         };
@@ -1567,6 +1815,13 @@ impl Checker {
                     given
                 }
             })
+            .chain(self.records[rn].functions_at(args).iter().map(|w| {
+                let at = ms
+                    .iter()
+                    .position(|g| Self::member_matches(w, g))
+                    .expect("checked by `fits`");
+                functions[at].clone()
+            }))
             .collect();
         Ir::MkRecord(rn.clone(), irs)
     }
@@ -1578,7 +1833,7 @@ impl Checker {
                 "a lambda has no type of its own; pass it where a function is expected, after the argument that fixes its parameter type",
             ));
         }
-        if matches!(t, Type::Struct(_)) {
+        if matches!(t, Type::Struct(..)) {
             return Err(Diag::new(
                 span,
                 format!(
@@ -1592,11 +1847,25 @@ impl Checker {
     // ---------- expressions ----------
 
     pub fn block(&self, stmts: &[Stmt], sc: &mut Scope) -> Res<(Ir, Type)> {
+        self.block_with(stmts, sc, false)
+    }
+
+    /// `literal_last`: the last statement may be a record literal (a
+    /// function body, fitted to the declared return type by the caller).
+    fn block_with(&self, stmts: &[Stmt], sc: &mut Scope, literal_last: bool) -> Res<(Ir, Type)> {
         let mark = sc.len();
         let mut irs = Vec::new();
         let mut last = Type::Unit;
-        for s in stmts {
+        for (i, s) in stmts.iter().enumerate() {
             match s {
+                Stmt::Expr(e) if literal_last && i + 1 == stmts.len() => {
+                    let (ir, t) = self.infer(e, sc)?;
+                    if !matches!(t, Type::Struct(..)) {
+                        Self::reject_struct(&t, e.span)?;
+                    }
+                    irs.push(ir);
+                    last = t;
+                }
                 Stmt::Let(n, e, _) => {
                     let (ir, t) = self.check(e, sc)?;
                     sc.push((n.clone(), t));
@@ -1664,9 +1933,14 @@ impl Checker {
                 }
                 self.seq(items, e.span, sc, None)
             }
-            ExprKind::Qualified { namespace, call } => {
-                self.known_namespace(namespace, e.span)?;
-                self.seq(call, e.span, sc, Some(namespace))
+            ExprKind::Qualified { qualifier, call } => {
+                // A variable wins over a namespace of the same name.
+                if let Some((_, t)) = sc.iter().rev().find(|(n, _)| n == qualifier) {
+                    let t = t.clone();
+                    return self.member_call(qualifier, &t, call, e.span, sc);
+                }
+                self.known_namespace(qualifier, e.span)?;
+                self.seq(call, e.span, sc, Some(qualifier))
             }
             ExprKind::List(xs) => {
                 let mut ty = Type::Never;
@@ -1723,7 +1997,7 @@ impl Checker {
                 }
                 Ok((Ir::Tuple(irs), Type::Tuple(tys)))
             }
-            ExprKind::Brace(fs) => self.brace(fs, sc),
+            ExprKind::Brace(fs, functions) => self.brace(fs, functions, sc),
             ExprKind::Lambda(..) => Ok((Ir::Lit(Value::Unit), Type::Lambda)),
             ExprKind::If(c, t, f) => {
                 let cir = self.check_as(c, sc, &Type::Bool)?;
@@ -1755,13 +2029,13 @@ impl Checker {
     /// "expected X, found Y", plus the reason when Y is a record literal.
     fn mismatch(&self, what: &str, want: &Type, found: &Type) -> String {
         let mut msg = format!("{what} expects {want}, found {found}");
-        if let (Type::Struct(fs), Type::Record(rn, args)) = (found, want)
-            && let Some(why) = self.struct_problem(fs, rn, args)
+        if let (Type::Struct(fs, ms), Type::Record(rn, args)) = (found, want)
+            && let Some(why) = self.struct_problem(fs, ms, rn, args)
         {
             msg.push_str(&format!(": {why}"));
         }
-        if let (Type::Struct(fs), Type::Set(e)) = (found, want)
-            && let Some(why) = self.set_problem(fs, e)
+        if let (Type::Struct(fs, ms), Type::Set(e)) = (found, want)
+            && let Some(why) = self.set_problem(fs, ms, e)
         {
             msg.push_str(&format!(": {why}"));
         }
@@ -1771,7 +2045,12 @@ impl Checker {
     /// A record literal is inferred from its entries alone. Bare words of an
     /// entry belong to the field name; slot values are
     /// atoms or parenthesized expressions, each inferred on its own.
-    fn brace(&self, fs: &[BraceEntry], sc: &mut Scope) -> Res<(Ir, Type)> {
+    fn brace(
+        &self,
+        fs: &[BraceEntry],
+        functions: &[MemberLiteral],
+        sc: &mut Scope,
+    ) -> Res<(Ir, Type)> {
         let mut irs: Vec<(String, Vec<Ir>)> = Vec::new();
         let mut tys: Vec<(String, Vec<Type>)> = Vec::new();
         for f in fs {
@@ -1807,7 +2086,31 @@ impl Checker {
             irs.push((key.clone(), eirs));
             tys.push((key, etys));
         }
-        Ok((Ir::Struct(irs), Type::Struct(tys)))
+        let mut members: Vec<MemberSig> = Vec::new();
+        let mut bodies = Vec::new();
+        for f in functions {
+            let member = MemberSig {
+                parts: self.mk_parts(&f.sig)?,
+                ret: self.resolve_ty(&f.ret)?,
+            };
+            if let Some(other) = members.iter().find(|o| clashes(&o.parts, &member.parts)) {
+                return Err(Diag::new(
+                    f.span,
+                    format!(
+                        "function member `{member}` clashes with `{other}`: a call could not tell them apart"
+                    ),
+                ));
+            }
+            let body = self.function_body(&member.parts, &member.ret, &f.body, sc, f.span)?;
+            let params = member
+                .parts
+                .iter()
+                .filter_map(|p| p.slot().map(|(n, _)| n))
+                .collect();
+            bodies.push(Ir::Lambda(params, Box::new(body)));
+            members.push(member);
+        }
+        Ok((Ir::Struct(irs, bodies), Type::Struct(tys, members)))
     }
 
     /// `{ field (name), ... }` against record `rn`: every field listed once, in
@@ -2087,7 +2390,7 @@ impl Checker {
         match (p, a) {
             (_, Type::Never) => true,
             (Type::Param(n), _) => {
-                if matches!(a, Type::Struct(_) | Type::Lambda) {
+                if matches!(a, Type::Struct(..) | Type::Lambda) {
                     return false;
                 }
                 let joined = match m.get(n) {
@@ -2115,7 +2418,12 @@ impl Checker {
                     && xs.iter().zip(ys).all(|(x, y)| self.unify(x, y, m))
             }
             // A record literal binds the parameters its slot values fix.
-            (Type::Record(rn, xs), Type::Struct(fs)) if unbound_param(p, m) => {
+            (Type::Record(rn, xs), Type::Struct(fs, ms)) if unbound_param(p, m) => {
+                for w in self.records[rn].functions_at(xs) {
+                    for g in ms {
+                        self.bind_member(&w.subst(m, true), g, m);
+                    }
+                }
                 let fields = self.records[rn].fields_at(xs);
                 for (k, ts) in fs {
                     if let Some((fi, false)) = Self::field_for(&fields, k, ts.len()) {
@@ -2197,16 +2505,128 @@ impl Checker {
         if cands.is_empty() {
             return Err(self.no_match(items, span, sc, qual));
         }
+        let sigs: Vec<Candidate> = cands
+            .iter()
+            .map(|&i| Candidate {
+                parts: &self.defs[i].parts,
+                ret: &self.defs[i].ret,
+            })
+            .collect();
+        let r = self.resolve_call(&sigs, items, span, sc)?;
+        let id = cands[r.index];
+        if matches!(&self.defs[id].kind, FnKind::Native(n) if n == "equals")
+            && let Some(t) = r.arg_types.iter().find(|t| self.holds_functions(t))
+        {
+            return Err(Diag::new(
+                span,
+                format!(
+                    "`equals` cannot compare {t}: it holds function members, and functions have no equality"
+                ),
+            ));
+        }
+        Ok((Ir::Call(id, r.args), r.ret))
+    }
+
+    /// Does a value of type `t` hold functions anywhere (a record with
+    /// function members, or a lambda)?
+    fn holds_functions(&self, t: &Type) -> bool {
+        match t {
+            Type::Function(..) => true,
+            Type::Record(rn, args) => {
+                !self.records[rn].functions.is_empty()
+                    || self.records[rn]
+                        .fields_at(args)
+                        .iter()
+                        .any(|f| f.slots.iter().any(|s| self.holds_functions(&s.ty)))
+            }
+            Type::List(x) | Type::Set(x) => self.holds_functions(x),
+            Type::Enum(_, xs) | Type::Tuple(xs) => xs.iter().any(|x| self.holds_functions(x)),
+            _ => false,
+        }
+    }
+
+    /// `value -> call`: the call resolved among the function members of the
+    /// record held by variable `var`.
+    fn member_call(
+        &self,
+        var: &str,
+        ty: &Type,
+        items: &[SeqItem],
+        span: Span,
+        sc: &mut Scope,
+    ) -> Res<(Ir, Type)> {
+        let shadowed = if self.namespaces.contains(var) {
+            format!(
+                " (the variable `{var}` hides the namespace `{var}`; rename the variable to reach the namespace)"
+            )
+        } else {
+            String::new()
+        };
+        let members = match ty {
+            Type::Record(rn, args) if !self.records[rn].functions.is_empty() => {
+                self.records[rn].functions_at(args)
+            }
+            _ => {
+                return Err(Diag::new(
+                    span,
+                    format!(
+                        "`{var}` is a variable of type {ty}, which has no function members, so `{var} -> {}` has nothing to call{shadowed}. `->` calls a function member of a module (`order -> (a) compare (b)`) or a function of a namespace (`git -> status`)",
+                        seq_source(items)
+                    ),
+                ));
+            }
+        };
+        let Type::Record(rn, _) = ty else {
+            unreachable!("matched above")
+        };
+        let cands: Vec<usize> = (0..members.len())
+            .filter(|&i| Self::matches(&members[i].parts, items))
+            .collect();
+        if cands.is_empty() {
+            let known: Vec<String> = members.iter().map(|m| format!("`{m}`")).collect();
+            return Err(Diag::new(
+                span,
+                format!(
+                    "no function member of `{var}` ({ty}) matches `{}`{shadowed}; its function members are: {}",
+                    seq_source(items),
+                    known.join(", ")
+                ),
+            ));
+        }
+        let sigs: Vec<Candidate> = cands
+            .iter()
+            .map(|&i| Candidate {
+                parts: &members[i].parts,
+                ret: &members[i].ret,
+            })
+            .collect();
+        let r = self.resolve_call(&sigs, items, span, sc)?;
+        let at = self.records[rn].slot_count() + cands[r.index];
+        Ok((
+            Ir::CallMember(Box::new(Ir::Var(var.to_string())), at, r.args),
+            r.ret,
+        ))
+    }
+
+    /// Picks the one candidate whose parameters the arguments of `items` fit,
+    /// from the already-inferred argument types (bottom-up). Every candidate
+    /// has the call's layout.
+    fn resolve_call(
+        &self,
+        cands: &[Candidate],
+        items: &[SeqItem],
+        span: Span,
+        sc: &mut Scope,
+    ) -> Res<Resolved> {
         // Each argument is inferred once, on first use, independent of the
         // candidate it will be tested against.
         let mut args: Vec<Option<Res<(Ir, Type)>>> = vec![None; items.len()];
         let mut passing: Vec<PassingCandidate> = Vec::new();
         let mut failures: Vec<Diag> = Vec::new();
-        'cand: for &id in &cands {
-            let def = &self.defs[id];
+        'cand: for (ci, cand) in cands.iter().enumerate() {
             let mut map: HashMap<String, Type> = HashMap::new();
             let mut lams: HashMap<usize, Ir> = HashMap::new();
-            for (i, (part, item)) in def.parts.iter().zip(items).enumerate() {
+            for (i, (part, item)) in cand.parts.iter().zip(items).enumerate() {
                 let Some((pname, pty)) = part.slot() else {
                     continue;
                 };
@@ -2232,7 +2652,7 @@ impl Checker {
                             arg_span,
                             format!(
                                 "the parameter type of `FN ({x}) : ...` is not known yet: `{}` is only fixed by an argument written after the lambda; move the lambda after it",
-                                label(&def.parts)
+                                label(cand.parts)
                             ),
                         ));
                         continue 'cand;
@@ -2242,7 +2662,7 @@ impl Checker {
                     sc.pop();
                     match res {
                         Ok((bir, bt)) if self.unify(ret, &bt, &mut map) => {
-                            lams.insert(i, Ir::Lambda(x.clone(), Box::new(bir)));
+                            lams.insert(i, Ir::Lambda(vec![x.clone()], Box::new(bir)));
                             continue;
                         }
                         Ok((_, bt)) => {
@@ -2251,7 +2671,7 @@ impl Checker {
                                 self.mismatch(
                                     &format!(
                                         "the body of the lambda for `{pname}` of `{}`",
-                                        label(&def.parts)
+                                        label(cand.parts)
                                     ),
                                     &subst(ret, &map, true),
                                     &bt,
@@ -2269,7 +2689,7 @@ impl Checker {
                     failures.push(Diag::new(
                         arg_span,
                         self.mismatch(
-                            &format!("argument `{pname}` of `{}`", label(&def.parts)),
+                            &format!("argument `{pname}` of `{}`", label(cand.parts)),
                             &subst(pty, &map, true),
                             &aty,
                         ),
@@ -2277,7 +2697,7 @@ impl Checker {
                     continue 'cand;
                 }
             }
-            passing.push((id, map, lams));
+            passing.push((ci, map, lams));
         }
         let shown_args = || {
             let tys: Vec<String> = args
@@ -2290,16 +2710,18 @@ impl Checker {
         };
         let candidates = |ids: &mut dyn Iterator<Item = usize>| {
             ids.map(|i| {
-                let mut line = format!("\n    {}", label(&self.defs[i].parts));
-                for part in &self.defs[i].parts {
+                let mut line = format!("\n    {}", label(cands[i].parts));
+                for part in cands[i].parts {
                     if let PartT::Param(_, rt @ Type::Record(rn, args)) = part {
-                        let fields: Vec<String> = self.records[rn.as_str()]
+                        let rd = &self.records[rn.as_str()];
+                        let fields: Vec<String> = rd
                             .fields_at(args)
                             .iter()
                             .map(|f| {
                                 let opt = f.slots.iter().all(|s| s.default.is_some());
                                 format!("{}{}", f.signature(), if opt { " (optional)" } else { "" })
                             })
+                            .chain(rd.functions_at(args).iter().map(MemberSig::to_string))
                             .collect();
                         let fields = if fields.is_empty() {
                             "none".to_string()
@@ -2315,20 +2737,35 @@ impl Checker {
         };
         match passing.len() {
             1 => {
-                let (id, map, mut lams) = passing.pop().unwrap();
-                let def = &self.defs[id];
+                let (ci, map, mut lams) = passing.pop().unwrap();
+                let cand = &cands[ci];
                 let mut irs = Vec::new();
-                for (i, part) in def.parts.iter().enumerate() {
-                    if let Some((_, pty)) = part.slot()
-                        && let Some(Ok((ir, aty))) = args[i].take()
-                    {
-                        irs.push(match lams.remove(&i) {
-                            Some(lam) => lam,
-                            None => self.fit(ir, &aty, &pty),
-                        });
+                let mut arg_types = Vec::new();
+                for (i, part) in cand.parts.iter().enumerate() {
+                    let Some((_, pty)) = part.slot() else {
+                        continue;
+                    };
+                    let pty = subst(&pty, &map, false);
+                    match lams.remove(&i) {
+                        Some(lam) => {
+                            irs.push(lam);
+                            arg_types.push(pty);
+                        }
+                        None => {
+                            let Some(Ok((ir, aty))) = args[i].take() else {
+                                unreachable!("a passing candidate inferred every argument")
+                            };
+                            irs.push(self.fit(ir, &aty, &pty));
+                            arg_types.push(aty);
+                        }
                     }
                 }
-                Ok((Ir::Call(id, irs), subst(&def.ret, &map, false)))
+                Ok(Resolved {
+                    index: ci,
+                    args: irs,
+                    arg_types,
+                    ret: subst(cand.ret, &map, false),
+                })
             }
             0 if cands.len() == 1 || failures.len() == 1 => Err(failures.swap_remove(0)),
             0 => Err(Diag::new(
@@ -2340,9 +2777,8 @@ impl Checker {
                     {
                         // Every failed candidate pushed exactly one reason.
                         let mut reasons = failures.iter();
-                        cands
-                            .iter()
-                            .map(|&i| {
+                        (0..cands.len())
+                            .map(|i| {
                                 let line = candidates(&mut std::iter::once(i));
                                 match reasons.next() {
                                     Some(d) => format!(

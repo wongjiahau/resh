@@ -254,11 +254,12 @@ in parentheses.
 | `SPREAD (list)` | `SPREAD _` |
 | `(Type . DEFAULT value)` in a field slot | `_ DEFAULT _` |
 | `FUNCTION (signature) RETURNS (Type) { body }` | `FUNCTION _ RETURNS _ _` |
+| `FUNCTION (signature) RETURNS (Type)` in a `RECORD` (a function member) | `FUNCTION _ RETURNS _` |
 | `FUNCTION (signature) { body }` (returns `Unit`) | `FUNCTION _ _` |
 | `RECORD (Name) { fields }`, `ENUM (Name) { variants }` | `RECORD _ _`, `ENUM _ _` |
 | `TYPE (Name (T)) : Type` | `TYPE _ _` |
 | `NAMESPACE : name`, `IMPORT : name` | `NAMESPACE _`, `IMPORT _` |
-| `ns -> call`, `ns -> Type`, `ns -> { statements }` | `_ -> _` |
+| `ns -> call`, `ns -> Type`, `ns -> { statements }`, `module -> call` | `_ -> _` |
 
 A declaration's signature or name goes in parentheses, since bare words would
 otherwise join the keyword in one call name: `FUNCTION (status) { ... }`, not
@@ -268,7 +269,7 @@ A MATCH arm `pattern : value` is the pattern's call with the value in a new last
 slot. A wildcard arm is `(_) : value`, because in `_ : value` the `:` fills the
 `_` itself.
 
-Every keyword is an uppercase word. Apart from `->` (namespace access), resh's
+Every keyword is an uppercase word. Apart from `->` (namespace and module access), resh's
 own forms never use a symbol word, so every other symbol word is free for your
 own operators:
 
@@ -354,6 +355,10 @@ Record literals are unnamed (and so are set literals). Entries are anyfix phrase
 - The literal's type is inferred structurally (the set of field signatures with
   their slot types) and matched against the candidate overloads. See
   *Overload resolution*.
+- A literal fits a record where one is declared: a parameter, an `AS (Type)`,
+  a `DEFAULT`, or the return type of the function whose last statement it is
+  (`FUNCTION (origin) RETURNS (Point) { { x 0, y 0 } }`). Anywhere else it has no
+  type of its own and is an error.
 
 ### Destructuring
 
@@ -378,7 +383,9 @@ MATCH (config) {
 
 ## Modules (planned)
 
-Not implemented yet. This section is the design to build.
+Generic records, function members and `->` on a variable are implemented;
+"Namespaces as modules" and the prelude's `Ordering`, `int` and `string` are
+not yet.
 
 Generic code can require operations on its type parameters (constrained
 polymorphism), but the checker never looks for those operations itself:
@@ -410,15 +417,25 @@ max [3, 1, 2] by (int),
   `{ FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { ... } }`. The body
   sees the variables around the literal, like a lambda, but not the
   literal's other members (there is no `this`).
+- A function member may only use the record's type parameters, and two
+  members of one record must differ like overloads do.
 - Function members are called with `->`: `order -> (a) compare (b)`. The left
   of `->` is a single word, either a namespace or a variable. A variable wins
   over a namespace of the same name. The call is resolved only among that
   record's function members, which may be overloaded by parameter types.
+- A literal fits a record type when it gives exactly the record's function
+  members, with the same signatures once the type parameters are substituted.
+  A literal can fix the type parameters itself:
+  `{ FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { ... } }` is an
+  `Order (Int)`. A mismatch names each missing, extra or differently typed
+  member with both signatures.
 - Fields keep the rules of "Records": a literal gives each field a value, and
   `MATCH` is still the only way to read one. A record pattern lists the
   fields only, not the function members.
-- A value with function members prints its functions as `<function>`, like a
-  lambda. `equals` rejects it.
+- A value with function members prints each function as its declaration
+  followed by `<function>`:
+  `{ FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) <function> }`. `equals`
+  rejects it at check time, and any other value holding a function.
 
 ### Namespaces as modules
 

@@ -43,6 +43,23 @@ pub struct FieldAst {
     pub span: Span,
 }
 
+/// A function member of a record declaration: `FUNCTION (signature) RETURNS (Type)`.
+#[derive(Debug, Clone)]
+pub struct MemberAst {
+    pub sig: SigAst,
+    pub ret: TyExpr,
+}
+
+/// A function member of a record literal:
+/// `FUNCTION (signature) RETURNS (Type) { body }`.
+#[derive(Debug, Clone)]
+pub struct MemberLiteral {
+    pub sig: SigAst,
+    pub ret: TyExpr,
+    pub body: Vec<Stmt>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub enum FnBody {
     Native(String),
@@ -65,6 +82,7 @@ pub enum Decl {
         name: String,
         params: Vec<TyExpr>,
         fields: Vec<FieldAst>,
+        functions: Vec<MemberAst>,
         span: Span,
         doc: Option<String>,
     },
@@ -116,9 +134,11 @@ pub enum ExprKind {
     /// An unresolved anyfix call (or a lone word), flattened into its words
     /// and arguments. Resolved against the signature table by the checker.
     Seq(Vec<SeqItem>),
-    /// `ns -> call`: a call resolved only among the declarations of `ns`.
+    /// `name -> call`: when `name` is a variable, a call resolved only among
+    /// the function members of its record; otherwise `name` is a namespace and
+    /// the call is resolved only among its declarations.
     Qualified {
-        namespace: String,
+        qualifier: String,
         call: Vec<SeqItem>,
     },
     /// `[a, SPREAD (b), c]`: elements may be `Spread`.
@@ -127,8 +147,9 @@ pub enum ExprKind {
     Spread(Box<Expr>),
     /// `(a, b)`: two or more values.
     Tuple(Vec<Expr>),
-    /// `{ entry, entry }`: a record (or, later, set) literal.
-    Brace(Vec<BraceEntry>),
+    /// `{ entry, entry }`: a record or set literal. Function members are
+    /// kept apart from the phrases.
+    Brace(Vec<BraceEntry>, Vec<MemberLiteral>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Match(Box<Expr>, Vec<Arm>),
     /// `expr AS Type`: states the type an expression must fit.

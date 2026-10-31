@@ -253,10 +253,33 @@ impl Reader<'_> {
                 if !pattern.qualifiers.is_empty() {
                     return self.err(name.span, "a declared name has no `->` qualifier");
                 }
+                let mut fields = Vec::new();
+                let mut functions = Vec::new();
+                for member in body {
+                    match flatten(member).as_slice() {
+                        [
+                            Flat::Word("FUNCTION", _),
+                            Flat::Arg(sig),
+                            Flat::Word("RETURNS", _),
+                            Flat::Arg(ret),
+                        ] => functions.push(MemberAst {
+                            sig: self.signature(&flatten(sig), false, sig.span)?,
+                            ret: self.ty(ret)?,
+                        }),
+                        [Flat::Word("FUNCTION", _), ..] => {
+                            return self.err(
+                                member.span,
+                                "a function member of a record declaration is written `FUNCTION (signature) RETURNS (Type)`: the return type is required and there is no body (a record literal gives the body)",
+                            );
+                        }
+                        _ => fields.push(self.field(member)?),
+                    }
+                }
                 Ok(Some(Decl::Record {
                     name: pattern.name,
                     params: pattern.args,
-                    fields: body.iter().map(|f| self.field(f)).collect::<Res<_>>()?,
+                    fields,
+                    functions,
                     span,
                     doc,
                 }))
@@ -528,6 +551,18 @@ impl Reader<'_> {
         }
     }
 
+    /// The left of `->` in a call: a namespace or a variable holding a
+    /// module, a single lowercase word either way.
+    fn qualifier(&self, node: &Node) -> Res<String> {
+        match single_word(node) {
+            Some(w) if is_lowercase_word(w) => Ok(w.to_string()),
+            _ => self.err(
+                node.span,
+                "the left of `->` is a single lowercase word, a namespace (`git -> status`) or a variable holding a module (`order -> (a) compare (b)`); namespaces do not nest, and a module returned by a call is bound with `LET` first",
+            ),
+        }
+    }
+
     fn check_capitalized(&self, w: &str, span: anyfix_expr::Span) -> Res<()> {
         if w.starts_with(|c: char| c.is_uppercase()) {
             Ok(())
@@ -621,20 +656,37 @@ impl Reader<'_> {
             NodeKind::Brackets(xs) => {
                 ExprKind::List(xs.iter().map(|x| self.expr(x)).collect::<Res<_>>()?)
             }
-            NodeKind::Braces(entries) => ExprKind::Brace(
-                entries
-                    .iter()
-                    .map(|entry| {
-                        Ok(BraceEntry {
-                            items: flatten(entry)
-                                .iter()
-                                .map(|f| self.seq_item(f))
-                                .collect::<Res<_>>()?,
+            NodeKind::Braces(entries) => {
+                let mut phrases = Vec::new();
+                let mut functions = Vec::new();
+                for entry in entries {
+                    match flatten(entry).as_slice() {
+                        [
+                            Flat::Word("FUNCTION", _),
+                            Flat::Arg(sig),
+                            Flat::Word("RETURNS", _),
+                            Flat::Arg(ret),
+                            Flat::Arg(body),
+                        ] if braces(body).is_some() => functions.push(MemberLiteral {
+                            sig: self.signature(&flatten(sig), false, sig.span)?,
+                            ret: self.ty(ret)?,
+                            body: self.block(braces(body).expect("checked above"))?,
                             span: self.at(entry.span),
-                        })
-                    })
-                    .collect::<Res<_>>()?,
-            ),
+                        }),
+                        [Flat::Word("FUNCTION", _), ..] => {
+                            return self.err(
+                                entry.span,
+                                "a function member of a record literal is written `FUNCTION (signature) RETURNS (Type) { body }`; the return type is required",
+                            );
+                        }
+                        items => phrases.push(BraceEntry {
+                            items: items.iter().map(|f| self.seq_item(f)).collect::<Res<_>>()?,
+                            span: self.at(entry.span),
+                        }),
+                    }
+                }
+                ExprKind::Brace(phrases, functions)
+            }
             NodeKind::Call(_) => return self.flat_expr(&flatten(node)),
         };
         Ok(Expr { k, span })
@@ -719,24 +771,24 @@ impl Reader<'_> {
             [Flat::Arg(value), Flat::Word("AS", _), Flat::Arg(ty)] => {
                 return mk(ExprKind::Ascribe(Box::new(self.expr(value)?), self.ty(ty)?));
             }
-            [Flat::Arg(ns), Flat::Word(ARROW, _), Flat::Arg(call)] => {
-                let namespace = self.namespace_name(ns)?;
+            [Flat::Arg(left), Flat::Word(ARROW, _), Flat::Arg(call)] => {
+                let qualifier = self.qualifier(left)?;
                 if braces(call).is_some() {
                     return self.err(
                         call.span,
-                        format!("a scope block `{namespace} -> {{ ... }}` is a statement; use it on its own, not inside an expression"),
+                        format!("a scope block `{qualifier} -> {{ ... }}` is a statement; use it on its own, not inside an expression"),
                     );
                 }
                 let call = match flatten(call).as_slice() {
                     [Flat::Arg(_)] => {
                         return self.err(
                             call.span,
-                            format!("`->` takes a call on its right, found a value; write the call to resolve in `{namespace}`: `{namespace} -> name`"),
+                            format!("`->` takes a call on its right, found a value; write the call to resolve in `{qualifier}`: `{qualifier} -> name`"),
                         );
                     }
                     items => items.iter().map(|f| self.seq_item(f)).collect::<Res<_>>()?,
                 };
-                return mk(ExprKind::Qualified { namespace, call });
+                return mk(ExprKind::Qualified { qualifier, call });
             }
             _ => {}
         }

@@ -342,8 +342,8 @@ mod qualifiers {
     /// becomes `git -> (commit "x")`.
     fn shape(e: &Expr) -> String {
         match &e.k {
-            ExprKind::Qualified { namespace, call } => format!(
-                "{namespace} -> ({})",
+            ExprKind::Qualified { qualifier, call } => format!(
+                "{qualifier} -> ({})",
                 shape(&Expr {
                     k: ExprKind::Seq(call.clone()),
                     span: e.span,
@@ -367,7 +367,9 @@ mod qualifiers {
                 .join(" "),
             ExprKind::Str(s) => format!("{s:?}"),
             ExprKind::Int(n) => n.to_string(),
-            ExprKind::Brace(fields) if fields.is_empty() => "{}".into(),
+            ExprKind::Brace(fields, functions) if fields.is_empty() && functions.is_empty() => {
+                "{}".into()
+            }
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -583,10 +585,15 @@ fd -> name (m),
     }
 
     #[test]
-    fn the_left_of_the_arrow_is_a_namespace_name() {
+    fn the_left_of_the_arrow_is_a_namespace_or_a_variable() {
         let mut s = session_with_fd();
+        let msg = err(&mut s, r#"y .-> find "a","#);
+        assert!(msg.contains("unknown namespace `y`"), "{msg}");
         let msg = err(&mut s, r#"LET (x) : 1, x .-> find "a","#);
-        assert!(msg.contains("unknown namespace `x`"), "{msg}");
+        assert!(
+            msg.contains("`x` is a variable of type Int, which has no function members"),
+            "{msg}"
+        );
         let msg = err(&mut s, r#"(1) -> find "a","#);
         assert!(msg.contains("a single lowercase word"), "{msg}");
     }
@@ -966,7 +973,7 @@ MATCH (r) { { n (n) } : n },
         let [Item::Stmt(resh::ast::Stmt::Expr(e))] = items.as_slice() else {
             panic!("expected one expression");
         };
-        let resh::ast::ExprKind::Brace(entries) = &e.k else {
+        let resh::ast::ExprKind::Brace(entries, _) = &e.k else {
             panic!("expected a brace literal");
         };
         let lens: Vec<usize> = entries.iter().map(|e| e.items.len()).collect();
@@ -2609,7 +2616,7 @@ FUNCTION (open (b: Box (T))) RETURNS (T) { MATCH (b) { { value (v) } : v } },
     fn a_field_uses_only_declared_parameters() {
         let msg = run_err("RECORD (Box (T)) { value (U) },");
         assert!(
-            msg.contains("uses type parameter `U`, which `Box (T)` does not declare"),
+            msg.contains("`value (U)` uses type parameter `U`, which `Box (T)` does not declare"),
             "{msg}"
         );
     }
@@ -2626,5 +2633,173 @@ FUNCTION (open (b: Box (T))) RETURNS (T) { MATCH (b) { { value (v) } : v } },
             msg.contains("a type parameter is a single capital letter"),
             "{msg}"
         );
+    }
+}
+
+mod modules {
+    use super::{render, run, run_err};
+    use resh::Value;
+
+    const ORDER: &str = r#"
+ENUM (Ordering) { less, equal, greater },
+RECORD (Order (T)) {
+    FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering),
+},
+## No fold in the prelude yet, so this `max` looks at three items.
+FUNCTION (max (items: List (T)) by (order: Order (T))) RETURNS (T) {
+    LET (a) : items . item 0,
+    LET (b) : items . item 1,
+    LET (c) : items . item 2,
+    LET (ab) : MATCH (order -> (a) compare (b)) { less : b, (_) : a },
+    MATCH (order -> (ab) compare (c)) { less : c, (_) : ab }
+},
+FUNCTION (reversed (order: Order (T))) RETURNS (Order (T)) {
+    { FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) { order -> (b) compare (a) } }
+},
+## Orders 1 < 2 < 3 by hand; the prelude has no Int comparison yet.
+LET (ints : Order (Int)) : {
+    FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) {
+        IF (a . equals (b)) THEN (equal) ELSE : IF (a . equals 3) THEN (greater) ELSE :
+        IF (b . equals 3) THEN (less) ELSE : IF (a . equals 2) THEN (greater) ELSE (less)
+    }
+},
+"#;
+
+    fn with_order(src: &str) -> String {
+        format!("{ORDER}\n{src}")
+    }
+
+    #[test]
+    fn a_function_member_is_called_with_the_arrow() {
+        let src = with_order("ints -> (1) compare (2), ints -> (3) compare (3),");
+        assert_eq!(render(&src), "equal");
+        assert_eq!(run(&src).len(), 2);
+    }
+
+    #[test]
+    fn a_module_is_an_argument() {
+        let src = with_order("max [3, 1, 2] by (ints), max [1, 2, 3] by (ints),");
+        assert_eq!(run(&src), vec![Value::Int(3), Value::Int(3)]);
+    }
+
+    #[test]
+    fn a_function_can_return_a_module() {
+        let src = with_order("max [3, 1, 2] by (reversed (ints)),");
+        assert_eq!(run(&src), vec![Value::Int(1)]);
+    }
+
+    #[test]
+    fn a_literal_module_is_passed_directly() {
+        let src = with_order(
+            "max [\"a\", \"b\", \"c\"] by { FUNCTION ((a: String) compare (b: String)) RETURNS (Ordering) { less } },",
+        );
+        assert_eq!(run(&src), vec![Value::Str("c".into())]);
+    }
+
+    #[test]
+    fn a_member_body_captures_surrounding_variables() {
+        let src = r#"
+RECORD (Greeter) { FUNCTION ((name: String) greeting) RETURNS (String) },
+FUNCTION (greeter (hello: String)) RETURNS (Greeter) {
+    { FUNCTION ((name: String) greeting) RETURNS (String) { join (hello) with (name) } }
+},
+LET (g) : greeter "hi ",
+g -> "bo" greeting,
+"#;
+        assert_eq!(run(src), vec![Value::Str("hi bo".into())]);
+    }
+
+    #[test]
+    fn a_member_body_does_not_see_the_other_members() {
+        let msg = run_err(
+            "RECORD (Pair Fn) { FUNCTION (one) RETURNS (Int), FUNCTION (two) RETURNS (Int) },\nLET (p : Pair Fn) : { FUNCTION (one) RETURNS (Int) { 1 }, FUNCTION (two) RETURNS (Int) { one } },",
+        );
+        assert!(msg.contains("unknown name `one`"), "{msg}");
+    }
+
+    #[test]
+    fn function_members_may_be_overloaded() {
+        let src = r#"
+RECORD (Show) {
+    name (String),
+    FUNCTION ((n: Int) shown) RETURNS (String),
+    FUNCTION ((s: String) shown) RETURNS (String),
+},
+LET (show : Show) : {
+    name "plain",
+    FUNCTION ((n: Int) shown) RETURNS (String) { n . to string },
+    FUNCTION ((s: String) shown) RETURNS (String) { join "'" with (s) },
+},
+show -> 1 shown,
+show -> "x" shown,
+MATCH (show) { { name (n) } : n },
+"#;
+        assert_eq!(
+            run(src),
+            vec![
+                Value::Str("1".into()),
+                Value::Str("'x".into()),
+                Value::Str("plain".into())
+            ]
+        );
+        let msg = run_err(
+            "RECORD (Show) { FUNCTION ((n: Int) shown) RETURNS (String), FUNCTION ((m: Int) shown) RETURNS (Int) },",
+        );
+        assert!(msg.contains("clashes with"), "{msg}");
+    }
+
+    #[test]
+    fn a_literal_that_does_not_fit_names_each_member() {
+        let msg = run_err(&with_order("max [1, 2, 3] by {},"));
+        assert!(
+            msg.contains("missing `FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering)`"),
+            "{msg}"
+        );
+        let msg = run_err(&with_order(
+            "max [1, 2, 3] by { FUNCTION ((a: String) compare (b: String)) RETURNS (Ordering) { less } },",
+        ));
+        assert!(
+            msg.contains("`FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering)` is wanted, but found `FUNCTION ((a: String) compare (b: String)) RETURNS (Ordering)`"),
+            "{msg}"
+        );
+        let msg = run_err(&with_order(
+            "LET (o : Order (Int)) : { FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { less }, FUNCTION (extra) RETURNS (Int) { 1 } },",
+        ));
+        assert!(
+            msg.contains("`FUNCTION (extra) RETURNS (Int)` is not a function member"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn a_member_declaration_has_a_return_type_and_no_body() {
+        let msg = run_err("RECORD (Bad) { FUNCTION ((a: Int) f) },");
+        assert!(msg.contains("the return type is required"), "{msg}");
+        let msg = run_err("RECORD (Bad) { FUNCTION ((a: Int) f) RETURNS (Int) { a } },");
+        assert!(msg.contains("there is no body"), "{msg}");
+    }
+
+    #[test]
+    fn the_arrow_needs_a_value_with_function_members() {
+        let msg = run_err("LET (n) : 1, n -> (1) compare (2),");
+        assert!(
+            msg.contains("`n` is a variable of type Int, which has no function members"),
+            "{msg}"
+        );
+        let msg = run_err(&with_order("ints -> nope,"));
+        assert!(
+            msg.contains("no function member of `ints` (Order (Int)) matches `nope`"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn a_module_prints_its_functions_and_has_no_equality() {
+        assert_eq!(
+            render(&with_order("ints,")),
+            "{ FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) <function> }"
+        );
+        let msg = run_err(&with_order("ints . equals (ints),"));
+        assert!(msg.contains("`equals` cannot compare Order (Int)"), "{msg}");
     }
 }

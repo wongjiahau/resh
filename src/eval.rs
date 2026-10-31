@@ -55,17 +55,18 @@ pub enum Value {
     Unit,
     List(Vec<Value>),
     Tuple(Vec<Value>),
-    /// record type name, field values in declaration order
+    /// record type name, field values in declaration order, then its
+    /// function members
     Record(String, Vec<Value>),
     /// enum name, variant index, arguments
     Variant(String, usize, Vec<Value>),
-    /// A lambda with the environment it was written in.
+    /// A lambda or function member with the environment it was written in.
     Closure(Rc<Closure>),
 }
 
 #[derive(Debug)]
 pub struct Closure {
-    param: String,
+    params: Vec<String>,
     body: Ir,
     env: Vec<(String, Value)>,
 }
@@ -152,12 +153,12 @@ impl Interp {
     pub fn eval(&self, ir: &Ir, env: &mut Env) -> Result<Value, String> {
         match ir {
             Ir::Lit(v) => Ok(v.clone()),
-            Ir::Lambda(param, body) => Ok(Value::Closure(Rc::new(Closure {
-                param: param.clone(),
+            Ir::Lambda(params, body) => Ok(Value::Closure(Rc::new(Closure {
+                params: params.clone(),
                 body: (**body).clone(),
                 env: env.clone(),
             }))),
-            Ir::Struct(_) => Err("unresolved record literal (checker bug)".into()),
+            Ir::Struct(..) => Err("unresolved record literal (checker bug)".into()),
             Ir::Var(n) => env
                 .iter()
                 .rev()
@@ -236,6 +237,19 @@ impl Interp {
                 }
                 Err("internal error: no MATCH arm matched".into())
             }
+            Ir::CallMember(record, at, args) => {
+                let Value::Record(_, vals) = self.eval(record, env)? else {
+                    return Err("internal error: calling a member of a non-record".into());
+                };
+                let vals_args: Vec<Value> = args
+                    .iter()
+                    .map(|a| self.eval(a, env))
+                    .collect::<Result<_, _>>()?;
+                let f = vals
+                    .get(*at)
+                    .ok_or("internal error: missing function member")?;
+                self.apply(f, vals_args)
+            }
             Ir::Call(id, args) => {
                 let vals: Vec<Value> = args
                     .iter()
@@ -259,12 +273,12 @@ impl Interp {
         }
     }
 
-    fn apply(&self, f: &Value, arg: Value) -> Result<Value, String> {
+    fn apply(&self, f: &Value, args: Vec<Value>) -> Result<Value, String> {
         let Value::Closure(c) = f else {
             return Err("internal error: calling a non-function".into());
         };
         let mut env = c.env.clone();
-        env.push((c.param.clone(), arg));
+        env.extend(c.params.iter().cloned().zip(args));
         self.eval(&c.body, &mut env)
     }
 
@@ -379,7 +393,7 @@ impl Interp {
             "int_to_string" | "float_to_string" => Ok(Value::Str(self.render(&a[0], false))),
             "map_result" => match &a[0] {
                 Value::Variant(n, 0, args) => {
-                    let v = self.apply(&a[1], args[0].clone())?;
+                    let v = self.apply(&a[1], vec![args[0].clone()])?;
                     Ok(Value::Variant(n.clone(), 0, vec![v]))
                 }
                 other => Ok(other.clone()),
@@ -419,7 +433,7 @@ impl Interp {
                 };
                 let mut out = Vec::new();
                 for x in xs {
-                    match self.apply(&a[1], x.clone())? {
+                    match self.apply(&a[1], vec![x.clone()])? {
                         Value::List(ys) => out.extend(ys),
                         _ => return Err("flat map: the function must return a list".into()),
                     }
@@ -522,6 +536,15 @@ impl Interp {
         })
     }
 
+    /// The function members of a record value as literal entries, with
+    /// `<function>` for each body: `FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) <function>`.
+    fn record_functions(&self, name: &str) -> impl Iterator<Item = String> + '_ {
+        self.ck.records[name]
+            .functions
+            .iter()
+            .map(|m| format!("{m} <function>"))
+    }
+
     /// A field as a literal entry: its words with each `_` replaced by the
     /// slot value, parenthesized unless it is a single-token atom.
     fn phrase(&self, key: &str, vals: &[Value], show: impl Fn(&Value) -> String) -> String {
@@ -575,6 +598,7 @@ impl Interp {
                 let body: Vec<String> = self
                     .record_fields(n, fs)
                     .map(|(d, xs)| self.phrase(&d.key, xs, |x| self.compact(x)))
+                    .chain(self.record_functions(n))
                     .collect();
                 format!("{{ {} }}", body.join(", "))
             }
@@ -620,6 +644,7 @@ impl Interp {
                             self.phrase(&d.key, xs, |x| self.pretty(x, ind + 2))
                         )
                     })
+                    .chain(self.record_functions(n).map(|f| format!("{pad}{f}")))
                     .collect();
                 format!("{{\n{}\n{end}}}", rows.join(",\n"))
             }
@@ -674,6 +699,12 @@ impl Interp {
                         };
                         format!("{}:{value}", json_str(&name.join(" ")))
                     })
+                    .chain(self.ck.records[n].functions.iter().map(|m| {
+                        format!(
+                            "{}:\"<function>\"",
+                            json_str(&crate::check::label(&m.parts))
+                        )
+                    }))
                     .collect();
                 format!("{{{}}}", body.join(","))
             }
