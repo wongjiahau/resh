@@ -32,5 +32,10 @@
 - A new construct is a new keyword or shape read from that tree. Don't add
   tokens, operators or a recursive-descent parser of resh's own: chaining goes
   through `.` (left) and `:` (right), as `crates/anyfix-expr/README.md` says.
+- resh's own forms use word keywords only (`LET`, `IF`, `MATCH`, `AS`, ...),
+  never symbol words. Every symbol word (`=`, `->`, `=>`, `*`, `++`, ...) is
+  left to users, so they can declare it as an ordinary function such as
+  `_ = _`. The `=`, `->`, `=>` and `*` forms in `src/parser.rs` are legacy;
+  don't add more like them.
 - Matching a call's `Seq` against declared signatures stays in the checker
   (`src/check.rs`), since only it knows the signatures.
