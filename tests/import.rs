@@ -37,7 +37,7 @@ fn unknown_library_lists_the_available_ones() {
 #[test]
 fn import_works_in_a_file_with_a_namespace() {
     let mut s = session();
-    s.run("NAMESPACE : mine,\nIMPORT : git,\nFUNCTION : hello -> String = { \"hi\" }")
+    s.run("NAMESPACE : mine,\nIMPORT : git,\nFUNCTION : hello . RETURNS (String) : { \"hi\" }")
         .unwrap();
     assert!(s.namespaces().contains(&"git".to_string()));
 }
@@ -48,12 +48,12 @@ fn user_library_wins_over_bundled_and_adds_new_ones() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("tool.resh"),
-        "NAMESPACE : tool,\nFUNCTION : hello -> String = { \"hi\" }\n",
+        "NAMESPACE : tool,\nFUNCTION : hello . RETURNS (String) : { \"hi\" }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("git.resh"),
-        "NAMESPACE : git,\nFUNCTION : mine -> Int = { 1 }\n",
+        "NAMESPACE : git,\nFUNCTION : mine . RETURNS (Int) : { 1 }\n",
     )
     .unwrap();
     let mut s = Session::new();
@@ -107,7 +107,7 @@ fn raw_unwraps_results_and_unescapes_strings() {
     s.set_runner(Box::new(|_, _| Ok("a\nb\n".to_string())));
     let mut seen = Vec::new();
     s.run_with(
-        "run (\"x\", []),\nrun (\"x\", []) . map _ with : (t) => (t) lines,",
+        "run (\"x\", []),\nrun (\"x\", []) . map _ with : FN (t) : (t) lines,",
         &mut |i, v| seen.push(i.raw(v)),
     )
     .unwrap();

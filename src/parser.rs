@@ -13,7 +13,9 @@ use crate::ast::*;
 use crate::diag::{Diag, Res, Span};
 
 /// The words resh gives a meaning to. Keywords are uppercase, so a lowercase
-/// word (`match`, `if`) stays free for user names.
+/// word (`match`, `if`) stays free for user names. resh's own forms use only
+/// these words, never symbol words, so every symbol word (`=`, `->`, `++`)
+/// stays free for user-declared operators.
 pub const KEYWORDS: &[&str] = &[
     "FUNCTION",
     "RECORD",
@@ -26,6 +28,9 @@ pub const KEYWORDS: &[&str] = &[
     "IF",
     "THEN",
     "ELSE",
+    "RETURNS",
+    "FN",
+    "SPREAD",
     "NATIVE",
     "DEFAULT",
     "AS",
@@ -216,7 +221,9 @@ impl Reader<'_> {
     // ---------- declarations ----------
 
     /// A declaration is `KEYWORD : thing`, where `thing` has a fixed shape:
-    /// `signature -> Type = { body }`, `Name = { ... }`, `Pattern = Type`.
+    /// `signature . RETURNS (Type) : { body }`, `Name : { ... }`, `Pattern : Type`.
+    /// Without `RETURNS`, the last slot of `thing` is the body (or the target
+    /// type) and everything before it is the name.
     fn decl(&self, node: &Node) -> Res<Option<Decl>> {
         let flat = flatten(node);
         let doc = self.docs.get(&self.at(node.span).line).cloned();
@@ -243,16 +250,21 @@ impl Reader<'_> {
                 "FUNCTION",
                 [
                     Flat::Arg(sig),
-                    Flat::Word("->", _),
+                    Flat::Word("RETURNS", _),
                     Flat::Arg(ret),
-                    Flat::Word("=", _),
                     Flat::Arg(body),
                 ],
-            ) => self.function(sig, Some(self.ty(ret)?), body, doc).map(Some),
-            ("FUNCTION", [Flat::Arg(sig), Flat::Word("=", _), Flat::Arg(body)]) => {
-                self.function(sig, None, body, doc).map(Some)
-            }
-            ("RECORD", [Flat::Arg(name), Flat::Word("=", _), Flat::Arg(body)]) => {
+            ) => self
+                .function(&flatten(sig), sig.span, Some(self.ty(ret)?), body, doc)
+                .map(Some),
+            (_, parts) if parts.iter().any(|f| matches!(f, Flat::Word("RETURNS", _))) => self.err(
+                thing.span,
+                "a return type is written `signature . RETURNS (Type) : { body }`, with the type in parentheses",
+            ),
+            ("FUNCTION", [sig @ .., Flat::Arg(body)]) if !sig.is_empty() => self
+                .function(sig, thing.span, None, body, doc)
+                .map(Some),
+            ("RECORD", [name @ .., Flat::Arg(body)]) if !name.is_empty() => {
                 let Some(body) = braces(body) else {
                     return self.decl_shape(node, keyword);
                 };
@@ -263,7 +275,7 @@ impl Reader<'_> {
                     doc,
                 }))
             }
-            ("ENUM", [Flat::Arg(name), Flat::Word("=", _), Flat::Arg(body)]) => {
+            ("ENUM", [name @ .., Flat::Arg(body)]) if !name.is_empty() => {
                 let Some(body) = braces(body) else {
                     return self.decl_shape(node, keyword);
                 };
@@ -277,9 +289,9 @@ impl Reader<'_> {
                     doc,
                 }))
             }
-            ("TYPE", [Flat::Arg(pattern), Flat::Word("=", _), Flat::Arg(target)]) => {
+            ("TYPE", [pattern @ .., Flat::Arg(target)]) if !pattern.is_empty() => {
                 Ok(Some(Decl::Alias {
-                    pattern: self.ty(pattern)?,
+                    pattern: self.ty_flat(pattern, thing.span)?,
                     target: self.ty(target)?,
                     span,
                 }))
@@ -291,11 +303,11 @@ impl Reader<'_> {
     fn decl_shape<T>(&self, node: &Node, keyword: &str) -> Res<T> {
         let shape = match keyword {
             "FUNCTION" => {
-                "`FUNCTION : signature -> Type = { body }`, or `FUNCTION : signature = { body }` without a return type"
+                "`FUNCTION : signature . RETURNS (Type) : { body }`, or `FUNCTION : signature : { body }` without a return type"
             }
-            "RECORD" => "`RECORD : Name = { field (Type), ... }`",
-            "ENUM" => "`ENUM : Name = { variant, ... }`",
-            _ => "`TYPE : Name (T) = Type`",
+            "RECORD" => "`RECORD : Name : { field (Type), ... }`",
+            "ENUM" => "`ENUM : Name : { variant, ... }`",
+            _ => "`TYPE : Name (T) : Type`",
         };
         self.err(
             node.span,
@@ -305,7 +317,8 @@ impl Reader<'_> {
 
     fn function(
         &self,
-        sig: &Node,
+        sig: &[Flat],
+        sig_span: anyfix_expr::Span,
         ret: Option<TyExpr>,
         body: &Node,
         doc: Option<String>,
@@ -313,10 +326,10 @@ impl Reader<'_> {
         let Some(body) = braces(body) else {
             return self.err(
                 body.span,
-                format!("expected `{{ ... }}` with the function body after `=`; is a `,` missing after a `}}`? ({SEPARATE})"),
+                format!("expected `{{ ... }}` with the function body after `:`; is a `,` missing after a `}}`? ({SEPARATE})"),
             );
         };
-        let sig = self.signature(&flatten(sig), false, sig.span)?;
+        let sig = self.signature(sig, false, sig_span)?;
         let body = match body {
             [native] => match flatten(native).as_slice() {
                 [Flat::Word("NATIVE", _), Flat::Arg(name)] => match &name.kind {
@@ -336,10 +349,10 @@ impl Reader<'_> {
     }
 
     /// A declared type name: capitalized words only.
-    fn decl_name(&self, node: &Node) -> Res<String> {
+    fn decl_name(&self, items: &[Flat]) -> Res<String> {
         let mut words = Vec::new();
-        for item in flatten(node) {
-            match item {
+        for item in items {
+            match *item {
                 Flat::Word(w, s) => {
                     self.check_capitalized(w, s)?;
                     words.push(w);
@@ -356,12 +369,6 @@ impl Reader<'_> {
         let parts = items
             .iter()
             .map(|item| match item {
-                Flat::Word(w, s) if is_symbol(w) => self.err(
-                    *s,
-                    format!(
-                        "`{w}` cannot be part of a name; {SEPARATE}, and a return type follows `->`"
-                    ),
-                ),
                 Flat::Word(w, _) => Ok(Part::Word(w.to_string())),
                 Flat::Arg(n) => self.param(n, bare_types),
             })
@@ -558,9 +565,6 @@ impl Reader<'_> {
                 )),
                 None => Ok(Stmt::Expr(self.expr(node)?)),
             },
-            [Flat::Arg(left), Flat::Word("=", _), ..] if head(&flatten(left)) == Some("LET") => {
-                self.let_shape(node)
-            }
             _ => {
                 if let Some(keyword) = head(&flat).filter(|k| {
                     ["FUNCTION", "RECORD", "ENUM", "TYPE", "NAMESPACE", "IMPORT"].contains(k)
@@ -680,11 +684,11 @@ impl Reader<'_> {
                     Box::new(self.expr(no)?),
                 ));
             }
-            [Flat::Arg(param), Flat::Word("=>", _), Flat::Arg(body)] => {
+            [Flat::Word("FN", _), Flat::Arg(param), Flat::Arg(body)] => {
                 let Some(name) = single_word(param) else {
                     return self.err(
                         param.span,
-                        "a lambda is written `(name) => body`: exactly one parameter name in parentheses",
+                        "a lambda is written `FN (name) : body`: exactly one parameter name in parentheses",
                     );
                 };
                 return mk(ExprKind::Lambda(
@@ -692,7 +696,7 @@ impl Reader<'_> {
                     Box::new(self.expr(body)?),
                 ));
             }
-            [Flat::Word("*", _), Flat::Arg(list)] => {
+            [Flat::Word("SPREAD", _), Flat::Arg(list)] => {
                 return mk(ExprKind::Spread(Box::new(self.expr(list)?)));
             }
             _ => {}
@@ -709,13 +713,18 @@ impl Reader<'_> {
         }
         for (keyword, shape) in [
             ("IF", "`IF (condition) THEN (value) ELSE (value)`"),
-            ("THEN", "`IF (condition) THEN (value) ELSE (value)`"),
+            (
+                "THEN",
+                "`IF (condition) THEN (value) ELSE (value)` (or a MATCH arm `pattern . THEN : value`)",
+            ),
             ("ELSE", "`IF (condition) THEN (value) ELSE (value)`"),
             (
                 "MATCH",
                 "`MATCH (value) { arms }` or `value . MATCH { arms }`",
             ),
             ("AS", "`(value) AS (Type)`"),
+            ("FN", "`FN (name) : body`"),
+            ("SPREAD", "`SPREAD (list)`"),
         ] {
             if let Some(i) = word_at(keyword) {
                 return self.err(
@@ -726,28 +735,16 @@ impl Reader<'_> {
                 );
             }
         }
-        for item in items {
-            if let Flat::Word(w, s) = item {
-                if KEYWORDS.contains(w) {
-                    return self.err(
-                        *s,
-                        format!(
-                            "`{w}` cannot appear in the middle of a call; is a `,` missing before it? ({SEPARATE})"
-                        ),
-                    );
-                }
-                if *w == ";" {
-                    return self.err(*s, format!("`;` does not end a statement; {SEPARATE}"));
-                }
-                if is_symbol(w) {
-                    return self.err(
-                        *s,
-                        format!(
-                            "`{w}` is not an operator in resh; `.` and `:` chain calls, `=>` writes a lambda or a MATCH arm, `->` a return type"
-                        ),
-                    );
-                }
-            }
+        if let Some((w, s)) = items.iter().find_map(|item| match item {
+            Flat::Word(w, s) if KEYWORDS.contains(w) => Some((w, s)),
+            _ => None,
+        }) {
+            return self.err(
+                *s,
+                format!(
+                    "`{w}` cannot appear in the middle of a call; is a `,` missing before it? ({SEPARATE})"
+                ),
+            );
         }
         mk(ExprKind::Seq(
             items.iter().map(|f| self.seq_item(f)).collect::<Res<_>>()?,
@@ -766,12 +763,12 @@ impl Reader<'_> {
         let mut arms = Vec::new();
         for arm in braces(arms_node).expect("checked above") {
             match flatten(arm).as_slice() {
-                [Flat::Arg(pat), Flat::Word("=>", _), Flat::Arg(body)] => arms.push(Arm {
+                [Flat::Arg(pat), Flat::Word("THEN", _), Flat::Arg(body)] => arms.push(Arm {
                     pat: self.pattern(pat)?,
                     body: self.expr(body)?,
                     span: self.at(arm.span),
                 }),
-                _ => return self.err(arm.span, "expected a MATCH arm `pattern => value`"),
+                _ => return self.err(arm.span, "expected a MATCH arm `pattern . THEN : value`"),
             }
         }
         Ok(Expr {
@@ -790,9 +787,6 @@ impl Reader<'_> {
             NodeKind::Call(_) => flatten(node)
                 .iter()
                 .map(|item| match item {
-                    Flat::Word(w, s) if is_symbol(w) => {
-                        self.err(*s, format!("`{w}` cannot appear in a pattern"))
-                    }
                     Flat::Word(w, _) => Ok(PatItem::Word(w.to_string())),
                     Flat::Arg(slot) => self.pattern_slot(slot),
                 })

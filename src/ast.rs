@@ -71,7 +71,7 @@ pub enum Decl {
         span: Span,
         doc: Option<String>,
     },
-    /// `TYPE Result (T) = Result (T) Or (String)`: `pattern` names the alias and its
+    /// `TYPE : Result (T) : Result (T) Or (String)`: `pattern` names the alias and its
     /// type parameters, `target` is what it stands for.
     Alias {
         pattern: TyExpr,
@@ -115,9 +115,9 @@ pub enum ExprKind {
     /// which also reads a leading namespace argument (`git.status`) as a
     /// qualifier.
     Seq(Vec<SeqItem>),
-    /// `[a, *b, c]`: elements may be `Spread`.
+    /// `[a, SPREAD (b), c]`: elements may be `Spread`.
     List(Vec<Expr>),
-    /// `*xs`: splices a list into the list literal that contains it.
+    /// `SPREAD (xs)`: splices a list into the list literal that contains it.
     Spread(Box<Expr>),
     /// `(a, b)`: two or more values.
     Tuple(Vec<Expr>),
@@ -127,7 +127,7 @@ pub enum ExprKind {
     Match(Box<Expr>, Vec<Arm>),
     /// `expr AS Type`: states the type an expression must fit.
     Ascribe(Box<Expr>, TyExpr),
-    /// `(x) => body`: a function value of one parameter.
+    /// `FN (x) : body`: a function value of one parameter.
     Lambda(String, Box<Expr>),
 }
 

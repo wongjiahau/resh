@@ -1,10 +1,10 @@
 # Standard library. Written in resh itself; bodies are native Rust.
 
-ENUM : Sort Key = { name, size, modified time, extension, unsorted },
+ENUM : Sort Key : { name, size, modified time, extension, unsorted },
 
 ## Mirrors `ls`: recursive = -R, include hidden file = -A, directory itself = -d,
 ## reverse = -r, follow symlink = -L, sort by = (-S | -t | -X | -U; default by name).
-RECORD : List Options = {
+RECORD : List Options : {
     recursive (Boolean . DEFAULT (false)),
     include hidden file (Boolean . DEFAULT (false)),
     directory itself (Boolean . DEFAULT (false)),
@@ -14,13 +14,13 @@ RECORD : List Options = {
 },
 
 ## A fallible result whose error is a message.
-TYPE : Result (T) = Result (T) Or (String),
+TYPE : Result (T) : Result (T) Or (String),
 
-ENUM : Entry Kind = { file, directory, symlink },
+ENUM : Entry Kind : { file, directory, symlink },
 
 ## Every field `ls -l -i -s` can show; times are Unix seconds, `size` is bytes (0 for non-files).
 ## Read it with a single-case MATCH.
-RECORD : Entry = {
+RECORD : Entry : {
     path (String),
     kind (Entry Kind),
     size (Int),
@@ -37,48 +37,48 @@ RECORD : Entry = {
     link target (Option (String))
 },
 
-FUNCTION : list file -> Result (List (Entry)) = { NATIVE "list_default" },
-FUNCTION : list file in (dir: String) -> Result (List (Entry)) = { NATIVE "list_in_default" },
-FUNCTION : list file (options: List Options) -> Result (List (Entry)) = { NATIVE "list_file" },
-FUNCTION : list file in (dir: String) (options: List Options) -> Result (List (Entry)) = { NATIVE "list_file_in" },
+FUNCTION : list file . RETURNS (Result (List (Entry))) : { NATIVE "list_default" },
+FUNCTION : list file in (dir: String) . RETURNS (Result (List (Entry))) : { NATIVE "list_in_default" },
+FUNCTION : list file (options: List Options) . RETURNS (Result (List (Entry))) : { NATIVE "list_file" },
+FUNCTION : list file in (dir: String) (options: List Options) . RETURNS (Result (List (Entry))) : { NATIVE "list_file_in" },
 ## Sets the directory that `run` (and so every wrapper) and the file functions use from now on.
-FUNCTION : change directory to (path: String) -> Result (Unit) = { NATIVE "change_dir" },
-FUNCTION : current directory -> Result (String) = { NATIVE "current_dir" },
-FUNCTION : read file (path: String) -> Result (String) = { NATIVE "read_file" },
-FUNCTION : write (text: String) to file (path: String) -> Result (Unit) = { NATIVE "write_file" },
-FUNCTION : move (from: String) to (to: String) -> Result (Unit) = { NATIVE "move_path" },
+FUNCTION : change directory to (path: String) . RETURNS (Result (Unit)) : { NATIVE "change_dir" },
+FUNCTION : current directory . RETURNS (Result (String)) : { NATIVE "current_dir" },
+FUNCTION : read file (path: String) . RETURNS (Result (String)) : { NATIVE "read_file" },
+FUNCTION : write (text: String) to file (path: String) . RETURNS (Result (Unit)) : { NATIVE "write_file" },
+FUNCTION : move (from: String) to (to: String) . RETURNS (Result (Unit)) : { NATIVE "move_path" },
 
-FUNCTION : run ((command: String, args: List (String))) -> Result (String) = { NATIVE "run" },
-FUNCTION : print (value: T) -> Unit = { NATIVE "print" },
-FUNCTION : count (items: List (T)) -> Int = { NATIVE "count" },
-FUNCTION : filter (items: List (Entry)) by extension (extension: String) -> List (Entry) = { NATIVE "filter_ext" },
-FUNCTION : flat map (items: List (T)) with (f: Function (T) To (List (U))) -> List (U) = { NATIVE "flat_map" },
-FUNCTION : flat map (items: Set (T)) with (f: Function (T) To (List (U))) -> List (U) = { NATIVE "flat_map" },
-FUNCTION : map (result: Result (T) Or (E)) with (f: Function (T) To (U)) -> Result (U) Or (E) = { NATIVE "map_result" },
-FUNCTION : (n: Int) to string -> String = { NATIVE "int_to_string" },
-FUNCTION : (n: Float) to string -> String = { NATIVE "float_to_string" },
-FUNCTION : (text: String) lines -> List (String) = { NATIVE "lines_of" },
-FUNCTION : (text: String) split on (separator: String) at most (parts: Int) -> List (String) = { NATIVE "split_on" },
-FUNCTION : (items: List (T)) item (index: Int) -> T = { NATIVE "item_at" },
-FUNCTION : (text: String) to int -> Result (Int) = { NATIVE "string_to_int" },
-FUNCTION : join (a: String) with (b: String) -> String = { NATIVE "join_with" },
-FUNCTION : join (a: List (T)) with (b: List (T)) -> List (T) = { NATIVE "join_with" },
-FUNCTION : (a: T) equals (b: T) -> Boolean = { NATIVE "equals" },
-FUNCTION : unwrap (result: Result (T) Or (E)) -> T = { NATIVE "unwrap" },
-FUNCTION : human size of (bytes: Int) -> String = { NATIVE "human_size" },
+FUNCTION : run ((command: String, args: List (String))) . RETURNS (Result (String)) : { NATIVE "run" },
+FUNCTION : print (value: T) . RETURNS (Unit) : { NATIVE "print" },
+FUNCTION : count (items: List (T)) . RETURNS (Int) : { NATIVE "count" },
+FUNCTION : filter (items: List (Entry)) by extension (extension: String) . RETURNS (List (Entry)) : { NATIVE "filter_ext" },
+FUNCTION : flat map (items: List (T)) with (f: Function (T) To (List (U))) . RETURNS (List (U)) : { NATIVE "flat_map" },
+FUNCTION : flat map (items: Set (T)) with (f: Function (T) To (List (U))) . RETURNS (List (U)) : { NATIVE "flat_map" },
+FUNCTION : map (result: Result (T) Or (E)) with (f: Function (T) To (U)) . RETURNS (Result (U) Or (E)) : { NATIVE "map_result" },
+FUNCTION : (n: Int) to string . RETURNS (String) : { NATIVE "int_to_string" },
+FUNCTION : (n: Float) to string . RETURNS (String) : { NATIVE "float_to_string" },
+FUNCTION : (text: String) lines . RETURNS (List (String)) : { NATIVE "lines_of" },
+FUNCTION : (text: String) split on (separator: String) at most (parts: Int) . RETURNS (List (String)) : { NATIVE "split_on" },
+FUNCTION : (items: List (T)) item (index: Int) . RETURNS (T) : { NATIVE "item_at" },
+FUNCTION : (text: String) to int . RETURNS (Result (Int)) : { NATIVE "string_to_int" },
+FUNCTION : join (a: String) with (b: String) . RETURNS (String) : { NATIVE "join_with" },
+FUNCTION : join (a: List (T)) with (b: List (T)) . RETURNS (List (T)) : { NATIVE "join_with" },
+FUNCTION : (a: T) equals (b: T) . RETURNS (Boolean) : { NATIVE "equals" },
+FUNCTION : unwrap (result: Result (T) Or (E)) . RETURNS (T) : { NATIVE "unwrap" },
+FUNCTION : human size of (bytes: Int) . RETURNS (String) : { NATIVE "human_size" },
 
 ## Units. `Size` is held in bytes and `Duration` in seconds; construct them only
 ## with the suffix functions below (`1 mb`, `5 days`), read them with the accessors.
-RECORD : Size = { byte count (Int) },
-RECORD : Duration = { second count (Int) },
+RECORD : Size : { byte count (Int) },
+RECORD : Duration : { second count (Int) },
 
-FUNCTION : (n: Int) kb -> Size = { NATIVE "unit_kb" },
-FUNCTION : (n: Int) mb -> Size = { NATIVE "unit_mb" },
-FUNCTION : (n: Int) gb -> Size = { NATIVE "unit_gb" },
-FUNCTION : (n: Int) seconds -> Duration = { NATIVE "unit_seconds" },
-FUNCTION : (n: Int) minutes -> Duration = { NATIVE "unit_minutes" },
-FUNCTION : (n: Int) hours -> Duration = { NATIVE "unit_hours" },
-FUNCTION : (n: Int) days -> Duration = { NATIVE "unit_days" },
-FUNCTION : (duration: Duration) ago -> Duration = { NATIVE "unit_ago" },
-FUNCTION : (size: Size) bytes -> Int = { NATIVE "unit_count" },
-FUNCTION : (duration: Duration) seconds -> Int = { NATIVE "unit_count" }
+FUNCTION : (n: Int) kb . RETURNS (Size) : { NATIVE "unit_kb" },
+FUNCTION : (n: Int) mb . RETURNS (Size) : { NATIVE "unit_mb" },
+FUNCTION : (n: Int) gb . RETURNS (Size) : { NATIVE "unit_gb" },
+FUNCTION : (n: Int) seconds . RETURNS (Duration) : { NATIVE "unit_seconds" },
+FUNCTION : (n: Int) minutes . RETURNS (Duration) : { NATIVE "unit_minutes" },
+FUNCTION : (n: Int) hours . RETURNS (Duration) : { NATIVE "unit_hours" },
+FUNCTION : (n: Int) days . RETURNS (Duration) : { NATIVE "unit_days" },
+FUNCTION : (duration: Duration) ago . RETURNS (Duration) : { NATIVE "unit_ago" },
+FUNCTION : (size: Size) bytes . RETURNS (Int) : { NATIVE "unit_count" },
+FUNCTION : (duration: Duration) seconds . RETURNS (Int) : { NATIVE "unit_count" }

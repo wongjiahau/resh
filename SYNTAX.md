@@ -57,7 +57,7 @@ the calls a meaning.
 
 ```
 LET (files) : list file in "src",
-FUNCTION : answer -> Int = { LET (x) : 41, x },
+FUNCTION : answer . RETURNS (Int) : { LET (x) : 41, x },
 answer,
 ```
 
@@ -97,8 +97,9 @@ print (1 mb)         # a call is several items, parentheses required
   pipeline: `files . filter _ by extension "rs" . count _`.
 - `f : x` puts `x` in a new last slot: `f (x)`. `:` is right associative and
   binds loosest; `LET`, `ELSE` chains and `MATCH` arms use it.
-- Both take whole runs, including symbol words like `=>`. In a MATCH arm or a
-  lambda, a body that uses `.` needs parentheses: `(t) => (t . lines)`.
+- Both take whole runs, including symbol words like `++`. A MATCH arm or a
+  lambda takes its body after a `:`, so the body may use `.` freely:
+  `FN (t) : t . lines`.
 
 Prefer them to parentheses. A value in a call's first slot goes before a `.`,
 and a long value in its last slot after a `:`; both give the same tree as the
@@ -108,14 +109,14 @@ parenthesized form:
 | --- | --- |
 | `(n) to string` | `n . to string` |
 | `((parts) item 1) to int` | `parts . item 1 . to int` |
-| `flat map (xs) with ((x) => [x, x])` | `flat map (xs) with : (x) => [x, x]` |
+| `flat map (xs) with (FN (x) : [x, x])` | `flat map (xs) with : FN (x) : [x, x]` |
 | `{ timeout (2 minutes) }` | `{ timeout : 2 minutes }` |
 
 Keep the parentheses when a call has several slots of the same kind, so they
 read alike: `size between (1 mb) and (5 gb)`.
 
 ```
-run ("git", ["log"]) . map _ with ((text) => (text) lines)
+run ("git", ["log"]) . map _ with (FN (text) : (text) lines)
 IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ```
 
@@ -124,9 +125,9 @@ IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ```
 NAMESPACE : git,
 
-RECORD : Commit = { hash (String), message (String) },
+RECORD : Commit : { hash (String), message (String) },
 
-FUNCTION : commit (message: String) -> Result (Commit) = { ... }
+FUNCTION : commit (message: String) . RETURNS (Result (Commit)) : { ... }
 ```
 
 - `NAMESPACE : name` applies file-wide: it must come first in the file, and every
@@ -141,9 +142,7 @@ FUNCTION : commit (message: String) -> Result (Commit) = { ... }
 - There is no file-level `USE`; callers qualify, or open a scope block (below).
 - A function that starts with a slot is qualified the same way:
   `fd.(option) argument`.
-- A qualified type is `git.Commit`. After `->`, put it in parentheses,
-  `-> (git.Commit) = { ... }`, since `.` would otherwise take the whole
-  signature as its left side.
+- A qualified type is `git.Commit`, e.g. `. RETURNS (git.Commit) : { ... }`.
 - Namespaces do not nest: a file has one `NAMESPACE : name` (a single word), so
   `a.b.c d` is a type error. Use flat anyfix names
   (`git.remote add (name) (url)`). See the README objective
@@ -240,19 +239,30 @@ in parentheses.
 | `MATCH (value) { arms }`, `value . MATCH { arms }` | `MATCH _ _`, `_ MATCH _` |
 | `(value) AS (Type)` | `_ AS _` |
 | `LET (name) : value`, `LET (name : Type) : value` | `LET _ _` |
-| `(param) => body`, `pattern => body` | `_ => _` |
-| `*list` | `* _` |
+| `FN (param) : body` | `FN _ _` |
+| `pattern . THEN : body` (a MATCH arm) | `_ THEN _` |
+| `SPREAD (list)` | `SPREAD _` |
 | `(Type . DEFAULT value)` in a field slot | `_ DEFAULT _` |
-| `FUNCTION : signature -> Type = { body }` | `FUNCTION _` of `_ -> _ = _` |
-| `FUNCTION : signature = { body }` (returns `Unit`) | `FUNCTION _` of `_ = _` |
-| `RECORD : Name = { fields }`, `ENUM : Name = { variants }` | `RECORD _`, `ENUM _` of `_ = _` |
-| `TYPE : Name (T) = Type` | `TYPE _` of `_ = _` |
+| `FUNCTION : signature . RETURNS (Type) : { body }` | `FUNCTION _` of `_ RETURNS _ _` |
+| `FUNCTION : signature : { body }` (returns `Unit`) | `FUNCTION _` of the signature with the body as its last slot |
+| `RECORD : Name : { fields }`, `ENUM : Name : { variants }` | `RECORD _`, `ENUM _` of `Name _` |
+| `TYPE : Name (T) : Type` | `TYPE _` of `Name _ _` |
 | `NAMESPACE : name`, `IMPORT : name` | `NAMESPACE _`, `IMPORT _` |
 
 A declaration is `KEYWORD : thing`, and `thing` has its own fixed shape, so no
-keyword is ever taken off the front of a name. A qualified return type goes in
-parentheses, `-> (git.Commit) = { ... }`, since `.` would otherwise take
-everything before it.
+keyword is ever taken off the front of a name. Without `RETURNS`, the `:` after
+the name hands the body (or the target type) to the name's last slot.
+
+Every keyword is an uppercase word. resh's own forms never use a symbol word, so
+every symbol word is free for your own operators:
+
+```
+FUNCTION : (a: String) ++ (b: String) . RETURNS (String) : { join (a) with (b) },
+FUNCTION : (a: Int) = (b: Int) . RETURNS (Boolean) : { a . equals (b) },
+"a" ++ "b",
+"a" .++ "b" .++ "c",
+1 = 1
+```
 
 ## Conditionals and MATCH
 
@@ -264,13 +274,13 @@ the `ELSE` slot with the rest:
 IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ```
 
-`MATCH (value) { pattern => result, ... }` takes the value to match either after
+`MATCH (value) { pattern . THEN : result, ... }` takes the value to match either after
 the keyword or from `.`: `option . MATCH { ... }`. Patterns are described in
 "Enum variants and patterns" and "Destructuring".
 
 ## Type aliases
 
-`TYPE : Result (T) = Result (T) Or (String)` gives a shorter name to a type. The
+`TYPE : Result (T) : Result (T) Or (String)` gives a shorter name to a type. The
 left side is an anyfix pattern whose slots are single capital letters; the right
 side is any type, which may use those letters. `Result (_)` and `Result (_) Or (_)`
 are different identifiers, so both exist: the prelude declares the first as the
@@ -285,7 +295,7 @@ it declares the same field; the parenthesized form is the norm. Field words are
 lowercase.
 
 ```
-RECORD : Server Config = {
+RECORD : Server Config : {
     host (String . DEFAULT "localhost"),
     port (Int . DEFAULT 8080),
     timeout (Duration . DEFAULT (30 seconds))
@@ -329,7 +339,7 @@ a `MATCH` with a record pattern:
 
 ```
 MATCH (config) {
-    { host (h), port (p), timeout (t) } => ...
+    { host (h), port (p), timeout (t) } . THEN : ...
 }
 ```
 
@@ -348,8 +358,8 @@ MATCH (config) {
 - A variant slot holds a type alone or a named parameter: `max depth (Int)` or
   `max depth (n: Int)`. The type-only form is the norm.
 - A `MATCH` slot is a binder `(name)`, `(_)`, or a nested pattern. A nested
-  pattern is a variant of the slot's enum type: `match (glob) => ...`,
-  `match (fixed string) => ...`. A lone `(word)` is a nested pattern when
+  pattern is a variant of the slot's enum type: `match (glob) . THEN : ...`,
+  `match (fixed string) . THEN : ...`. A lone `(word)` is a nested pattern when
   `word` names a nullary variant of the slot's enum, otherwise a binder (so a
   binder cannot reuse such a name). Nested patterns may be nested further, to
   any depth, and an arm may nest in several slots.
@@ -359,7 +369,7 @@ MATCH (config) {
 - Outside the file's namespace, a variant value is qualified like any call:
   `{ match (fd.glob) }`, or unqualified inside a scope block
   `fd.{ ... { match (glob) } ... }`. Patterns inside the file are unqualified.
-- A function's return type may start on the line after `->`, and `= {` on
+- A long signature may break before `. RETURNS (Type)`, and `: {` may start
   the line after the type.
 
 ## Sets
@@ -369,7 +379,7 @@ once. It is the way to take optional, order-independent flags: absence is the
 natural state, so there is no `Option`, no sentinel default and no `some`.
 
 ```
-ENUM : Find Option = {
+ENUM : Find Option : {
     include hidden file,
     extension (List (String)),
     max depth (Int),
@@ -407,15 +417,14 @@ Use a record with `DEFAULT`s for values that are always present, and a
 
 ## Lambdas
 
-A function value is written `(x) => body`, reusing the arrow from `MATCH` arms.
-Being a slot value of more than one token, it is parenthesized:
+A function value is written `FN (x) : body`. In a call's last slot it follows a
+`:`; elsewhere it is parenthesized:
 
 ```
-flat map (patterns) with : (p) => ["--exclude", p]
+flat map (patterns) with : FN (p) : ["--exclude", p]
 ```
 
-- A lambda takes exactly one parameter name, and is written only as a
-  parenthesized slot value: `((x) => ...)`.
+- A lambda takes exactly one parameter name: `FN (x) : ...`.
 - Its type is `Function (A) To (B)`, the type of a function parameter such as
   `f` in `flat map (items: List (T)) with (f: Function (T) To (List (U)))`.
 - A lambda has no type of its own, so the parameter type comes from the
@@ -440,7 +449,7 @@ parentheses inside the slot (this is how `run` is declared below). The
 components are bound as variables in the body:
 
 ```
-FUNCTION : run ((command: String, args: List (String))) -> ... = { ... }
+FUNCTION : run ((command: String, args: List (String))) . RETURNS (...) : { ... }
 ```
 
 - A tuple has two or more components; `(x)` is just parentheses.
@@ -452,14 +461,15 @@ FUNCTION : run ((command: String, args: List (String))) -> ... = { ... }
   cannot be a tuple component.
 - A tuple cannot be a slot of an enum variant or a record field.
 
-List literals accept `*` to splice a list in place:
+List literals accept `SPREAD` to splice a list in place:
 
 ```
-[*a, "x", *b]
+[SPREAD (a), "x", SPREAD (b)]
 ```
 
-- `*` is only valid as an element of a list literal; its operand follows the
-  anyfix rule (one token, or a parenthesized expression: `*(flat map ...)`).
+- `SPREAD` is only valid as an element of a list literal; its operand is one
+  item, so a variable or a longer expression goes in parentheses:
+  `SPREAD (paths)`, `SPREAD (flat map ...)`.
 - The operand must be a `List (T)`; element types are joined as for any other
   list literal. Spreading a `Set (E)` is not supported.
 
@@ -483,9 +493,9 @@ List literals accept `*` to splice a list in place:
 A unit is an ordinary suffix function. There is no special syntax.
 
 ```
-FUNCTION : (n: Int) kb -> Size = { ... },
-FUNCTION : (n: Int) mb -> Size = { ... },
-FUNCTION : (n: Int) days -> Duration = { ... }
+FUNCTION : (n: Int) kb . RETURNS (Size) : { ... },
+FUNCTION : (n: Int) mb . RETURNS (Size) : { ... },
+FUNCTION : (n: Int) days . RETURNS (Duration) : { ... }
 ```
 
 `Size` (held in bytes, decimal: `1 kb` = 1000) and `Duration` (held in seconds)
@@ -527,7 +537,7 @@ Wrappers around existing CLI tools are written in resh itself, on top of a
 single primitive:
 
 ```
-FUNCTION : run ((command: String, args: List (String))) -> Result (String) = { NATIVE "run" }
+FUNCTION : run ((command: String, args: List (String))) . RETURNS (Result (String)) : { NATIVE "run" }
 ```
 
 Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
@@ -549,27 +559,27 @@ A wrapper builds a `List (String)` from its typed options and calls `run`:
 ```
 NAMESPACE : fd,
 
-ENUM : Find Option = {
+ENUM : Find Option : {
     include hidden file,
     extension (String),
     max depth (Int),
     exclude (List (String))
 },
 
-FUNCTION : (option: Find Option) argument -> List (String) = {
+FUNCTION : (option: Find Option) argument . RETURNS (List (String)) : {
     MATCH (option) {
-        include hidden file => ["--hidden"],
-        extension (e) => ["--extension", e],
-        max depth (n) => ["--max-depth", n . to string],
-        exclude (patterns) => flat map (patterns) with : (p) => ["--exclude", p]
+        include hidden file . THEN : ["--hidden"],
+        extension (e) . THEN : ["--extension", e],
+        max depth (n) . THEN : ["--max-depth", n . to string],
+        exclude (patterns) . THEN : flat map (patterns) with : FN (p) : ["--exclude", p]
     }
 },
 
-FUNCTION : find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
-    Result (List (String))
-= {
-    run ("fd", [*(flat map (options) with : (o) => (o) argument), pattern, dir])
-        . map _ with : (text) => (text) lines
+FUNCTION : find (pattern: String) in (dir: String) (options: Set (Find Option)) . RETURNS
+    (Result (List (String)))
+: {
+    run ("fd", [SPREAD (flat map (options) with : FN (o) : (o) argument), pattern, dir])
+        . map _ with : FN (text) : (text) lines
 }
 ```
 
@@ -584,7 +594,7 @@ fd.find "" in "src" { extension ["rs"], max depth 3 },
 A wrapper is a library (see "Importing libraries") for one CLI tool. Put it in
 `name.resh` in the user library directory (`resh libs` prints it), starting with
 `NAMESPACE : name`. Look at `resh libs show git` and `resh libs show fd` for the
-shape: an `ENUM` of options, a `FUNCTION : (option: ...) argument -> List (String)`
+shape: an `ENUM` of options, a `FUNCTION : (option: ...) argument . RETURNS (List (String))`
 that maps each option to argv, and one function per command that calls `run`.
 `##` comments above declarations are their docs (shown by `:symbols`). Check it
 with `resh check name.resh`, then use it with `IMPORT : name`. `resh skill install`
@@ -607,10 +617,10 @@ the declared ones.
 line between) are its docs, and `:symbols` shows them. In the REPL a
 comment-only `##` line waits for the declaration below it. `NAMESPACE` applies per
 REPL entry, so put it on the same line as the declaration:
-`NAMESPACE : demo, ENUM : Mode = { fast, slow }`.
+`NAMESPACE : demo, ENUM : Mode : { fast, slow }`.
 
 ```
-resh> NAMESPACE : demo, ENUM : Mode = { fast, slow }
+resh> NAMESPACE : demo, ENUM : Mode : { fast, slow }
 resh> :symbols
 namespaces
   prelude
@@ -623,7 +633,7 @@ demo
 ```
 
 ```
-$ printf 'NAMESPACE : demo, ENUM : Mode = { fast, slow }\n:symbols demo\n' | resh --json
+$ printf 'NAMESPACE : demo, ENUM : Mode : { fast, slow }\n:symbols demo\n' | resh --json
 {"namespace":"demo","symbols":[{"kind":"enum","name":"Mode","doc":null,"members":[{"signature":"fast","defaults":[]},{"signature":"slow","defaults":[]}],"returns":null}]}
 ```
 

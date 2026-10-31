@@ -60,8 +60,8 @@ Ground rules (see CLAUDE.md and README.md):
   `{ extension ["rs"], max depth 3 }` is accepted for `Set (Find Option)`.
 
 - [x] **6. Lambdas.**
-  `(x) => body`, parenthesized when used as a slot value.
-  *Done when:* `flat map (xs) with ((x) => [x, x])` type-checks and evaluates.
+  `FN (x) : body` (originally `(x) => body`).
+  *Done when:* `flat map (xs) with : FN (x) : [x, x]` type-checks and evaluates.
 
 - [x] **7. Tuples and list spread.**
   Tuple values and tuple parameters (`("fd", args)`); list literals with

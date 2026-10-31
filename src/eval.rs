@@ -191,7 +191,7 @@ impl Interp {
                 }
                 Ok(Value::List(out))
             }
-            Ir::Spread(_) => Err("internal error: `*` outside a list literal".into()),
+            Ir::Spread(_) => Err("internal error: `SPREAD` outside a list literal".into()),
             Ir::Tuple(xs) => Ok(Value::Tuple(
                 xs.iter()
                     .map(|x| self.eval(x, env))

@@ -19,7 +19,7 @@ bundled ones. It needs the `resh` binary on `PATH`.
    - Type names are anyfix like functions: `List (Entry)`, `Result (T)`.
    - A variable fills a slot in parentheses, but prefer `.` for a call's first
      slot and `:` for a long last one: `n . to string`,
-     `flat map (options) with : (o) => (o) argument`.
+     `flat map (options) with : FN (o) : (o) argument`.
 2. **Learn the tool.** Run `<tool> --help`, `<tool> <subcommand> --help` and
    `man <tool>` (all read-only). Pick the commands and flags people actually use;
    don't mirror every flag. Prefer machine-readable output flags (`--porcelain`,
@@ -29,7 +29,7 @@ bundled ones. It needs the `resh` binary on `PATH`.
    - One `ENUM : <Command> Option` per command, one member per flag, named as a
      readable phrase (`include hidden file`, not `H`). Alternatives that exclude
      each other are one variant carrying an enum.
-   - A `FUNCTION : (option: <Command> Option) argument -> List (String) = { ... }` that maps each
+   - A `FUNCTION : (option: <Command> Option) argument . RETURNS (List (String)) : { ... }` that maps each
      member to argv with `MATCH`.
    - One function per command that takes `Set (<Command> Option)` and returns
      `Result (T)`; parse stdout into typed values (`lines`, records) where the

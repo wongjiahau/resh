@@ -23,10 +23,10 @@
   the grouping; `src/parser.rs` only reads the tree it returns. It flattens each
   call into its name words and arguments (`flatten`, `Flat::Word` /
   `Flat::Arg`) and recognises resh's own forms by their exact call shape
-  (`IF _ THEN _ ELSE _`, `MATCH _ _`, `_ AS _`, `_ => _`, ...). Declarations
+  (`IF _ THEN _ ELSE _`, `MATCH _ _`, `_ AS _`, `FN _ _`, ...). Declarations
   are `KEYWORD : thing` with `thing` a fixed shape too (`FUNCTION _` of
-  `_ -> _ = _`). It never searches a call for keywords, takes a keyword off the
-  front of a name, or splits one call into several expressions.
+  `_ RETURNS _ _`). It never searches a call for keywords, takes a keyword off
+  the front of a name, or splits one call into several expressions.
 - A bare word is always part of a call's name, never a value: the checker only
   lets arguments fill slots, so a variable is written `(n) to string`.
 - A new construct is a new keyword or shape read from that tree. Don't add
@@ -35,7 +35,6 @@
 - resh's own forms use word keywords only (`LET`, `IF`, `MATCH`, `AS`, ...),
   never symbol words. Every symbol word (`=`, `->`, `=>`, `*`, `++`, ...) is
   left to users, so they can declare it as an ordinary function such as
-  `_ = _`. The `=`, `->`, `=>` and `*` forms in `src/parser.rs` are legacy;
-  don't add more like them.
+  `_ = _`.
 - Matching a call's `Seq` against declared signatures stays in the checker
   (`src/check.rs`), since only it knows the signatures.

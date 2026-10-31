@@ -31,7 +31,7 @@ pub enum Type {
     Function(Box<Type>, Box<Type>),
     /// Two or more values of their own types: `(a, b)`.
     Tuple(Vec<Type>),
-    /// The inferred type of a `(x) => body` literal. Its parameter type is
+    /// The inferred type of a `FN (x) : body` literal. Its parameter type is
     /// only known from a sibling argument, so it is checked against the
     /// `Function` parameter of each candidate overload.
     Lambda,
@@ -323,7 +323,7 @@ pub enum Ir {
     If(Box<Ir>, Box<Ir>, Box<Ir>),
     Match(Box<Ir>, Vec<IrArm>),
     Tuple(Vec<Ir>),
-    /// `*xs` inside a list literal.
+    /// `SPREAD (xs)` inside a list literal.
     Spread(Box<Ir>),
     /// Binds the components of the tuple held by a variable, in the body.
     Untuple(String, Vec<String>, Box<Ir>),
@@ -948,7 +948,7 @@ impl Checker {
                         if !single || !a.args.is_empty() || !a.qualifiers.is_empty() {
                             return Err(Diag::new(
                                 a.span,
-                                "an alias parameter is a single capital letter, e.g. `TYPE Result (T) = ...`",
+                                "an alias parameter is a single capital letter, e.g. `TYPE : Result (T) : ...`",
                             ));
                         }
                         params.push(a.name.clone());
@@ -1508,7 +1508,9 @@ impl Checker {
                             let Type::List(elem) = t else {
                                 return Err(Diag::new(
                                     inner.span,
-                                    format!("`*` splices a list into a list literal, found {t}"),
+                                    format!(
+                                        "`SPREAD` splices a list into a list literal, found {t}"
+                                    ),
                                 ));
                             };
                             irs.push(Ir::Spread(Box::new(ir)));
@@ -1539,7 +1541,7 @@ impl Checker {
             }
             ExprKind::Spread(_) => Err(Diag::new(
                 e.span,
-                "`*` only works inside a list literal, e.g. `[*xs, 1]`",
+                "`SPREAD` only works inside a list literal, e.g. `[SPREAD (xs), 1]`",
             )),
             ExprKind::Tuple(xs) => {
                 let mut irs = Vec::new();
@@ -2041,7 +2043,7 @@ impl Checker {
                         failures.push(Diag::new(
                             arg_span,
                             format!(
-                                "the parameter type of `({x}) => ...` is not known yet: `{}` is only fixed by an argument written after the lambda; move the lambda after it",
+                                "the parameter type of `FN ({x}) : ...` is not known yet: `{}` is only fixed by an argument written after the lambda; move the lambda after it",
                                 label(&def.parts)
                             ),
                         ));
