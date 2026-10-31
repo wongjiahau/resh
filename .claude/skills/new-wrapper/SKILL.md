@@ -26,10 +26,10 @@ bundled ones. It needs the `resh` binary on `PATH`.
    `--json`, `-z`, …), always pass them, and document the output shape in the
    header comment.
 3. **Design the surface.**
-   - One `ENUM : <Command> Option` per command, one member per flag, named as a
+   - One `ENUM (<Command> Option)` per command, one member per flag, named as a
      readable phrase (`include hidden file`, not `H`). Alternatives that exclude
      each other are one variant carrying an enum.
-   - A `FUNCTION : (option: <Command> Option) argument . RETURNS (List (String)) : { ... }` that maps each
+   - A `FUNCTION ((option: <Command> Option) argument) RETURNS (List (String)) { ... }` that maps each
      member to argv with `MATCH`.
    - One function per command that takes `Set (<Command> Option)` and returns
      `Result (T)`; parse stdout into typed values (`lines`, records) where the

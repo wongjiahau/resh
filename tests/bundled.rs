@@ -20,7 +20,7 @@ fn check_only_does_not_execute_statements() {
 fn check_only_reports_type_errors() {
     assert!(
         Session::new()
-            .check_only("FUNCTION : f () . RETURNS (Int) : { \"x\" }")
+            .check_only("FUNCTION (f ()) RETURNS (Int) { \"x\" }")
             .is_err()
     );
 }

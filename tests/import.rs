@@ -37,7 +37,7 @@ fn unknown_library_lists_the_available_ones() {
 #[test]
 fn import_works_in_a_file_with_a_namespace() {
     let mut s = session();
-    s.run("NAMESPACE : mine,\nIMPORT : git,\nFUNCTION : hello . RETURNS (String) : { \"hi\" }")
+    s.run("NAMESPACE : mine,\nIMPORT : git,\nFUNCTION (hello) RETURNS (String) { \"hi\" }")
         .unwrap();
     assert!(s.namespaces().contains(&"git".to_string()));
 }
@@ -48,12 +48,12 @@ fn user_library_wins_over_bundled_and_adds_new_ones() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("tool.resh"),
-        "NAMESPACE : tool,\nFUNCTION : hello . RETURNS (String) : { \"hi\" }\n",
+        "NAMESPACE : tool,\nFUNCTION (hello) RETURNS (String) { \"hi\" }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("git.resh"),
-        "NAMESPACE : git,\nFUNCTION : mine . RETURNS (Int) : { 1 }\n",
+        "NAMESPACE : git,\nFUNCTION (mine) RETURNS (Int) { 1 }\n",
     )
     .unwrap();
     let mut s = Session::new();

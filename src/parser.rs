@@ -220,51 +220,29 @@ impl Reader<'_> {
 
     // ---------- declarations ----------
 
-    /// A declaration is `KEYWORD : thing`, where `thing` has a fixed shape:
-    /// `signature . RETURNS (Type) : { body }`, `Name : { ... }`, `Pattern : Type`.
-    /// Without `RETURNS`, the last slot of `thing` is the body (or the target
-    /// type) and everything before it is the name.
+    /// A declaration is one call of a fixed shape, its parts in slots:
+    /// `FUNCTION (signature) RETURNS (Type) { body }`, `FUNCTION (signature) { body }`,
+    /// `RECORD (Name) { ... }`, `ENUM (Name) { ... }`, `TYPE (Pattern) : Type`.
     fn decl(&self, node: &Node) -> Res<Option<Decl>> {
         let flat = flatten(node);
         let doc = self.docs.get(&self.at(node.span).line).cloned();
         let span = self.at(node.span);
-        let keyword = match flat.as_slice() {
+        match flat.as_slice() {
             [
-                Flat::Word(k @ ("FUNCTION" | "RECORD" | "ENUM" | "TYPE"), _),
-                ..,
-            ] => *k,
-            [Flat::Arg(left), ..] => match head(&flatten(left)) {
-                Some(k @ ("FUNCTION" | "RECORD" | "ENUM" | "TYPE")) => {
-                    return self.decl_shape(node, k);
-                }
-                _ => return Ok(None),
-            },
-            _ => return Ok(None),
-        };
-        let [_, Flat::Arg(thing)] = flat.as_slice() else {
-            return self.decl_shape(node, keyword);
-        };
-        let parts = flatten(thing);
-        match (keyword, parts.as_slice()) {
-            (
-                "FUNCTION",
-                [
-                    Flat::Arg(sig),
-                    Flat::Word("RETURNS", _),
-                    Flat::Arg(ret),
-                    Flat::Arg(body),
-                ],
-            ) => self
-                .function(&flatten(sig), sig.span, Some(self.ty(ret)?), body, doc)
-                .map(Some),
-            (_, parts) if parts.iter().any(|f| matches!(f, Flat::Word("RETURNS", _))) => self.err(
-                thing.span,
-                "a return type is written `signature . RETURNS (Type) : { body }`, with the type in parentheses",
-            ),
-            ("FUNCTION", [sig @ .., Flat::Arg(body)]) if !sig.is_empty() => self
-                .function(sig, thing.span, None, body, doc)
-                .map(Some),
-            ("RECORD", [name @ .., Flat::Arg(body)]) if !name.is_empty() => {
+                Flat::Word("FUNCTION", _),
+                Flat::Arg(sig),
+                Flat::Word("RETURNS", _),
+                Flat::Arg(ret),
+                Flat::Arg(body),
+            ] => self.function(sig, Some(self.ty(ret)?), body, doc).map(Some),
+            [Flat::Word("FUNCTION", _), Flat::Arg(sig), Flat::Arg(body)] => {
+                self.function(sig, None, body, doc).map(Some)
+            }
+            [
+                Flat::Word(keyword @ "RECORD", _),
+                Flat::Arg(name),
+                Flat::Arg(body),
+            ] => {
                 let Some(body) = braces(body) else {
                     return self.decl_shape(node, keyword);
                 };
@@ -275,7 +253,11 @@ impl Reader<'_> {
                     doc,
                 }))
             }
-            ("ENUM", [name @ .., Flat::Arg(body)]) if !name.is_empty() => {
+            [
+                Flat::Word(keyword @ "ENUM", _),
+                Flat::Arg(name),
+                Flat::Arg(body),
+            ] => {
                 let Some(body) = braces(body) else {
                     return self.decl_shape(node, keyword);
                 };
@@ -289,36 +271,43 @@ impl Reader<'_> {
                     doc,
                 }))
             }
-            ("TYPE", [pattern @ .., Flat::Arg(target)]) if !pattern.is_empty() => {
+            [Flat::Word("TYPE", _), Flat::Arg(pattern), Flat::Arg(target)] => {
                 Ok(Some(Decl::Alias {
-                    pattern: self.ty_flat(pattern, thing.span)?,
+                    pattern: self.ty(pattern)?,
                     target: self.ty(target)?,
                     span,
                 }))
             }
-            _ => self.decl_shape(node, keyword),
+            [
+                Flat::Word(k @ ("FUNCTION" | "RECORD" | "ENUM" | "TYPE"), _),
+                ..,
+            ] => self.decl_shape(node, k),
+            [Flat::Arg(left), ..] => match head(&flatten(left)) {
+                Some(k @ ("FUNCTION" | "RECORD" | "ENUM" | "TYPE")) => self.decl_shape(node, k),
+                _ => Ok(None),
+            },
+            _ => Ok(None),
         }
     }
 
     fn decl_shape<T>(&self, node: &Node, keyword: &str) -> Res<T> {
         let shape = match keyword {
             "FUNCTION" => {
-                "`FUNCTION : signature . RETURNS (Type) : { body }`, or `FUNCTION : signature : { body }` without a return type"
+                "`FUNCTION (signature) RETURNS (Type) { body }`, or `FUNCTION (signature) { body }` without a return type"
             }
-            "RECORD" => "`RECORD : Name : { field (Type), ... }`",
-            "ENUM" => "`ENUM : Name : { variant, ... }`",
-            _ => "`TYPE : Name (T) : Type`",
+            "RECORD" => "`RECORD (Name) { field (Type), ... }`",
+            "ENUM" => "`ENUM (Name) { variant, ... }`",
+            _ => "`TYPE (Name (T)) : Type`",
         };
         self.err(
             node.span,
-            format!("`{keyword}` is written {shape}; is a `,` missing after a `}}`? ({SEPARATE})"),
+            format!("`{keyword}` is written {shape}; the signature or name goes in parentheses, and is a `,` missing after a `}}`? ({SEPARATE})"),
         )
     }
 
     fn function(
         &self,
-        sig: &[Flat],
-        sig_span: anyfix_expr::Span,
+        sig: &Node,
         ret: Option<TyExpr>,
         body: &Node,
         doc: Option<String>,
@@ -326,10 +315,10 @@ impl Reader<'_> {
         let Some(body) = braces(body) else {
             return self.err(
                 body.span,
-                format!("expected `{{ ... }}` with the function body after `:`; is a `,` missing after a `}}`? ({SEPARATE})"),
+                format!("expected `{{ ... }}` with the function body; is a `,` missing after a `}}`? ({SEPARATE})"),
             );
         };
-        let sig = self.signature(sig, false, sig_span)?;
+        let sig = self.signature(&flatten(sig), false, sig.span)?;
         let body = match body {
             [native] => match flatten(native).as_slice() {
                 [Flat::Word("NATIVE", _), Flat::Arg(name)] => match &name.kind {
@@ -349,10 +338,10 @@ impl Reader<'_> {
     }
 
     /// A declared type name: capitalized words only.
-    fn decl_name(&self, items: &[Flat]) -> Res<String> {
+    fn decl_name(&self, node: &Node) -> Res<String> {
         let mut words = Vec::new();
-        for item in items {
-            match *item {
+        for item in flatten(node) {
+            match item {
                 Flat::Word(w, s) => {
                     self.check_capitalized(w, s)?;
                     words.push(w);
@@ -713,10 +702,7 @@ impl Reader<'_> {
         }
         for (keyword, shape) in [
             ("IF", "`IF (condition) THEN (value) ELSE (value)`"),
-            (
-                "THEN",
-                "`IF (condition) THEN (value) ELSE (value)` (or a MATCH arm `pattern . THEN : value`)",
-            ),
+            ("THEN", "`IF (condition) THEN (value) ELSE (value)`"),
             ("ELSE", "`IF (condition) THEN (value) ELSE (value)`"),
             (
                 "MATCH",
@@ -762,19 +748,59 @@ impl Reader<'_> {
         let subject = self.expr(subject)?;
         let mut arms = Vec::new();
         for arm in braces(arms_node).expect("checked above") {
+            if self.after_bare_wildcard(arm.span.start) {
+                return self.err(
+                    arm.span,
+                    "a wildcard arm is written `(_) : value`: in `_ : value` the `:` fills the `_` with the value",
+                );
+            }
             match flatten(arm).as_slice() {
-                [Flat::Arg(pat), Flat::Word("THEN", _), Flat::Arg(body)] => arms.push(Arm {
-                    pat: self.pattern(pat)?,
+                [pat @ .., Flat::Arg(body)] if !pat.is_empty() => arms.push(Arm {
+                    pat: self.arm_pattern(pat, arm.span)?,
                     body: self.expr(body)?,
                     span: self.at(arm.span),
                 }),
-                _ => return self.err(arm.span, "expected a MATCH arm `pattern . THEN : value`"),
+                _ => return self.err(arm.span, "expected a MATCH arm `pattern : value`"),
             }
         }
         Ok(Expr {
             k: ExprKind::Match(Box::new(subject), arms),
             span: self.at(span),
         })
+    }
+
+    /// Whether the source just before `at` is `_ :`, a wildcard arm whose `_`
+    /// the `:` consumed.
+    fn after_bare_wildcard(&self, at: usize) -> bool {
+        self.src[..at]
+            .trim_end()
+            .strip_suffix(':')
+            .and_then(|rest| rest.trim_end().strip_suffix('_'))
+            .is_some_and(|rest| !rest.ends_with(|c: char| c.is_alphanumeric() || c == '_'))
+    }
+
+    /// The pattern of an arm `pattern : value`: every item of the arm's call
+    /// before the value, which `:` put in the last slot.
+    fn arm_pattern(&self, items: &[Flat], span: anyfix_expr::Span) -> Res<Vec<PatItem>> {
+        match items {
+            [Flat::Arg(node)] => match &node.kind {
+                NodeKind::Parens(xs) if matches!(xs.as_slice(), [x] if matches!(x.kind, NodeKind::Underscore)) => {
+                    Ok(vec![PatItem::Wild])
+                }
+                _ => self.pattern(node),
+            },
+            _ if items.iter().all(|f| matches!(f, Flat::Arg(_))) => self.err(
+                span,
+                "expected a pattern: variant words, `(name)` binders, `(_)` or `{ ... }`",
+            ),
+            _ => items
+                .iter()
+                .map(|item| match item {
+                    Flat::Word(w, _) => Ok(PatItem::Word(w.to_string())),
+                    Flat::Arg(slot) => self.pattern_slot(slot),
+                })
+                .collect(),
+        }
     }
 
     /// A MATCH pattern: words, `(name)` binders, `_`, or a `{ … }` record pattern.

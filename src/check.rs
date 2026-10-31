@@ -948,7 +948,7 @@ impl Checker {
                         if !single || !a.args.is_empty() || !a.qualifiers.is_empty() {
                             return Err(Diag::new(
                                 a.span,
-                                "an alias parameter is a single capital letter, e.g. `TYPE : Result (T) : ...`",
+                                "an alias parameter is a single capital letter, e.g. `TYPE (Result (T)) : ...`",
                             ));
                         }
                         params.push(a.name.clone());

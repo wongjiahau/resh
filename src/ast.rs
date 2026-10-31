@@ -71,7 +71,7 @@ pub enum Decl {
         span: Span,
         doc: Option<String>,
     },
-    /// `TYPE : Result (T) : Result (T) Or (String)`: `pattern` names the alias and its
+    /// `TYPE (Result (T)) : Result (T) Or (String)`: `pattern` names the alias and its
     /// type parameters, `target` is what it stands for.
     Alias {
         pattern: TyExpr,

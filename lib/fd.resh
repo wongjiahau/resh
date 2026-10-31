@@ -4,10 +4,10 @@ NAMESPACE : fd,
 
 ## Alternatives that exclude each other are one variant, so the set's
 ## duplicate check rejects `{ case (fd.sensitive), case (fd.insensitive) }` for free.
-ENUM : Match Mode : { regex, glob, fixed string },
-ENUM : Case Mode : { smart, sensitive, insensitive },
+ENUM (Match Mode) { regex, glob, fixed string },
+ENUM (Case Mode) { smart, sensitive, insensitive },
 
-ENUM : Find Option : {
+ENUM (Find Option) {
     match (Match Mode),                  # default regex      (--glob, --fixed-strings)
     case (Case Mode),                    # default smart      (--case-sensitive, --ignore-case)
     include hidden file,                 # --hidden
@@ -26,48 +26,48 @@ ENUM : Find Option : {
 },
 
 ## One arm per option; this is the entire translation to fd's command line.
-FUNCTION : (option: Find Option) argument . RETURNS (List (String)) : {
+FUNCTION ((option: Find Option) argument) RETURNS (List (String)) {
     MATCH (option) {
-        match (regex) . THEN : [],
-        match (glob) . THEN : ["--glob"],
-        match (fixed string) . THEN : ["--fixed-strings"],
-        case (smart) . THEN : [],
-        case (sensitive) . THEN : ["--case-sensitive"],
-        case (insensitive) . THEN : ["--ignore-case"],
-        include hidden file . THEN : ["--hidden"],
-        ignore nothing . THEN : ["--no-ignore"],
-        follow symlink . THEN : ["--follow"],
-        full path . THEN : ["--full-path"],
-        kind (k) . THEN : ["--type", k . fd name],
-        extension (es) . THEN : flat map (es) with : FN (e) : ["--extension", e],
-        min depth (n) . THEN : ["--min-depth", n . to string],
-        max depth (n) . THEN : ["--max-depth", n . to string],
-        exclude (ps) . THEN : flat map (ps) with : FN (p) : ["--exclude", p],
-        size at least (s) . THEN : ["--size", join "+" with : s . bytes text],
-        size at most (s) . THEN : ["--size", join "-" with : s . bytes text],
-        changed within (d) . THEN : ["--changed-within", d . seconds text],
-        changed before (d) . THEN : ["--changed-before", d . seconds text]
+        match (regex) : [],
+        match (glob) : ["--glob"],
+        match (fixed string) : ["--fixed-strings"],
+        case (smart) : [],
+        case (sensitive) : ["--case-sensitive"],
+        case (insensitive) : ["--ignore-case"],
+        include hidden file : ["--hidden"],
+        ignore nothing : ["--no-ignore"],
+        follow symlink : ["--follow"],
+        full path : ["--full-path"],
+        kind (k) : ["--type", k . fd name],
+        extension (es) : flat map (es) with : FN (e) : ["--extension", e],
+        min depth (n) : ["--min-depth", n . to string],
+        max depth (n) : ["--max-depth", n . to string],
+        exclude (ps) : flat map (ps) with : FN (p) : ["--exclude", p],
+        size at least (s) : ["--size", join "+" with : s . bytes text],
+        size at most (s) : ["--size", join "-" with : s . bytes text],
+        changed within (d) : ["--changed-within", d . seconds text],
+        changed before (d) : ["--changed-before", d . seconds text]
     }
 },
 
-FUNCTION : (kind: Entry Kind) fd name . RETURNS (String) : {
-    MATCH (kind) { file . THEN : "file", directory . THEN : "directory", symlink . THEN : "symlink" }
+FUNCTION ((kind: Entry Kind) fd name) RETURNS (String) {
+    MATCH (kind) { file : "file", directory : "directory", symlink : "symlink" }
 },
 
-FUNCTION : (size: Size) bytes text . RETURNS (String) : { join (size . bytes . to string) with "b" },
-FUNCTION : (duration: Duration) seconds text . RETURNS (String) : { join (duration . seconds . to string) with "s" },
+FUNCTION ((size: Size) bytes text) RETURNS (String) { join (size . bytes . to string) with "b" },
+FUNCTION ((duration: Duration) seconds text) RETURNS (String) { join (duration . seconds . to string) with "s" },
 
-FUNCTION : find (pattern: String) in (dir: String) (options: Set (Find Option))
-    . RETURNS (Result (List (String))) : {
+FUNCTION (find (pattern: String) in (dir: String) (options: Set (Find Option)))
+    RETURNS (Result (List (String))) {
     run ("fd", [SPREAD (flat map (options) with : FN (o) : (o) argument), "--", pattern, dir])
         . map _ with : FN (text) : (text) lines
 },
 
-FUNCTION : find (pattern: String) in (dir: String) . RETURNS (Result (List (String))) : {
+FUNCTION (find (pattern: String) in (dir: String)) RETURNS (Result (List (String))) {
     find (pattern) in (dir) {}
 },
 
-FUNCTION : find (pattern: String) . RETURNS (Result (List (String))) : {
+FUNCTION (find (pattern: String)) RETURNS (Result (List (String))) {
     find (pattern) in "." {}
 }
 
