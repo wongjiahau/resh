@@ -139,6 +139,8 @@ FUNCTION (commit (message: String)) RETURNS (Result (Commit)) { ... }
   declared as an operator.
 - A namespace is not a value. `git.commit "x"` is the call `_ commit _` with
   `git` in its first slot, so it is an error that points to `git -> commit "x"`.
+  (Planned: a namespace passed where a record type is expected; see
+  "Modules".)
 - Everything can be namespaced: functions, types, enums, records.
 - Outside the namespace, names are qualified. Inside the file, they resolve
   unqualified.
@@ -367,6 +369,109 @@ MATCH (config) {
   an enum variant's slot. A record `MATCH` is exhaustive with one arm unless a
   slot is refutable; further arms are checked like any other (an arm after an
   irrefutable one is unreachable). `(_)` matches a whole record.
+
+## Modules (planned)
+
+Not implemented yet. This section is the design to build.
+
+Generic code can require operations on its type parameters (constrained
+polymorphism), but the checker never looks for those operations itself:
+there is no instance resolution. The caller passes them as an ordinary
+argument, a *module*: a record whose members include functions.
+
+```
+ENUM (Ordering) { less, equal, greater },
+
+RECORD (Order (T)) {
+    FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering),
+},
+
+FUNCTION (max (items: List (T)) by (order: Order (T))) RETURNS (T) {
+    ... order -> (a) compare (b) ...
+},
+
+max [3, 1, 2] by (int),
+```
+
+### Function members
+
+- A record declaration may list function members next to its fields:
+  `FUNCTION (signature) RETURNS (Type)`, with no body. The return type is
+  required.
+- A record may take type parameters, written like an alias pattern:
+  `RECORD (Order (T)) { ... }`.
+- A record literal gives each function member a body:
+  `{ FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { ... } }`. The body
+  sees the variables around the literal, like a lambda, but not the
+  literal's other members (there is no `this`).
+- Function members are called with `->`: `order -> (a) compare (b)`. The left
+  of `->` is a single word, either a namespace or a variable. A variable wins
+  over a namespace of the same name. The call is resolved only among that
+  record's function members, which may be overloaded by parameter types.
+- Fields keep the rules of "Records": a literal gives each field a value, and
+  `MATCH` is still the only way to read one. A record pattern lists the
+  fields only, not the function members.
+- A value with function members prints its functions as `<function>`, like a
+  lambda. `equals` rejects it.
+
+### Namespaces as modules
+
+- A namespace name in a slot whose parameter type is a record type stands for
+  that namespace's functions: `by (int)`. It fits when, for every function
+  member of the record type, the namespace has a function with the same
+  signature once the type parameters are substituted. Extra functions in the
+  namespace are ignored.
+- Like a lambda, a namespace argument has no type of its own. Its type
+  parameters must be fixed by earlier arguments of the same call (`T = Int`
+  from `[3, 1, 2]`), or by a stated type: `LET (o : Order (Int)) : int`.
+- Anywhere else, a namespace is not a value: `git.status` is still an error
+  pointing to `git -> status`.
+- The prelude provides namespaces such as `int` and `string`, each with
+  `(a) compare (b)`.
+
+### Functors are functions
+
+A function that takes or returns a module needs nothing extra:
+
+```
+FUNCTION (reversed (order: Order (T))) RETURNS (Order (T)) {
+    { FUNCTION ((a: T) compare (b: T)) RETURNS (Ordering) { order -> (b) compare (a) } }
+},
+FUNCTION (list order (order: Order (T))) RETURNS (Order (List (T))) { ... },
+
+sort (xs) by (reversed (int)),
+sort (rows) by (list order (int)),
+```
+
+- Several instances for one type are just several modules: `by (int)` or
+  `by (reversed (int))`.
+- Several constraints are several parameters:
+  `show (items) sorted by (order) shown with (format)`.
+- To call members of a module returned by a call, bind it first:
+  `LET (desc) : reversed (int), desc -> (1) compare (2)`.
+
+### Overloads keep concrete calls short
+
+Overload resolution only picks among declared signatures, so it is not
+instance resolution. Declare a concrete overload where a generic call is
+common:
+
+```
+FUNCTION (max (items: List (Int))) RETURNS (Int) { max (items) by (int) },
+max [3, 1, 2],
+```
+
+### Not in this design
+
+- Abstract types: a module cannot declare a type of its own, so nothing ties a
+  value to the module that made it (a set built with one order can be
+  searched with another). Only a file's namespace declares types.
+- Implicit arguments, default instances or any search for a module.
+
+### Open questions
+
+- Should `->` also read a one-slot field (`config -> port`), so fields and
+  function members are reached the same way?
 
 ## Enum variants and patterns
 

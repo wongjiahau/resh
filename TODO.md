@@ -93,6 +93,15 @@ Ground rules (see CLAUDE.md and README.md):
   *Done when:* those tests pass and the "does not parse yet" note in the file
   header is removed.
 
+- [ ] **12. Modules.**
+  Build `SYNTAX.md` "Modules (planned)": generic records, function members in
+  record declarations and literals, `variable -> call` on them, namespaces
+  passed where a record type is expected, the `Ordering` enum and the `int`
+  and `string` namespaces.
+  *Done when:* `max [3, 1, 2] by (int)` and `by (reversed (int))` run, a
+  namespace missing a member is a type error naming it, and the section drops
+  "(planned)".
+
 ## Main goal: the best shell for AI agents
 
 resh should be the shell an AI agent reaches for instead of bash. Everything
