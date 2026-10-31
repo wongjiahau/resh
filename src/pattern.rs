@@ -108,12 +108,7 @@ pub fn useful(sig: &Sig, rows: &[Vec<Pat>], q: &[Pat], tys: &[Type]) -> bool {
         Pat::Ctor(c, args) => {
             let fs = fields(sig, &tys[0], *c);
             let rows = specialize(rows, *c, fs.len());
-            useful(
-                sig,
-                &rows,
-                &concat(args, &q[1..]),
-                &concat(&fs, &tys[1..]),
-            )
+            useful(sig, &rows, &concat(args, &q[1..]), &concat(&fs, &tys[1..]))
         }
         Pat::Any(_) => {
             let n = variant_count(sig, &tys[0]);
@@ -138,7 +133,11 @@ pub fn useful(sig: &Sig, rows: &[Vec<Pat>], q: &[Pat], tys: &[Type]) -> bool {
 /// Every value vector (as a pattern vector) that no row matches.
 pub fn witnesses(sig: &Sig, rows: &[Vec<Pat>], tys: &[Type]) -> Vec<Vec<Pat>> {
     if tys.is_empty() {
-        return if rows.is_empty() { vec![vec![]] } else { vec![] };
+        return if rows.is_empty() {
+            vec![vec![]]
+        } else {
+            vec![]
+        };
     }
     let n = variant_count(sig, &tys[0]);
     let used = used_ctors(rows);
@@ -204,9 +203,7 @@ pub fn render(sig: &Sig, ty: &Type, pat: &Pat) -> String {
         .iter()
         .filter_map(|p| match p {
             PartT::Word(w) => Some(w.clone()),
-            PartT::Param(..) => args
-                .next()
-                .map(|(a, t)| format!("({})", render(sig, t, a))),
+            PartT::Param(..) => args.next().map(|(a, t)| format!("({})", render(sig, t, a))),
             PartT::Tuple(_) => Some("(_)".into()),
         })
         .collect::<Vec<_>>()
@@ -222,14 +219,12 @@ pub fn bind(pat: &Pat, v: &Value, out: &mut Vec<(String, Value)>) -> bool {
             }
             true
         }
-        Pat::Ctor(c, subs) => {
-            match v {
-                Value::Variant(_, idx, args) => {
-                    idx == c && subs.iter().zip(args).all(|(p, a)| bind(p, a, out))
-                }
-                Value::Record(_, vals) => subs.iter().zip(vals).all(|(p, a)| bind(p, a, out)),
-                _ => false,
+        Pat::Ctor(c, subs) => match v {
+            Value::Variant(_, idx, args) => {
+                idx == c && subs.iter().zip(args).all(|(p, a)| bind(p, a, out))
             }
-        }
+            Value::Record(_, vals) => subs.iter().zip(vals).all(|(p, a)| bind(p, a, out)),
+            _ => false,
+        },
     }
 }

@@ -191,7 +191,7 @@ impl Interp {
                 }
                 Ok(Value::List(out))
             }
-            Ir::Spread(_) => Err("internal error: `...` outside a list literal".into()),
+            Ir::Spread(_) => Err("internal error: `*` outside a list literal".into()),
             Ir::Tuple(xs) => Ok(Value::Tuple(
                 xs.iter()
                     .map(|x| self.eval(x, env))
@@ -222,14 +222,6 @@ impl Interp {
                 Value::Bool(true) => self.eval(t, env),
                 _ => self.eval(f, env),
             },
-            Ir::Pipe(l, r) => {
-                let v = self.eval(l, env)?;
-                let mark = env.len();
-                env.push(("_".into(), v));
-                let res = self.eval(r, env);
-                env.truncate(mark);
-                res
-            }
             Ir::Match(s, arms) => {
                 let v = self.eval(s, env)?;
                 for arm in arms {

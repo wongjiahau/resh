@@ -1,29 +1,177 @@
-//! Context-free parser. Mixfix calls are NOT resolved here: an expression is a
-//! flat sequence of words and single-token atoms (`SeqItem`). The checker
-//! matches that sequence against declared signatures.
+//! Reads resh source as anyfix expressions (`crates/anyfix-expr`) and turns
+//! the tree into resh's AST. The notation does all the grouping; this module
+//! only gives the calls a meaning: uppercase keywords (`FUNCTION`, `MATCH`,
+//! ...) mark the language's own forms, and every other call is flattened into
+//! a `Seq` of words and arguments. Calls are NOT resolved here: the checker
+//! matches each `Seq` against the declared signatures.
 
 use std::collections::HashMap;
 
+use anyfix_expr::{NamePart, Node, NodeKind};
+
 use crate::ast::*;
-use crate::lexer::{Diag, Res, Span, Tok, Token, lex_with_docs};
+use crate::diag::{Diag, Res, Span};
+
+/// The words resh gives a meaning to. Keywords are uppercase, so a lowercase
+/// word (`match`, `if`) stays free for user names.
+pub const KEYWORDS: &[&str] = &[
+    "FUNCTION",
+    "RECORD",
+    "ENUM",
+    "TYPE",
+    "NAMESPACE",
+    "IMPORT",
+    "MATCH",
+    "LET",
+    "IF",
+    "THEN",
+    "ELSE",
+    "NATIVE",
+    "DEFAULT",
+    "AS",
+];
 
 pub fn parse_program(src: &str) -> Res<Vec<Item>> {
-    let (toks, docs) = lex_with_docs(src)?;
-    let mut p = Parser {
-        t: toks,
-        p: 0,
-        docs,
+    let parsed = anyfix_expr::parse(src);
+    let reader = Reader {
+        src,
+        docs: doc_comments(src),
     };
-    let mut items: Vec<Item> = Vec::new();
-    loop {
-        while matches!(p.peek(), Tok::Semi) {
-            p.bump();
+    if let Some(error) = parsed.errors.first() {
+        let at = error.span.start;
+        let double_colon = src.get(at..).is_some_and(|r| r.starts_with("::"))
+            || (at > 0 && src.get(at - 1..).is_some_and(|r| r.starts_with("::")));
+        let msg = if double_colon {
+            "a namespace qualifier is written with `.`: `git.status`, and a scope block `git.{ ... }`".to_string()
+        } else {
+            error.message.clone()
+        };
+        return Err(Diag::new(reader.at(error.span), msg));
+    }
+    let mut items = Vec::new();
+    for node in parsed.syntax.nodes() {
+        reader.top_level(&node, &mut items)?;
+    }
+    Ok(items)
+}
+
+/// Doc comments: a run of `##` lines, each alone on its line, directly above a
+/// line of code (no blank line between), keyed by that line's number.
+fn doc_comments(src: &str) -> HashMap<usize, String> {
+    let mut docs = HashMap::new();
+    let mut run: Vec<String> = Vec::new();
+    for (index, line) in src.lines().enumerate() {
+        let text = line.trim_start();
+        if let Some(doc) = text.strip_prefix("##") {
+            run.push(doc.strip_prefix(' ').unwrap_or(doc).trim_end().to_string());
+        } else if text.is_empty() || text.starts_with('#') {
+            run.clear();
+        } else if !run.is_empty() {
+            docs.insert(index + 1, std::mem::take(&mut run).join("\n"));
         }
-        match p.peek() {
-            Tok::Eof => break,
-            Tok::Kw(k) if k == "NAMESPACE" => {
-                let span = p.span();
-                let decl = p.parse_decl()?;
+    }
+    docs
+}
+
+/// One item of a call read left to right: a name word, or the argument that
+/// fills the next slot. `list file in (dir)` is `list`, `file`, `in`, `dir`.
+#[derive(Clone, Copy)]
+enum Flat<'a> {
+    Word(&'a str, anyfix_expr::Span),
+    Arg(&'a Node),
+}
+
+fn flatten(node: &Node) -> Vec<Flat<'_>> {
+    match &node.kind {
+        NodeKind::Call(call) => {
+            let mut arguments = call.arguments.iter();
+            call.name
+                .iter()
+                .map(|part| match part {
+                    NamePart::Word { text, span } => Flat::Word(text, *span),
+                    NamePart::Slot => Flat::Arg(arguments.next().expect("one argument per slot")),
+                })
+                .collect()
+        }
+        _ => vec![Flat::Arg(node)],
+    }
+}
+
+fn flat_span(item: &Flat) -> anyfix_expr::Span {
+    match item {
+        Flat::Word(_, span) => *span,
+        Flat::Arg(node) => node.span,
+    }
+}
+
+/// The first word of a call, if it starts with one: its keyword, if any.
+fn head<'a>(items: &[Flat<'a>]) -> Option<&'a str> {
+    match items.first() {
+        Some(Flat::Word(w, _)) => Some(w),
+        _ => None,
+    }
+}
+
+/// A call that is one word and nothing else: a variable, a namespace or a name.
+fn single_word(node: &Node) -> Option<&str> {
+    match flatten(node).as_slice() {
+        [Flat::Word(w, _)] => Some(w),
+        _ => None,
+    }
+}
+
+fn is_symbol(word: &str) -> bool {
+    !word.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+}
+
+fn is_lowercase_word(word: &str) -> bool {
+    word.starts_with(|c: char| c.is_lowercase())
+}
+
+fn braces(node: &Node) -> Option<&[Node]> {
+    match &node.kind {
+        NodeKind::Braces(nodes) => Some(nodes),
+        _ => None,
+    }
+}
+
+fn capitalize(w: &str) -> String {
+    let mut cs = w.chars();
+    cs.next()
+        .map(|c| c.to_uppercase().collect::<String>() + cs.as_str())
+        .unwrap_or_default()
+}
+
+const SEPARATE: &str = "declarations and statements are separated by `,`";
+
+struct Reader<'s> {
+    src: &'s str,
+    /// Doc comments by the line of the code they sit above.
+    docs: HashMap<usize, String>,
+}
+
+impl Reader<'_> {
+    fn at(&self, span: anyfix_expr::Span) -> Span {
+        let at = anyfix_expr::line_column(self.src, span.start);
+        Span {
+            line: at.line,
+            col: at.column,
+        }
+    }
+
+    fn err<T>(&self, span: anyfix_expr::Span, msg: impl Into<String>) -> Res<T> {
+        Err(Diag::new(self.at(span), msg))
+    }
+
+    fn top_level(&self, node: &Node, items: &mut Vec<Item>) -> Res<()> {
+        let flat = flatten(node);
+        let span = self.at(node.span);
+        match head(&flat) {
+            Some("NAMESPACE") => {
+                let name = self.single_name(
+                    &flat,
+                    "a namespace name is a single word, e.g. `NAMESPACE fd`",
+                )?;
                 if items
                     .iter()
                     .any(|i| matches!(i, Item::Decl(Decl::Namespace { .. })))
@@ -39,920 +187,670 @@ pub fn parse_program(src: &str) -> Res<Vec<Item>> {
                         "NAMESPACE must be the first declaration in the file; move it above everything else",
                     ));
                 }
-                items.push(Item::Decl(decl));
+                items.push(Item::Decl(Decl::Namespace { name, span }));
             }
-            Tok::Kw(k) if k == "IMPORT" => {
-                let kw = p.bump();
-                let words = p.parse_words(AnyfixRules::default())?;
-                match words.as_slice() {
-                    [name] => items.push(Item::Import(name.clone(), kw.span)),
-                    [] => return p.err("a library name, e.g. `IMPORT git`"),
-                    _ => {
-                        return Err(Diag::new(
-                            kw.span,
-                            "a library name is a single word, e.g. `IMPORT git`",
-                        ));
-                    }
+            Some("IMPORT") => {
+                let name =
+                    self.single_name(&flat, "a library name is a single word, e.g. `IMPORT git`")?;
+                items.push(Item::Import(name, span));
+            }
+            _ => match self.decl(node)? {
+                Some(decl) => items.push(Item::Decl(decl)),
+                None => items.push(Item::Stmt(self.stmt(node)?)),
+            },
+        }
+        Ok(())
+    }
+
+    /// `KEYWORD name`, as in `NAMESPACE fd` and `IMPORT git`.
+    fn single_name(&self, flat: &[Flat], msg: &str) -> Res<String> {
+        match flat {
+            [_, Flat::Word(name, _)] if !is_symbol(name) => Ok(name.to_string()),
+            [keyword, ..] => self.err(flat_span(keyword), format!("{msg}; {SEPARATE}")),
+            [] => unreachable!("a call has a name"),
+        }
+    }
+
+    // ---------- declarations ----------
+
+    fn decl(&self, node: &Node) -> Res<Option<Decl>> {
+        let flat = flatten(node);
+        let doc = self.docs.get(&self.at(node.span).line).cloned();
+        // `FUNCTION sig -> Ret { body }` and `TYPE pattern = target` are split
+        // by their symbol word, so the keyword heads the left side.
+        if let [Flat::Arg(left), Flat::Word(symbol, _), Flat::Arg(right)] = flat.as_slice() {
+            let left_flat = flatten(left);
+            match (head(&left_flat), *symbol) {
+                (Some("FUNCTION"), "->") => {
+                    let right_flat = flatten(right);
+                    let (body, ret) =
+                        self.trailing_braces(&right_flat, right.span, "function body")?;
+                    let ret = self.ty_flat(ret, right.span)?;
+                    return self
+                        .function(&left_flat[1..], Some(ret), body, node, doc)
+                        .map(Some);
                 }
-            }
-            Tok::Kw(k) if k == "FUNCTION" || k == "RECORD" || k == "ENUM" || k == "TYPE" => {
-                items.push(Item::Decl(p.parse_decl()?));
-            }
-            _ => {
-                let stmt = p.parse_stmt()?;
-                p.end_of_stmt(&stmt)?;
-                items.push(Item::Stmt(stmt));
+                (Some("TYPE"), "=") => {
+                    let pattern = self.ty_flat(&left_flat[1..], left.span)?;
+                    let target = self.ty(right)?;
+                    return Ok(Some(Decl::Alias {
+                        pattern,
+                        target,
+                        span: self.at(node.span),
+                    }));
+                }
+                (Some(keyword @ ("FUNCTION" | "TYPE")), _) => {
+                    return self.err(
+                        node.span,
+                        format!(
+                            "`{keyword}` is written {}",
+                            if keyword == "TYPE" {
+                                "`TYPE Name (T) = Target`"
+                            } else {
+                                "`FUNCTION signature -> Return Type { body }`"
+                            }
+                        ),
+                    );
+                }
+                _ => {}
             }
         }
-    }
-    Ok(items)
-}
-
-struct Parser {
-    t: Vec<Token>,
-    p: usize,
-    /// Doc comments by the line of the token they sit above.
-    docs: HashMap<usize, String>,
-}
-
-fn describe(t: &Tok) -> String {
-    match t {
-        Tok::Word(w) => format!("`{w}`"),
-        Tok::Kw(k) => format!("`{k}`"),
-        Tok::Int(n) => n.to_string(),
-        Tok::Float(f) => f.to_string(),
-        Tok::Str(s) => format!("{s:?}"),
-        Tok::LParen => "`(`".into(),
-        Tok::RParen => "`)`".into(),
-        Tok::LBrace => "`{`".into(),
-        Tok::RBrace => "`}`".into(),
-        Tok::LBracket => "`[`".into(),
-        Tok::RBracket => "`]`".into(),
-        Tok::Comma => "`,`".into(),
-        Tok::Colon => "`:`".into(),
-        Tok::ColonColon => "`::`".into(),
-        Tok::Ellipsis => "`...`".into(),
-        Tok::Question => "`?`".into(),
-        Tok::Arrow => "`=>`".into(),
-        Tok::Pipe => "`|>`".into(),
-        Tok::Eq => "`=`".into(),
-        Tok::Underscore => "`_`".into(),
-        Tok::Semi => "`;`".into(),
-        Tok::Eof => "end of input".into(),
-    }
-}
-
-/// The meta-syntax shared by every call-like construct (signatures, types,
-/// patterns, expressions): a run of literal words, `( slot )`s and
-/// single-token atoms. A context only decides what a slot and an atom hold.
-enum Anyfix<S, A> {
-    Word(String, Span),
-    Slot(S),
-    Atom(A),
-}
-
-#[derive(Clone, Copy, Default)]
-struct AnyfixRules {
-    /// Every word must start uppercase (type names).
-    capitalized: bool,
-}
-
-fn capitalize(w: &str) -> String {
-    let mut cs = w.chars();
-    cs.next()
-        .map(|c| c.to_uppercase().collect::<String>() + cs.as_str())
-        .unwrap_or_default()
-}
-
-impl Parser {
-    fn peek(&self) -> &Tok {
-        &self.t[self.p].tok
-    }
-
-    fn span(&self) -> Span {
-        self.t[self.p].span
-    }
-
-    fn bump(&mut self) -> Token {
-        let t = self.t[self.p].clone();
-        if self.p + 1 < self.t.len() {
-            self.p += 1;
+        if let [Flat::Arg(left), Flat::Word("->", _), ..] = flat.as_slice()
+            && head(&flatten(left)) == Some("FUNCTION")
+        {
+            return self.err(
+                node.span,
+                format!("expected one `FUNCTION signature -> Return Type {{ body }}`; is a `,` missing after a `}}`? ({SEPARATE})"),
+            );
         }
-        t
-    }
-
-    fn err<T>(&self, what: &str) -> Res<T> {
-        Err(Diag::new(
-            self.span(),
-            format!("expected {what}, found {}", describe(self.peek())),
-        ))
-    }
-
-    fn expect(&mut self, tok: Tok, what: &str) -> Res<Span> {
-        if *self.peek() == tok {
-            Ok(self.bump().span)
-        } else {
-            self.err(what)
+        match head(&flat) {
+            Some("FUNCTION") => {
+                let (body, sig) = self.trailing_braces(&flat[1..], node.span, "function body")?;
+                self.function(sig, None, body, node, doc).map(Some)
+            }
+            Some("RECORD") => {
+                let (body, name) =
+                    self.trailing_braces(&flat[1..], node.span, "record's fields")?;
+                let fields = body.iter().map(|f| self.field(f)).collect::<Res<_>>()?;
+                Ok(Some(Decl::Record {
+                    name: self.decl_name(name, node.span)?,
+                    fields,
+                    span: self.at(node.span),
+                    doc,
+                }))
+            }
+            Some("ENUM") => {
+                let (body, name) =
+                    self.trailing_braces(&flat[1..], node.span, "enum's variants")?;
+                let variants = body
+                    .iter()
+                    .map(|v| self.signature(&flatten(v), true, v.span))
+                    .collect::<Res<_>>()?;
+                Ok(Some(Decl::Enum {
+                    name: self.decl_name(name, node.span)?,
+                    variants,
+                    span: self.at(node.span),
+                    doc,
+                }))
+            }
+            Some("TYPE") => self.err(node.span, "`TYPE` is written `TYPE Name (T) = Target`"),
+            _ => Ok(None),
         }
     }
 
-    /// Every statement ends with `;`. A scope block `ns:: { ... }` is closed by
-    /// its `}` and may omit it. Returns whether a `;` was consumed.
-    fn end_of_stmt(&mut self, stmt: &Stmt) -> Res<bool> {
-        match self.peek() {
-            Tok::Semi => {
-                self.bump();
-                Ok(true)
-            }
-            _ if matches!(stmt, Stmt::Scope(..)) => Ok(false),
-            other => Err(Diag::new(
-                self.span(),
-                format!(
-                    "expected `;` to end the statement, found {}; every statement ends with `;`, and nested calls need parentheses",
-                    describe(other)
-                ),
-            )),
+    /// Splits a declaration's trailing `{ ... }` off the items before it.
+    fn trailing_braces<'a>(
+        &self,
+        items: &'a [Flat<'a>],
+        span: anyfix_expr::Span,
+        what: &str,
+    ) -> Res<(&'a [Node], &'a [Flat<'a>])> {
+        let Some(position) = items
+            .iter()
+            .position(|f| matches!(f, Flat::Arg(n) if braces(n).is_some()))
+        else {
+            return self.err(span, format!("expected `{{ ... }}` with the {what}"));
+        };
+        if let Some(after) = items.get(position + 1) {
+            return self.err(
+                flat_span(after),
+                format!("expected `,` after the {what}'s `}}`; {SEPARATE}"),
+            );
         }
-    }
-
-    fn parse_decl(&mut self) -> Res<Decl> {
-        let kw = self.bump();
-        let doc = self.docs.get(&kw.span.line).cloned();
-        let Tok::Kw(kw_name) = kw.tok else {
+        let Flat::Arg(node) = items[position] else {
             unreachable!()
         };
-        match kw_name.as_str() {
-            "NAMESPACE" => {
-                let span = self.span();
-                let words = self.parse_words(AnyfixRules::default())?;
-                match words.as_slice() {
-                    [name] => Ok(Decl::Namespace {
-                        name: name.clone(),
-                        span,
-                    }),
-                    [] => self.err("a namespace name"),
-                    _ => Err(Diag::new(
-                        span,
-                        "a namespace name is a single word, e.g. `NAMESPACE fd`",
-                    )),
+        Ok((braces(node).expect("checked above"), &items[..position]))
+    }
+
+    fn function(
+        &self,
+        sig: &[Flat],
+        ret: Option<TyExpr>,
+        body: &[Node],
+        node: &Node,
+        doc: Option<String>,
+    ) -> Res<Decl> {
+        let sig = self.signature(sig, false, node.span)?;
+        let body = match body {
+            [native] => match flatten(native).as_slice() {
+                [Flat::Word("NATIVE", _), Flat::Arg(name)] => match &name.kind {
+                    NodeKind::String(name) => FnBody::Native(name.clone()),
+                    _ => return self.err(name.span, "expected a native function name string"),
+                },
+                _ => FnBody::Block(self.block(body)?),
+            },
+            _ => FnBody::Block(self.block(body)?),
+        };
+        Ok(Decl::Function {
+            sig,
+            ret,
+            body,
+            doc,
+        })
+    }
+
+    fn decl_name(&self, items: &[Flat], span: anyfix_expr::Span) -> Res<String> {
+        let mut words = Vec::new();
+        for item in items {
+            match item {
+                Flat::Word(w, s) => {
+                    self.check_capitalized(w, *s)?;
+                    words.push(*w);
+                }
+                Flat::Arg(n) => return self.err(n.span, "a declared name has no parameters"),
+            }
+        }
+        if words.is_empty() {
+            return self.err(span, "expected a name");
+        }
+        Ok(words.join(" "))
+    }
+
+    /// `bare_types` (enum variants): a slot may hold a type alone,
+    /// `max depth (Int)`; it gets the placeholder name `_`.
+    fn signature(&self, items: &[Flat], bare_types: bool, span: anyfix_expr::Span) -> Res<SigAst> {
+        let parts = items
+            .iter()
+            .map(|item| match item {
+                Flat::Word(w, s) if is_symbol(w) => self.err(
+                    *s,
+                    format!(
+                        "`{w}` cannot be part of a name; {SEPARATE}, and a return type follows `->`"
+                    ),
+                ),
+                Flat::Word(w, _) => Ok(Part::Word(w.to_string())),
+                Flat::Arg(n) => self.param(n, bare_types),
+            })
+            .collect::<Res<_>>()?;
+        Ok(SigAst {
+            parts,
+            span: self.at(span),
+        })
+    }
+
+    /// `(name : Type)`, a tuple `((name : Type, name : Type))`, or (in a
+    /// variant) a bare type.
+    fn param(&self, node: &Node, bare_types: bool) -> Res<Part> {
+        if let NodeKind::Parens(components) = &node.kind {
+            let mut out = Vec::new();
+            for c in components {
+                match flatten(c).as_slice() {
+                    [Flat::Word(name, _), Flat::Arg(ty)] if is_lowercase_word(name) => {
+                        out.push((name.to_string(), self.ty(ty)?))
+                    }
+                    _ => return self.err(c.span, "expected a component `name : Type`"),
                 }
             }
-            "FUNCTION" => {
-                let sig = self.parse_sig(false)?;
-                let ret = if matches!(self.peek(), Tok::Colon) {
-                    self.bump();
-                    Some(self.parse_type()?)
-                } else {
-                    None
-                };
-                self.expect(Tok::LBrace, "`{` to start the function body")?;
-                let body = if matches!(self.peek(), Tok::Kw(k) if k == "NATIVE") {
-                    self.bump();
-                    let Tok::Str(name) = self.peek().clone() else {
-                        return self.err("a native function name string");
-                    };
-                    self.bump();
-                    self.expect(Tok::RBrace, "`}`")?;
-                    FnBody::Native(name)
-                } else {
-                    FnBody::Block(self.parse_block()?)
-                };
-                Ok(Decl::Function {
-                    sig,
-                    ret,
-                    body,
-                    doc,
-                })
+            if out.len() < 2 {
+                return self.err(
+                    node.span,
+                    "a tuple parameter has two or more components, e.g. `((command : String, args : List (String)))`",
+                );
             }
-            "RECORD" => {
-                let (name, span) = self.parse_decl_name()?;
-                self.expect(Tok::LBrace, "`{` after the record name")?;
-                let mut fields = Vec::new();
-                loop {
-                    if matches!(self.peek(), Tok::RBrace) {
-                        self.bump();
-                        break;
-                    }
-                    fields.push(self.parse_field()?);
-                    self.field_sep()?;
-                }
-                Ok(Decl::Record {
-                    name,
-                    fields,
-                    span,
-                    doc,
-                })
-            }
-            "ENUM" => {
-                let (name, span) = self.parse_decl_name()?;
-                self.expect(Tok::LBrace, "`{` after the enum name")?;
-                let mut variants = Vec::new();
-                loop {
-                    if matches!(self.peek(), Tok::RBrace) {
-                        self.bump();
-                        break;
-                    }
-                    let sig = self.parse_sig(true)?;
-                    if sig.parts.is_empty() {
-                        return self.err("a variant");
-                    }
-                    variants.push(sig);
-                    self.field_sep()?;
-                }
-                Ok(Decl::Enum {
-                    name,
-                    variants,
-                    span,
-                    doc,
-                })
-            }
-            "TYPE" => {
-                let span = self.span();
-                let pattern = self.parse_type()?;
-                self.expect(Tok::Eq, "`=` after the alias name")?;
-                let target = self.parse_type()?;
-                Ok(Decl::Alias {
-                    pattern,
-                    target,
-                    span,
-                })
-            }
-            _ => unreachable!(),
+            return Ok(Part::Tuple(out));
+        }
+        match flatten(node).as_slice() {
+            [Flat::Word(name, _), Flat::Arg(ty)] if is_lowercase_word(name) => Ok(Part::Param {
+                name: name.to_string(),
+                ty: Some(self.ty(ty)?),
+            }),
+            [Flat::Word(name, _)] if is_lowercase_word(name) && !bare_types => Ok(Part::Param {
+                name: name.to_string(),
+                ty: None,
+            }),
+            _ if bare_types => Ok(Part::Param {
+                name: "_".into(),
+                ty: Some(self.ty(node)?),
+            }),
+            _ => self.err(node.span, "expected a parameter `(name : Type)`"),
         }
     }
 
     /// A record field: words and type-only slots, each slot optionally
     /// `DEFAULT value`, e.g. `port (Int DEFAULT 8080)`.
-    fn parse_field(&mut self) -> Res<FieldAst> {
-        let span = self.span();
-        let parts: Vec<FieldPart> = self
-            .parse_anyfix(
-                AnyfixRules::default(),
-                |p| {
-                    let ty = p.parse_type()?;
-                    let default = if matches!(p.peek(), Tok::Kw(k) if k == "DEFAULT") {
-                        p.bump();
-                        Some(p.expr_slot()?)
-                    } else {
-                        None
-                    };
-                    Ok((ty, default))
-                },
-                Self::no_atom,
-            )?
-            .into_iter()
-            .filter_map(|part| match part {
-                Anyfix::Word(w, _) => Some(FieldPart::Word(w)),
-                Anyfix::Slot((ty, default)) => Some(FieldPart::Slot { ty, default }),
-                Anyfix::Atom(()) => None,
-            })
-            .collect();
-        if !parts.iter().any(|p| matches!(p, FieldPart::Word(_))) {
-            return self.err("a field name (a field needs at least one word)");
-        }
-        Ok(FieldAst { parts, span })
-    }
-
-    fn field_sep(&mut self) -> Res<()> {
-        match self.peek() {
-            Tok::Comma => {
-                self.bump();
-                Ok(())
-            }
-            Tok::RBrace => Ok(()),
-            _ => self.err("`,` or `}`"),
-        }
-    }
-
-    /// One part of an anyfix run, or `None` if the next token cannot continue it.
-    /// `slot` parses what is inside `( … )` (the closing `)` is handled here);
-    /// `atom` recognises a context's single-token parts.
-    fn anyfix_item<S, A>(
-        &mut self,
-        rules: AnyfixRules,
-        slot: &mut impl FnMut(&mut Self) -> Res<S>,
-        atom: &mut impl FnMut(&mut Self) -> Res<Option<A>>,
-    ) -> Res<Option<Anyfix<S, A>>> {
-        let span = self.span();
-        match self.peek().clone() {
-            Tok::Word(w) => {
-                if matches!(self.t[self.p + 1].tok, Tok::ColonColon) {
-                    return Err(Diag::new(
-                        span,
-                        format!(
-                            "`{w}::` qualifies a whole call, so it must come first in the call; write `{w}::` before the call's first word or slot"
-                        ),
-                    ));
-                }
-                if rules.capitalized {
-                    self.check_capitalized(&w)?;
-                }
-                self.bump();
-                Ok(Some(Anyfix::Word(w, span)))
-            }
-            Tok::LParen => {
-                self.bump();
-                let s = slot(self)?;
-                self.expect(Tok::RParen, "`)`")?;
-                Ok(Some(Anyfix::Slot(s)))
-            }
-            _ => Ok(atom(self)?.map(Anyfix::Atom)),
-        }
-    }
-
-    fn parse_anyfix<S, A>(
-        &mut self,
-        rules: AnyfixRules,
-        mut slot: impl FnMut(&mut Self) -> Res<S>,
-        mut atom: impl FnMut(&mut Self) -> Res<Option<A>>,
-    ) -> Res<Vec<Anyfix<S, A>>> {
+    fn field(&self, node: &Node) -> Res<FieldAst> {
         let mut parts = Vec::new();
-        while let Some(part) = self.anyfix_item(rules, &mut slot, &mut atom)? {
-            parts.push(part);
-        }
-        Ok(parts)
-    }
-
-    fn no_atom(_: &mut Self) -> Res<Option<()>> {
-        Ok(None)
-    }
-
-    /// Slot-less run of words (declaration names, brace field keys).
-    fn parse_words(&mut self, rules: AnyfixRules) -> Res<Vec<String>> {
-        let parts = self.parse_anyfix(
-            rules,
-            |p| p.err::<()>("a name without parameters"),
-            Self::no_atom,
-        )?;
-        Ok(parts
-            .into_iter()
-            .filter_map(|p| match p {
-                Anyfix::Word(w, _) => Some(w),
-                _ => None,
-            })
-            .collect())
-    }
-
-    /// Leading `ns::` qualifiers of a call or type, outermost first.
-    fn parse_qualifiers(&mut self) -> Vec<(String, Span)> {
-        let mut quals = Vec::new();
-        while let Tok::Word(w) = self.peek().clone()
-            && matches!(self.t[self.p + 1].tok, Tok::ColonColon)
-        {
-            let span = self.bump().span;
-            self.bump();
-            quals.push((w, span));
-        }
-        quals
-    }
-
-    fn parse_decl_name(&mut self) -> Res<(String, Span)> {
-        let span = self.span();
-        let words = self.parse_words(AnyfixRules {
-            capitalized: true,
-            ..Default::default()
-        })?;
-        if words.is_empty() {
-            return self.err("a name");
-        }
-        Ok((words.join(" "), span))
-    }
-
-    /// `bare_types` (enum variants): a slot may be a type alone, `max depth (Int)`;
-    /// it gets the placeholder name `_`.
-    fn parse_sig(&mut self, bare_types: bool) -> Res<SigAst> {
-        let span = self.span();
-        let parts = self
-            .parse_anyfix(
-                AnyfixRules::default(),
-                |p| {
-                    if matches!(p.peek(), Tok::LParen) {
-                        return p.parse_tuple_param();
-                    }
-                    let Tok::Word(name) = p.peek().clone() else {
-                        return p.err("a parameter name");
+        for item in flatten(node) {
+            match item {
+                Flat::Word(w, s) if is_symbol(w) => {
+                    return self.err(s, format!("`{w}` cannot be part of a field name"));
+                }
+                Flat::Word(w, s) if !is_lowercase_word(w) => {
+                    return self.err(
+                        s,
+                        format!("field names are lowercase; `{w}` looks like a type, which goes in a slot: `name ({w})` (a field needs at least one word)"),
+                    );
+                }
+                Flat::Word(w, _) => parts.push(FieldPart::Word(w.to_string())),
+                Flat::Arg(slot) => {
+                    let inner = flatten(slot);
+                    let (ty, default) = match inner
+                        .iter()
+                        .position(|f| matches!(f, Flat::Word("DEFAULT", _)))
+                    {
+                        Some(i) => {
+                            let rest = &inner[i + 1..];
+                            if rest.is_empty() {
+                                return self.err(slot.span, "expected a value after `DEFAULT`");
+                            }
+                            (&inner[..i], Some(self.flat_expr(rest)?))
+                        }
+                        None => (&inner[..], None),
                     };
-                    if bare_types && !matches!(p.t[(p.p + 1).min(p.t.len() - 1)].tok, Tok::Colon) {
-                        let ty = p.parse_type()?;
-                        return Ok(Part::Param {
-                            name: "_".into(),
-                            ty: Some(ty),
-                        });
-                    }
-                    p.bump();
-                    let ty = if matches!(p.peek(), Tok::Colon) {
-                        p.bump();
-                        Some(p.parse_type()?)
-                    } else {
-                        None
-                    };
-                    Ok(Part::Param { name, ty })
-                },
-                Self::no_atom,
-            )?
-            .into_iter()
-            .filter_map(|p| match p {
-                Anyfix::Word(w, _) => Some(Part::Word(w)),
-                Anyfix::Slot(param) => Some(param),
-                Anyfix::Atom(()) => None,
-            })
-            .collect();
-        Ok(SigAst { parts, span })
-    }
-
-    /// `(name: Type, name: Type)`: a tuple parameter's components, two or more.
-    fn parse_tuple_param(&mut self) -> Res<Part> {
-        let span = self.expect(Tok::LParen, "`(`")?;
-        let mut comps = Vec::new();
-        loop {
-            let Tok::Word(name) = self.peek().clone() else {
-                return self.err("a component name");
-            };
-            self.bump();
-            if !matches!(self.peek(), Tok::Colon) {
-                return self.err("`:` and the component's type");
-            }
-            self.bump();
-            comps.push((name, self.parse_type()?));
-            if matches!(self.peek(), Tok::Comma) {
-                self.bump();
-            } else {
-                break;
+                    parts.push(FieldPart::Slot {
+                        ty: self.ty_flat(ty, slot.span)?,
+                        default,
+                    });
+                }
             }
         }
-        self.expect(Tok::RParen, "`,` or `)`")?;
-        if comps.len() < 2 {
-            return Err(Diag::new(
-                span,
-                "a tuple parameter has two or more components, e.g. `((command: String, args: List (String)))`",
-            ));
+        if !parts.iter().any(|p| matches!(p, FieldPart::Word(_))) {
+            return self.err(
+                node.span,
+                "expected a field name (a field needs at least one word)",
+            );
         }
-        Ok(Part::Tuple(comps))
+        Ok(FieldAst {
+            parts,
+            span: self.at(node.span),
+        })
     }
 
-    /// An anyfix type: capitalized words and `(Type)` slots, e.g. `Result (List (Entry)) Or (String)`.
+    // ---------- types ----------
+
+    fn ty(&self, node: &Node) -> Res<TyExpr> {
+        self.ty_flat(&flatten(node), node.span)
+    }
+
+    /// An anyfix type: capitalized words and `(Type)` slots, e.g.
+    /// `Result (List (Entry)) Or (String)`, optionally qualified: `git.Commit`.
     /// `name` keeps the words with `_` standing in for each slot (`Result _ Or _`).
-    fn parse_type(&mut self) -> Res<TyExpr> {
-        let span = self.span();
-        let qualifiers: Vec<String> = self
-            .parse_qualifiers()
-            .into_iter()
-            .map(|(q, _)| q)
-            .collect();
-        let parts = self.parse_anyfix(
-            AnyfixRules {
-                capitalized: true,
-                ..Default::default()
-            },
-            |p| p.parse_type(),
-            Self::no_atom,
-        )?;
-        if !parts.iter().any(|p| matches!(p, Anyfix::Word(..))) {
-            return self.err("a type");
+    fn ty_flat(&self, items: &[Flat], span: anyfix_expr::Span) -> Res<TyExpr> {
+        // `-> (git.Commit) { ... }`: parentheses keep a qualified type whole.
+        if let [Flat::Arg(inner)] = items
+            && matches!(inner.kind, NodeKind::Call(_))
+        {
+            return self.ty(inner);
         }
+        let (qualifiers, items) = match items {
+            [Flat::Arg(q), rest @ ..]
+                if !rest.is_empty() && single_word(q).is_some_and(is_lowercase_word) =>
+            {
+                (vec![single_word(q).unwrap_or_default().to_string()], rest)
+            }
+            _ => (Vec::new(), items),
+        };
         let mut names = Vec::new();
         let mut args = Vec::new();
-        for part in parts {
-            match part {
-                Anyfix::Word(w, _) => names.push(w),
-                Anyfix::Slot(t) => {
-                    names.push("_".into());
-                    args.push(t);
+        for item in items {
+            match item {
+                Flat::Word(w, s) if is_symbol(w) => {
+                    return self.err(
+                        *s,
+                        format!("`{w}` cannot be part of a type; type parameters go in parentheses: `List (Int)`"),
+                    );
                 }
-                Anyfix::Atom(()) => {}
+                Flat::Word(w, s) => {
+                    self.check_capitalized(w, *s)?;
+                    names.push(w.to_string());
+                }
+                Flat::Arg(n) => {
+                    names.push("_".into());
+                    args.push(self.ty(n)?);
+                }
             }
+        }
+        if !items.iter().any(|f| matches!(f, Flat::Word(..))) {
+            return self.err(span, "expected a type");
         }
         Ok(TyExpr {
             qualifiers,
             name: names.join(" "),
             args,
-            span,
+            span: self.at(span),
         })
     }
 
-    fn check_capitalized(&self, w: &str) -> Res<()> {
-        if w.chars().next().is_some_and(|c| c.is_uppercase()) {
+    fn check_capitalized(&self, w: &str, span: anyfix_expr::Span) -> Res<()> {
+        if w.starts_with(|c: char| c.is_uppercase()) {
             Ok(())
         } else {
-            Err(Diag::new(
-                self.span(),
+            self.err(
+                span,
                 format!(
                     "type names capitalize every word; write `{}` here",
                     capitalize(w)
                 ),
-            ))
-        }
-    }
-
-    // ---------- statements & expressions ----------
-
-    /// Parses statements until the closing `}` (consumed).
-    /// A block's last expression is its value unless it ends with `;`, which
-    /// discards it.
-    fn parse_block(&mut self) -> Res<Vec<Stmt>> {
-        let mut stmts = Vec::new();
-        let mut terminated = false;
-        loop {
-            while matches!(self.peek(), Tok::Semi) {
-                self.bump();
-            }
-            if matches!(self.peek(), Tok::RBrace) {
-                self.bump();
-                if terminated && let Some(Stmt::Expr(e)) = stmts.pop() {
-                    stmts.push(Stmt::Discard(e));
-                }
-                return Ok(stmts);
-            }
-            if matches!(self.peek(), Tok::Eof) {
-                return self.err("`}` to close the block");
-            }
-            let stmt = self.parse_stmt()?;
-            terminated = if matches!(self.peek(), Tok::RBrace) && !matches!(stmt, Stmt::Let(..)) {
-                false
-            } else {
-                self.end_of_stmt(&stmt)?
-            };
-            stmts.push(stmt);
-        }
-    }
-
-    fn parse_stmt(&mut self) -> Res<Stmt> {
-        if let Tok::Word(ns) = self.peek().clone()
-            && matches!(
-                self.t.get(self.p + 1).map(|t| &t.tok),
-                Some(Tok::ColonColon)
             )
-            && matches!(self.t.get(self.p + 2).map(|t| &t.tok), Some(Tok::LBrace))
+        }
+    }
+
+    // ---------- statements ----------
+
+    fn block(&self, nodes: &[Node]) -> Res<Vec<Stmt>> {
+        nodes.iter().map(|n| self.stmt(n)).collect()
+    }
+
+    fn stmt(&self, node: &Node) -> Res<Stmt> {
+        let flat = flatten(node);
+        let span = self.at(node.span);
+        match flat.as_slice() {
+            [Flat::Word("LET", _), rest @ ..] => match rest {
+                [Flat::Word(name, _), Flat::Arg(value)] if !is_symbol(name) => {
+                    Ok(Stmt::Let(name.to_string(), self.expr(value)?, span))
+                }
+                [Flat::Arg(binding), Flat::Arg(value)] => match flatten(binding).as_slice() {
+                    [Flat::Word(name, _), Flat::Arg(ty)] if !is_symbol(name) => {
+                        let value = Expr {
+                            k: ExprKind::Ascribe(Box::new(self.expr(value)?), self.ty(ty)?),
+                            span,
+                        };
+                        Ok(Stmt::Let(name.to_string(), value, span))
+                    }
+                    _ => self.let_shape(node),
+                },
+                _ => self.let_shape(node),
+            },
+            [Flat::Arg(ns), Flat::Arg(body)] if braces(body).is_some() => match single_word(ns) {
+                Some(ns) => Ok(Stmt::Scope(
+                    ns.to_string(),
+                    self.block(braces(body).expect("checked above"))?,
+                    span,
+                )),
+                None => Ok(Stmt::Expr(self.expr(node)?)),
+            },
+            [Flat::Arg(left), Flat::Word("=", _), ..] if head(&flatten(left)) == Some("LET") => {
+                self.let_shape(node)
+            }
+            _ => {
+                if let Some(keyword) = head(&flat).filter(|k| {
+                    ["FUNCTION", "RECORD", "ENUM", "TYPE", "NAMESPACE", "IMPORT"].contains(k)
+                }) {
+                    return self.err(
+                        node.span,
+                        format!(
+                            "`{keyword}` declares at the top level of a file, not inside a block"
+                        ),
+                    );
+                }
+                Ok(Stmt::Expr(self.expr(node)?))
+            }
+        }
+    }
+
+    fn let_shape<T>(&self, node: &Node) -> Res<T> {
+        self.err(
+            node.span,
+            "`LET` is written `LET name : value` or `LET (name : Type) : value`; a variable name is a single word",
+        )
+    }
+
+    // ---------- expressions ----------
+
+    fn expr(&self, node: &Node) -> Res<Expr> {
+        let span = self.at(node.span);
+        let k = match &node.kind {
+            NodeKind::Number(text) => self.number(text, node.span)?,
+            NodeKind::String(s) => ExprKind::Str(s.clone()),
+            NodeKind::Underscore => ExprKind::Placeholder,
+            NodeKind::Missing => return self.err(node.span, "expected an expression"),
+            NodeKind::Parens(xs) => match xs.as_slice() {
+                [] => return self.err(node.span, "expected an expression inside `()`"),
+                [x] if matches!(x.kind, NodeKind::Underscore) => ExprKind::Placeholder,
+                [_] => {
+                    return self.err(
+                        node.span,
+                        "a tuple has two or more values; remove the trailing `,`",
+                    );
+                }
+                _ => ExprKind::Tuple(xs.iter().map(|x| self.expr(x)).collect::<Res<_>>()?),
+            },
+            NodeKind::Brackets(xs) => {
+                ExprKind::List(xs.iter().map(|x| self.expr(x)).collect::<Res<_>>()?)
+            }
+            NodeKind::Braces(entries) => ExprKind::Brace(
+                entries
+                    .iter()
+                    .map(|entry| {
+                        Ok(BraceEntry {
+                            items: flatten(entry)
+                                .iter()
+                                .map(|f| self.seq_item(f))
+                                .collect::<Res<_>>()?,
+                            span: self.at(entry.span),
+                        })
+                    })
+                    .collect::<Res<_>>()?,
+            ),
+            NodeKind::Call(_) => return self.flat_expr(&flatten(node)),
+        };
+        Ok(Expr { k, span })
+    }
+
+    fn number(&self, text: &str, span: anyfix_expr::Span) -> Res<ExprKind> {
+        if let Ok(n) = text.parse::<i64>() {
+            return Ok(ExprKind::Int(n));
+        }
+        if text.contains('.')
+            && let Ok(f) = text.parse::<f64>()
         {
-            let span = self.bump().span;
-            self.bump();
-            self.bump();
-            return Ok(Stmt::Scope(ns, self.parse_block()?, span));
+            return Ok(ExprKind::Float(f));
         }
-        if matches!(self.peek(), Tok::Kw(k) if k == "LET") {
-            let span = self.bump().span;
-            let Tok::Word(name) = self.peek().clone() else {
-                return self.err("a variable name (a single word)");
-            };
-            self.bump();
-            // `LET name: Type = e` means `LET name = (e : Type)`.
-            let ty = if matches!(self.peek(), Tok::Colon) {
-                self.bump();
-                Some(self.parse_type()?)
-            } else {
-                None
-            };
-            if !matches!(self.peek(), Tok::Eq) {
-                return self.err("`=` (variable names are a single word)");
-            }
-            self.bump();
-            let mut e = self.parse_pipeline()?;
-            if let Some(ty) = ty {
-                e = Expr {
-                    k: ExprKind::Ascribe(Box::new(e), ty),
-                    span,
-                };
-            }
-            Ok(Stmt::Let(name, e, span))
-        } else {
-            Ok(Stmt::Expr(self.parse_pipeline()?))
+        if text.chars().all(|c| c.is_ascii_digit()) {
+            return self.err(span, "integer literal out of range");
         }
-    }
-
-    fn parse_pipeline(&mut self) -> Res<Expr> {
-        let mut e = self.parse_seq()?;
-        e = self.parse_ascription(e)?;
-        loop {
-            let save = self.p;
-            if matches!(self.peek(), Tok::Pipe) {
-                let span = self.bump().span;
-                let r = self.parse_seq()?;
-                let r = self.parse_ascription(r)?;
-                e = Expr {
-                    k: ExprKind::Pipe(Box::new(e), Box::new(r)),
-                    span,
-                };
-            } else {
-                self.p = save;
-                break;
-            }
-        }
-        Ok(e)
-    }
-
-    /// Optional `: Type` after an expression.
-    fn parse_ascription(&mut self, e: Expr) -> Res<Expr> {
-        if !matches!(self.peek(), Tok::Colon) {
-            return Ok(e);
-        }
-        let span = self.bump().span;
-        let ty = self.parse_type()?;
-        Ok(Expr {
-            k: ExprKind::Ascribe(Box::new(e), ty),
+        let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let suffix = &text[digits.len()..];
+        self.err(
             span,
-        })
+            format!("invalid number `{text}`; a unit is a separate word: `{digits} {suffix}`"),
+        )
     }
 
-    fn parse_seq(&mut self) -> Res<Expr> {
-        let span = self.span();
-        match self.peek() {
-            Tok::Kw(k) if k == "IF" => return self.parse_if(),
-            Tok::Kw(k) if k == "MATCH" => return self.parse_match(),
+    fn seq_item(&self, item: &Flat) -> Res<SeqItem> {
+        match item {
+            Flat::Word(w, s) => Ok(SeqItem::Word(w.to_string(), self.at(*s))),
+            Flat::Arg(n) => Ok(SeqItem::Atom(self.expr(n)?)),
+        }
+    }
+
+    /// The items of one call: a keyword form (`IF`, `MATCH`, `AS`, a lambda,
+    /// a spread) or a plain `Seq` for the checker to resolve.
+    fn flat_expr(&self, items: &[Flat]) -> Res<Expr> {
+        let first = flat_span(&items[0]);
+        let span = self.at(first);
+        let mk = |k: ExprKind| Ok(Expr { k, span });
+        let word_at = |word: &str| {
+            items
+                .iter()
+                .position(|f| matches!(f, Flat::Word(w, _) if *w == word))
+        };
+        match items {
+            [Flat::Arg(n)] => return self.expr(n),
+            [Flat::Word("IF", _), ..] => return self.if_expr(items),
+            [Flat::Arg(param), Flat::Word("=>", _), Flat::Arg(body)] => {
+                let Some(name) = single_word(param) else {
+                    return self.err(
+                        param.span,
+                        "a lambda is written `(name) => body`: exactly one parameter name in parentheses",
+                    );
+                };
+                return mk(ExprKind::Lambda(
+                    name.to_string(),
+                    Box::new(self.expr(body)?),
+                ));
+            }
+            [Flat::Word("*", _), Flat::Arg(list)] => {
+                return mk(ExprKind::Spread(Box::new(self.expr(list)?)));
+            }
             _ => {}
         }
-        let quals = self.parse_qualifiers();
-        let mut items: Vec<SeqItem> = self
-            .parse_anyfix(AnyfixRules::default(), Self::expr_slot, Self::expr_atom)?
-            .into_iter()
-            .map(Self::seq_item)
-            .collect();
-        if items.is_empty() {
-            return self.err(if quals.is_empty() {
-                "an expression"
-            } else {
-                "a call after the `::` qualifier"
-            });
+        if let Some(i) = word_at("MATCH").filter(|&i| i <= 1) {
+            return self.match_expr(items, i);
         }
-        let mut e = if items.len() == 1
-            && let SeqItem::Atom(_) = &items[0]
-        {
-            let Some(SeqItem::Atom(e)) = items.pop() else {
-                unreachable!()
-            };
-            e
-        } else {
-            Expr {
-                k: ExprKind::Seq(items),
-                span,
+        if let Some(i) = word_at("AS") {
+            if i == 0 || i + 1 == items.len() {
+                return self.err(first, "`AS` is written `value AS Type`");
             }
-        };
-        for (q, qspan) in quals.into_iter().rev() {
-            e = Expr {
-                k: ExprKind::Qualified(q, Box::new(e)),
-                span: qspan,
-            };
+            let value = self.flat_expr(&items[..i])?;
+            let ty = self.ty_flat(&items[i + 1..], flat_span(&items[i + 1]))?;
+            return mk(ExprKind::Ascribe(Box::new(value), ty));
         }
-        Ok(e)
+        for item in items {
+            if let Flat::Word(w, s) = item {
+                if KEYWORDS.contains(w) {
+                    return self.err(
+                        *s,
+                        format!(
+                            "`{w}` cannot appear in the middle of a call; is a `,` missing before it? ({SEPARATE})"
+                        ),
+                    );
+                }
+                if *w == ";" {
+                    return self.err(*s, format!("`;` does not end a statement; {SEPARATE}"));
+                }
+                if is_symbol(w) {
+                    return self.err(
+                        *s,
+                        format!(
+                            "`{w}` is not an operator in resh; `.` and `:` chain calls, `=>` writes a lambda or a MATCH arm, `->` a return type"
+                        ),
+                    );
+                }
+            }
+        }
+        mk(ExprKind::Seq(
+            items.iter().map(|f| self.seq_item(f)).collect::<Res<_>>()?,
+        ))
     }
 
-    fn parse_if(&mut self) -> Res<Expr> {
-        let span = self.bump().span;
-        let cond = self.parse_pipeline()?;
-        if !matches!(self.peek(), Tok::Kw(k) if k == "THEN") {
-            return self.err("`THEN`");
-        }
-        self.bump();
-        let then = self.parse_pipeline()?;
-        if !matches!(self.peek(), Tok::Kw(k) if k == "ELSE") {
-            return self.err("`ELSE`");
-        }
-        self.bump();
-        let els = self.parse_pipeline()?;
+    /// `IF cond THEN a ELSE b`; chain with `:`, `... ELSE : IF ...`.
+    fn if_expr(&self, items: &[Flat]) -> Res<Expr> {
+        let span = flat_span(&items[0]);
+        let find = |word: &str, from: usize| {
+            items[from..]
+                .iter()
+                .position(|f| matches!(f, Flat::Word(w, _) if *w == word))
+                .map(|i| i + from)
+        };
+        let Some(then) = find("THEN", 1) else {
+            return self.err(span, "expected `THEN` after the IF condition");
+        };
+        let Some(els) = find("ELSE", then + 1) else {
+            return self.err(span, "expected `ELSE` after the THEN branch");
+        };
+        let part = |from: usize, to: usize, what: &str| {
+            if from == to {
+                self.err(span, format!("expected {what}"))
+            } else {
+                self.flat_expr(&items[from..to])
+            }
+        };
+        let cond = part(1, then, "a condition after `IF`")?;
+        let yes = part(then + 1, els, "a value after `THEN`")?;
+        let no = part(els + 1, items.len(), "a value after `ELSE`")?;
         Ok(Expr {
-            k: ExprKind::If(Box::new(cond), Box::new(then), Box::new(els)),
-            span,
+            k: ExprKind::If(Box::new(cond), Box::new(yes), Box::new(no)),
+            span: self.at(span),
         })
     }
 
-    fn parse_match(&mut self) -> Res<Expr> {
-        let span = self.bump().span;
-        let scrut =
-            self.single_operand("a single token or parenthesised expression after MATCH")?;
-        self.expect(Tok::LBrace, "`{` after the MATCH subject")?;
+    /// `MATCH subject { arms }` or `subject . MATCH { arms }`.
+    fn match_expr(&self, items: &[Flat], keyword: usize) -> Res<Expr> {
+        let span = flat_span(&items[keyword]);
+        let arms_node = match items.last() {
+            Some(Flat::Arg(n)) if braces(n).is_some() && items.len() > keyword + 1 => *n,
+            _ => return self.err(span, "expected `{ arms }` at the end of the MATCH"),
+        };
+        let subject: Vec<Flat> = items[..keyword]
+            .iter()
+            .chain(&items[keyword + 1..items.len() - 1])
+            .copied()
+            .collect();
+        if subject.is_empty() {
+            return self.err(span, "expected the value to MATCH: `MATCH value { ... }`");
+        }
+        let subject = self.flat_expr(&subject)?;
         let mut arms = Vec::new();
-        loop {
-            while matches!(self.peek(), Tok::Comma) {
-                self.bump();
+        for arm in braces(arms_node).expect("checked above") {
+            match flatten(arm).as_slice() {
+                [Flat::Arg(pat), Flat::Word("=>", _), Flat::Arg(body)] => arms.push(Arm {
+                    pat: self.pattern(pat)?,
+                    body: self.expr(body)?,
+                    span: self.at(arm.span),
+                }),
+                _ => return self.err(arm.span, "expected a MATCH arm `pattern => value`"),
             }
-            if matches!(self.peek(), Tok::RBrace) {
-                self.bump();
-                break;
-            }
-            let aspan = self.span();
-            let pat = self.parse_pattern()?;
-            if pat.is_empty() {
-                return self.err("a pattern");
-            }
-            self.expect(Tok::Arrow, "`=>`")?;
-            let body = self.parse_pipeline()?;
-            arms.push(Arm {
-                pat,
-                body,
-                span: aspan,
-            });
         }
         Ok(Expr {
-            k: ExprKind::Match(Box::new(scrut), arms),
-            span,
+            k: ExprKind::Match(Box::new(subject), arms),
+            span: self.at(span),
         })
     }
 
     /// A MATCH pattern: words, `(name)` binders, `_`, or a `{ … }` record pattern.
-    fn parse_pattern(&mut self) -> Res<Vec<PatItem>> {
-        Ok(self
-            .parse_anyfix(
-                AnyfixRules::default(),
-                |p| {
-                    let mut inner = p.parse_pattern()?;
-                    match inner.as_mut_slice() {
-                        [] => p.err("a variable name to bind"),
-                        [PatItem::Word(w)] => Ok(PatItem::Bind(std::mem::take(w))),
-                        [PatItem::Wild] => Ok(PatItem::Bind("_".into())),
-                        _ => Ok(PatItem::Nested(inner)),
+    fn pattern(&self, node: &Node) -> Res<Vec<PatItem>> {
+        match &node.kind {
+            NodeKind::Underscore => Ok(vec![PatItem::Wild]),
+            NodeKind::Braces(fields) => Ok(vec![PatItem::Record(
+                fields.iter().map(|f| self.pattern(f)).collect::<Res<_>>()?,
+            )]),
+            NodeKind::Call(_) => flatten(node)
+                .iter()
+                .map(|item| match item {
+                    Flat::Word(w, s) if is_symbol(w) => {
+                        self.err(*s, format!("`{w}` cannot appear in a pattern"))
                     }
-                },
-                |p| match p.peek() {
-                    Tok::Underscore => {
-                        p.bump();
-                        Ok(Some(PatItem::Wild))
-                    }
-                    Tok::LBrace => Ok(Some(PatItem::Record(p.parse_record_pattern()?))),
-                    _ => Ok(None),
-                },
-            )?
-            .into_iter()
-            .map(|part| match part {
-                Anyfix::Word(w, _) => PatItem::Word(w),
-                Anyfix::Atom(item) => item,
-                Anyfix::Slot(item) => item,
-            })
-            .collect())
-    }
-
-    /// `{ field pattern, field pattern }`, one anyfix pattern per field.
-    fn parse_record_pattern(&mut self) -> Res<Vec<Vec<PatItem>>> {
-        self.bump();
-        let mut entries = Vec::new();
-        loop {
-            if matches!(self.peek(), Tok::RBrace) {
-                self.bump();
-                return Ok(entries);
-            }
-            let entry = self.parse_pattern()?;
-            if entry.is_empty() {
-                return self.err("a field pattern");
-            }
-            entries.push(entry);
-            if matches!(self.peek(), Tok::Comma) {
-                self.bump();
-            } else if !matches!(self.peek(), Tok::RBrace) {
-                return self.err("`,` or `}`");
-            }
+                    Flat::Word(w, _) => Ok(PatItem::Word(w.to_string())),
+                    Flat::Arg(slot) => self.pattern_slot(slot),
+                })
+                .collect(),
+            _ => self.err(
+                node.span,
+                "expected a pattern: variant words, `(name)` binders, `_` or `{ ... }`",
+            ),
         }
     }
 
-    /// Exactly one anyfix part used as a value: a lone word (a variable or a
-    /// zero-parameter call), an atom or a parenthesised expression.
-    fn single_operand(&mut self, what: &str) -> Res<Expr> {
-        match self.anyfix_item(
-            AnyfixRules::default(),
-            &mut Self::expr_slot,
-            &mut Self::expr_atom,
-        )? {
-            Some(Anyfix::Word(w, s)) => Ok(Expr {
-                k: ExprKind::Seq(vec![SeqItem::Word(w, s)]),
-                span: s,
-            }),
-            Some(Anyfix::Slot(e) | Anyfix::Atom(e)) => Ok(e),
-            None => self.err(what),
-        }
-    }
-
-    /// `( … )` in an expression: a full parenthesised expression, or, when
-    /// commas separate two or more of them, a tuple.
-    fn expr_slot(&mut self) -> Res<Expr> {
-        let span = self.span();
-        let first = self.slot_element()?;
-        if !matches!(self.peek(), Tok::Comma) {
-            return Ok(first);
-        }
-        let mut elems = vec![first];
-        while matches!(self.peek(), Tok::Comma) {
-            self.bump();
-            elems.push(self.slot_element()?);
-        }
-        Ok(Expr {
-            k: ExprKind::Tuple(elems),
-            span,
-        })
-    }
-
-    fn slot_element(&mut self) -> Res<Expr> {
-        let e = self.parse_pipeline()?;
-        if matches!(self.peek(), Tok::Arrow) {
-            return self.lambda(e);
-        }
-        Ok(e)
-    }
-
-    /// `(x) => body`, with the parameter list `(x)` already parsed as the
-    /// call `params`. The body runs to the end of the enclosing slot.
-    fn lambda(&mut self, params: Expr) -> Res<Expr> {
-        let span = params.span;
-        // A lone parenthesized word collapses to the call `[Word]`.
-        let name = match &params.k {
-            ExprKind::Seq(items) => match items.as_slice() {
-                [SeqItem::Word(w, _)] => Some(w.clone()),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(name) = name else {
-            return Err(Diag::new(
-                span,
-                "a lambda is written `(name) => body`: exactly one parameter name in parentheses",
-            ));
-        };
-        self.expect(Tok::Arrow, "`=>`")?;
-        let body = self.parse_pipeline()?;
-        Ok(Expr {
-            k: ExprKind::Lambda(name, Box::new(body)),
-            span,
-        })
-    }
-
-    fn seq_item(part: Anyfix<Expr, Expr>) -> SeqItem {
-        match part {
-            Anyfix::Word(w, span) => SeqItem::Word(w, span),
-            Anyfix::Slot(e) | Anyfix::Atom(e) => SeqItem::Atom(e),
-        }
-    }
-
-    /// Single-token expression parts: literals, `_`, list and brace literals.
-    fn expr_atom(&mut self) -> Res<Option<Expr>> {
-        let span = self.span();
-        let mk = |k: ExprKind| Some(Expr { k, span });
-        Ok(match self.peek().clone() {
-            Tok::Underscore => {
-                self.bump();
-                mk(ExprKind::Placeholder)
+    fn pattern_slot(&self, slot: &Node) -> Res<PatItem> {
+        match &slot.kind {
+            NodeKind::Underscore => Ok(PatItem::Wild),
+            NodeKind::Parens(xs) if matches!(xs.as_slice(), [x] if matches!(x.kind, NodeKind::Underscore)) => {
+                Ok(PatItem::Bind("_".into()))
             }
-            Tok::Int(n) => {
-                self.bump();
-                mk(ExprKind::Int(n))
-            }
-            Tok::Float(f) => {
-                self.bump();
-                mk(ExprKind::Float(f))
-            }
-            Tok::Str(s) => {
-                self.bump();
-                mk(ExprKind::Str(s))
-            }
-            Tok::LBracket => {
-                self.bump();
-                let mut xs = Vec::new();
-                loop {
-                    if matches!(self.peek(), Tok::RBracket) {
-                        self.bump();
-                        break;
-                    }
-                    if matches!(self.peek(), Tok::Ellipsis) {
-                        let sspan = self.bump().span;
-                        let operand = self
-                            .single_operand("a single token or parenthesised list after `...`")?;
-                        xs.push(Expr {
-                            k: ExprKind::Spread(Box::new(operand)),
-                            span: sspan,
-                        });
-                    } else {
-                        xs.push(self.parse_pipeline()?);
-                    }
-                    if matches!(self.peek(), Tok::Comma) {
-                        self.bump();
-                    } else if !matches!(self.peek(), Tok::RBracket) {
-                        return self.err("`,` or `]`");
-                    }
+            NodeKind::Braces(_) => Ok(PatItem::Nested(self.pattern(slot)?)),
+            NodeKind::Call(_) => {
+                let mut inner = self.pattern(slot)?;
+                match inner.as_mut_slice() {
+                    [PatItem::Word(w)] => Ok(PatItem::Bind(std::mem::take(w))),
+                    _ => Ok(PatItem::Nested(inner)),
                 }
-                mk(ExprKind::List(xs))
             }
-            Tok::LBrace => {
-                self.bump();
-                let mut fields = Vec::new();
-                loop {
-                    if matches!(self.peek(), Tok::RBrace) {
-                        self.bump();
-                        break;
-                    }
-                    let espan = self.span();
-                    let items: Vec<SeqItem> = self
-                        .parse_anyfix(AnyfixRules::default(), Self::expr_slot, Self::expr_atom)?
-                        .into_iter()
-                        .map(Self::seq_item)
-                        .collect();
-                    if items.is_empty() {
-                        return self.err("a field entry");
-                    }
-                    fields.push(BraceEntry { items, span: espan });
-                    if matches!(self.peek(), Tok::Comma) {
-                        self.bump();
-                    } else if !matches!(self.peek(), Tok::RBrace) {
-                        return self.err("`,` or `}`");
-                    }
-                }
-                mk(ExprKind::Brace(fields))
-            }
-            _ => None,
-        })
+            _ => self.err(
+                slot.span,
+                "a pattern slot holds a binder `(name)`, `(_)` or a nested pattern",
+            ),
+        }
     }
 }

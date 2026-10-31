@@ -73,6 +73,7 @@ dependencies = [
 name = "resh"
 version = "0.1.0"
 dependencies = [
+ "anyfix-expr",
  "rustyline",
 ]
 

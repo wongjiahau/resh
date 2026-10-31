@@ -6,17 +6,17 @@ otherwise.
 ## Quick start
 
 ```
-$ resh -c 'IMPORT git; git::status;'          # run one snippet
+$ resh -c 'IMPORT git, git.status'          # run one snippet
 $ resh                                         # a REPL; :symbols lists what is available
 $ resh run script.resh                         # run a file
 $ resh run script.resh --raw                   # plain text instead of `ok ("...")`
 ```
 
 ```
-IMPORT git;
-LET recent = git::log { max count 3 };        // ok ([...]) or error ("...")
-recent;
-git:: { diff { staged } };                    // a scope block: names of `git` unqualified
+IMPORT git,
+LET recent : git.log { max count 3 },        # ok ([...]) or error ("...")
+recent,
+git.{ diff { staged } },                    # a scope block: names of `git` unqualified
 ```
 
 Calls read like phrases (see "Anyfix"). Optional flags go in a `{ ... }` set.
@@ -30,29 +30,42 @@ errors) as JSON; `--raw` prints plain text, unwrapping a `Result` (an `error` go
 to stderr and the exit code is 1) and printing string lists one per line.
 `resh check file.resh` type-checks without running anything and prints `ok`.
 
+## Notation
+
+resh source is written in *anyfix expressions*, the meaning-free notation in
+`crates/anyfix-expr/README.md`: words, numbers, strings, brackets, `,`, and the
+two operators `.` and `:`. The notation does all the grouping; resh only gives
+the calls a meaning.
+
+- Newlines and indentation are plain whitespace, and a call may span lines.
+- Comments start with `#` and run to the end of the line. `##` lines directly
+  above a declaration are its docs (see "Inspecting symbols").
+- Keywords are uppercase words: `FUNCTION`, `RECORD`, `ENUM`, `TYPE`,
+  `NAMESPACE`, `IMPORT`, `LET`, `MATCH`, `IF`, `THEN`, `ELSE`, `DEFAULT`, `AS`,
+  `NATIVE`. Lowercase `match` or `if` stay free for your own names.
+- Words are letters, digits and `_`. Symbol characters (`-`, `'`, `+`, ...)
+  make their own words, so `dry-run` is three words; write `dry run`.
+
 ## Statements
 
-The language is not whitespace-sensitive: newlines and indentation are plain
-whitespace, and a call may span lines.
-
-- Every statement ends with `;`: expression statements and `LET` bindings, at
-  the top level and in function bodies. Declarations (`FUNCTION`, `RECORD`,
-  `ENUM`, `NAMESPACE`) need no `;`, and stray `;` between statements are
-  ignored. A missing `;` is an error (the REPL supplies the last one).
-- In a block, the last expression may omit its `;`: it is then the block's
-  value (the function's return value). With a `;` the value is discarded and
-  the block is `Unit`.
+- Declarations and statements are separated by `,`, at the top level and in
+  blocks. That includes the `,` after a declaration's closing `}`: without it the
+  next line continues the same call. A trailing `,` is allowed; `;` is not a
+  separator.
+- A block's value is its last statement. A function without a return type
+  drops it and returns `Unit`.
 
 ```
-LET files = list file in "src";
-FUNCTION answer: Int { LET x = 41; x }
+LET files : list file in "src",
+FUNCTION answer -> Int { LET x : 41, x },
+answer,
 ```
 
 ## Anyfix
 
 Every call-like construct (function signatures, type names, patterns, call
-expressions, record fields) is an *anyfix*: a run of bare words and parenthesized
-slots. Words belong to the name; parentheses mark a parameter slot.
+expressions, record fields) is an *anyfix*: a run of bare words and bracketed
+slots. Words belong to the name; every other item fills a slot.
 
 ```
 list file in (dir)
@@ -61,71 +74,91 @@ write (text) to file (path)
 Result (T) Or (E)
 ```
 
-A slot takes either a single token (an atom) or a parenthesized expression.
-The parser stays context-free: it never needs to know which words are
-functions.
+A slot takes a single item: a variable or other single word, a number, a
+string, a list or `{ ... }` literal, or a parenthesized expression.
 
 ```
-count (items)        // slot is a parenthesized expression
-print "hello"        // slot is an atom, no parentheses needed
-print (1 mb)         // two tokens, parentheses required
+count (items)        # slot is a parenthesized expression
+count items          # a lone variable fills a slot too
+print "hello"        # slot is an atom, no parentheses needed
+print (1 mb)         # two tokens, parentheses required
+```
+
+### Chaining with `.` and `:`
+
+`.` and `:` hand the value on their left to the call on their other side:
+
+- `x . f _ with (y)` puts `x` where the bare `_` is: `f (x) with (y)`.
+  Without a `_`, it becomes the first slot: `x . lines` is `(x) lines`.
+  `.` is left associative and binds tighter than `:`, so it reads as a
+  pipeline: `files . filter _ by extension "rs" . count _`.
+- `f : x` puts `x` in a new last slot: `f (x)`. `:` is right associative and
+  binds loosest; `LET`, `ELSE` chains and `MATCH` arms use it.
+- Both take whole runs, including symbol words like `=>`. In a MATCH arm or a
+  lambda, a body that uses `.` needs parentheses: `(t) => (t . lines)`.
+
+```
+run ("git", ["log"]) . map _ with ((text) => (text) lines)
+IF (n) equals 0 THEN "zero" ELSE : IF (n) equals 1 THEN "one" ELSE : "many"
 ```
 
 ## Namespaces
 
 ```
-NAMESPACE git
+NAMESPACE git,
 
-RECORD Commit { hash (String), message (String) }
+RECORD Commit { hash (String), message (String) },
 
-FUNCTION commit (message: String): Result (Commit) { ... }
+FUNCTION commit (message: String) -> Result (Commit) { ... }
 ```
 
 - `NAMESPACE name` applies file-wide: it must come first in the file, and every
   declaration in the file belongs to it. One namespace per file. Members do not
   repeat the prefix.
-- Namespaces are written with `::`. Single `:` stays the type annotation.
+- Namespaces are written with `.`: `git.commit "x"` is the call `commit _` of
+  namespace `git`, because `.` hands `git` to the call's first slot. A
+  variable with the same name wins over the namespace.
 - Everything can be namespaced: functions, types, enums, records.
 - Outside the namespace, names are qualified. Inside the file, they resolve
   unqualified.
 - There is no file-level `USE`; callers qualify, or open a scope block (below).
-- `::` is right associative: `a::b::c d` is `a::(b::(c d))`. The qualifier
-  applies to the whole anyfix call to its right.
-- A qualifier is only valid at the head of a call (or type). Mid-run
-  (`a b::c d`) is a parse error. A function that starts with a slot is qualified
-  before the slot: `fd::(option) argument`, not `(option) fd::argument`.
-- Namespaces do not nest: a file has one `NAMESPACE name` (a single word), so a
-  chain such as `a::b::c d` parses (see above) but is a type error. Use flat
-  anyfix names (`git::remote add (name) (url)`). See the README objective
+- A function that starts with a slot is qualified the same way:
+  `fd.(option) argument`.
+- A qualified type is `git.Commit`. After `->`, put it in parentheses,
+  `-> (git.Commit) { ... }`, since `.` would otherwise take the whole
+  signature as its left side.
+- Namespaces do not nest: a file has one `NAMESPACE name` (a single word), so
+  `a.b.c d` is a type error. Use flat anyfix names
+  (`git.remote add (name) (url)`). See the README objective
   "Readable shell commands".
 - Unqualified calls and types in a file see the prelude and that file's own
   namespace. A call to a namespaced function without its qualifier is an error
   that names the namespace.
 
 ```
-git::commit "fix bug";
-LET c: git::Commit = ...;
+git.commit "fix bug",
+LET (c : git.Commit) : ...,
 ```
 
 ### Scope blocks
 
-`ns:: { statements }` opens `ns` for the statements inside: its functions,
+`ns.{ statements }` opens `ns` for the statements inside: its functions,
 variants and types are written unqualified.
 
 ```
-rg:: {
-    search "error" in "src" { match (whole word), case (insensitive) };
-    search "TODO";
+rg.{
+    search "error" in "src" { match (whole word), case (insensitive) },
+    search "TODO",
 }
 ```
 
-- The block ends at its `}`; a `;` after it is optional. Outside it, names are
+- The block ends at its `}`. Outside it, names are
   qualified again. It works at the top level and in function bodies; as the
   last statement of a body, its last expression is the body's value.
 - Inside, `ns` wins over names from outside: if a call fits a function of `ns`,
   an outer function with the same shape is not considered. Outer names
   (including the prelude) are still reachable when `ns` has no such shape, or
-  with an explicit qualifier (`other::name`).
+  with an explicit qualifier (`other.name`).
 - Variant values need no special rule: in `{ match (whole word) }` the variant
   resolves because the block opened `rg`.
 - Blocks nest; the innermost opened namespace wins over the outer ones.
@@ -133,11 +166,11 @@ rg:: {
 
 ## Importing libraries
 
-`IMPORT name;` loads the wrapper library `name`, so its namespace can be used:
+`IMPORT name` loads the wrapper library `name`, so its namespace can be used:
 
 ```
-IMPORT git;
-git::status;
+IMPORT git,
+git.status,
 ```
 
 - A library is a `.resh` file that starts with `NAMESPACE name`. `resh` looks
@@ -161,8 +194,8 @@ When the REPL starts it runs the init file, if it exists: `$RESH_INIT`, else
 tab completion):
 
 ```
-IMPORT git;
-IMPORT rg;
+IMPORT git,
+IMPORT rg,
 ```
 
 Its results are not printed, and an error in it is reported without stopping the
@@ -170,8 +203,25 @@ REPL. `resh run`, `resh check` and `resh -c` do not read it.
 
 ## Let bindings
 
-`LET name = value` binds a single-word name. A type may be stated with
-`LET name: Type = value`, which means `LET name = (value : Type)`.
+`LET name : value` binds a single-word name. `:` binds loosest, so the value
+may be a whole pipeline: `LET n : files . count _`. A type may be stated with
+`LET (name : Type) : value`, which means `LET name : value AS Type`.
+
+`value AS Type` states the type an expression must fit anywhere, e.g. to give a
+record literal its record: `f ({ x 1 } AS Apple)`.
+
+## Conditionals and MATCH
+
+`IF condition THEN a ELSE b` needs a `Boolean` condition, and both branches
+must have the same type. Chain it to the right with `:`:
+
+```
+IF (n) equals 0 THEN "zero" ELSE : IF (n) equals 1 THEN "one" ELSE : "many"
+```
+
+`MATCH value { pattern => result, ... }` takes the value to match either after
+the keyword or from `.`: `option . MATCH { ... }`. Patterns are described in
+"Enum variants and patterns" and "Destructuring".
 
 ## Type aliases
 
@@ -185,7 +235,9 @@ it stands for, and a type that prints as `Result (T) Or (String)` is shown as
 
 ## Records
 
-A record is a set of anyfix fields. There is no `key: value` form.
+A record is a set of anyfix fields. `port: Int` is anyfix for `port (Int)`, so
+it declares the same field; the parenthesized form is the norm. Field words are
+lowercase.
 
 ```
 RECORD Server Config {
@@ -261,9 +313,9 @@ MATCH config {
   as a pattern (`missing: deep (w (_))`), and an arm that earlier arms already
   cover (including any arm after `_`) is an error.
 - Outside the file's namespace, a variant value is qualified like any call:
-  `{ match (fd::glob) }`, or unqualified inside a scope block
-  `fd:: { ... { match (glob) } ... }`. Patterns inside the file are unqualified.
-- A function's return type may start on the line after `:`, and the `{` on
+  `{ match (fd.glob) }`, or unqualified inside a scope block
+  `fd.{ ... { match (glob) } ... }`. Patterns inside the file are unqualified.
+- A function's return type may start on the line after `->`, and the `{` on
   the line after the type.
 
 ## Sets
@@ -279,11 +331,11 @@ ENUM Find Option {
     max depth (Int),
     size between (Size) and (Size),
     exclude (List (String))
-}
+},
 
-fd::find "" in "src" { extension ["rs"], max depth 3 }
-fd::find "" in "." { size between (1 mb) and (5 gb), include hidden file }
-fd::find "main" in "src" {}
+fd.find "" in "src" { extension ["rs"], max depth 3 },
+fd.find "" in "." { size between (1 mb) and (5 gb), include hidden file },
+fd.find "main" in "src" {}
 ```
 
 - A set literal uses the same `{ ... }` syntax as a record literal: anyfix
@@ -295,8 +347,8 @@ fd::find "main" in "src" {}
   in one literal is a type error naming both positions:
 
 ```
-fd::find "" in "src" { max depth 1, max depth 2 }
-// type error: `max depth` given twice
+fd.find "" in "src" { max depth 1, max depth 2 }
+# type error: `max depth` given twice
 ```
 
 - A repeatable flag (`fd --exclude a --exclude b`) is one variant carrying a
@@ -335,8 +387,8 @@ with commas inside a slot's parentheses, so the slot's own parentheses are the
 tuple's:
 
 ```
-run ("fd", args)       // one tuple argument
-run (("fd", args))     // the same value
+run ("fd", args)       # one tuple argument
+run (("fd", args))     # the same value
 ```
 
 A tuple parameter lists a name and type per component, in a second pair of
@@ -344,7 +396,7 @@ parentheses inside the slot (this is how `run` is declared below). The
 components are bound as variables in the body:
 
 ```
-FUNCTION run ((command: String, args: List (String))): ... { ... }
+FUNCTION run ((command: String, args: List (String))) -> ... { ... }
 ```
 
 - A tuple has two or more components; `(x)` is just parentheses.
@@ -356,25 +408,16 @@ FUNCTION run ((command: String, args: List (String))): ... { ... }
   cannot be a tuple component.
 - A tuple cannot be a slot of an enum variant or a record field.
 
-List literals accept `...` to splice a list in place:
+List literals accept `*` to splice a list in place:
 
 ```
-[...a, "x", ...b]
+[*a, "x", *b]
 ```
 
-- `...` is only valid as an element of a list literal; its operand follows the
-  anyfix rule (one token, or a parenthesized expression: `...(flat map ...)`).
+- `*` is only valid as an element of a list literal; its operand follows the
+  anyfix rule (one token, or a parenthesized expression: `*(flat map ...)`).
 - The operand must be a `List (T)`; element types are joined as for any other
   list literal. Spreading a `Set (E)` is not supported.
-
-## Pipes
-
-`a |> f (_) with (x)` passes `a` as the single `_` placeholder of the call on its
-right; it is an error if the right side has no `_` or more than one.
-
-```
-run ("git", ["log"]) |> map (_) with ((text) => (text) lines)
-```
 
 ## Prelude functions
 
@@ -396,9 +439,9 @@ run ("git", ["log"]) |> map (_) with ((text) => (text) lines)
 A unit is an ordinary suffix function. There is no special syntax.
 
 ```
-FUNCTION (n: Int) kb: Size { ... }
-FUNCTION (n: Int) mb: Size { ... }
-FUNCTION (n: Int) days: Duration { ... }
+FUNCTION (n: Int) kb -> Size { ... },
+FUNCTION (n: Int) mb -> Size { ... },
+FUNCTION (n: Int) days -> Duration { ... }
 ```
 
 `Size` (held in bytes, decimal: `1 kb` = 1000) and `Duration` (held in seconds)
@@ -416,7 +459,7 @@ are prelude records, built only through these functions:
 Multi-token values need parentheses inside a slot, like any other call:
 
 ```
-fd::find "" in "." { size between (500 kb) and (2 mb) }
+fd.find "" in "." { size between (500 kb) and (2 mb) }
 ```
 
 ## Overload resolution
@@ -440,7 +483,7 @@ Wrappers around existing CLI tools are written in resh itself, on top of a
 single primitive:
 
 ```
-FUNCTION run ((command: String, args: List (String))): Result (String) { NATIVE "run" }
+FUNCTION run ((command: String, args: List (String))) -> Result (String) { NATIVE "run" }
 ```
 
 Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
@@ -456,60 +499,57 @@ Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
 - Embedders and tests can replace the implementation with
   `Session::set_runner` (see `eval::Runner`) to record argv and return canned
   results.
- A wrapper builds
-a `List (String)` from its typed options and calls `run`:
+
+A wrapper builds a `List (String)` from its typed options and calls `run`:
 
 ```
-NAMESPACE fd
+NAMESPACE fd,
 
 ENUM Find Option {
     include hidden file,
     extension (String),
     max depth (Int),
     exclude (List (String))
-}
+},
 
-FUNCTION (option: Find Option) argument: List (String) {
+FUNCTION (option: Find Option) argument -> List (String) {
     MATCH option {
         include hidden file => ["--hidden"],
         extension (e) => ["--extension", e],
         max depth (n) => ["--max-depth", n to string],
         exclude (patterns) => flat map (patterns) with ((p) => ["--exclude", p])
     }
-}
+},
 
-FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)):
+FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
     Result (List (String))
 {
-    run ("fd", [...(flat map (options) with ((o) => (o) argument)), pattern, dir])
-        |> map (_) with ((text) => (text) lines)
+    run ("fd", [*(flat map (options) with ((o) => (o) argument)), pattern, dir])
+        . map _ with ((text) => (text) lines)
 }
 ```
 
 Callers:
 
 ```
-fd::find "" in "src" { extension ["rs"], max depth 3 };
+fd.find "" in "src" { extension ["rs"], max depth 3 },
 ```
-
-Language features this relies on and that may not exist yet: `flat map (items)
-with (f)` over sets, `(n) to string` and `map (result) with (f)`.
 
 ## Writing a wrapper
 
 A wrapper is a library (see "Importing libraries") for one CLI tool. Put it in
 `name.resh` in the user library directory (`resh libs` prints it), starting with
 `NAMESPACE name`. Look at `resh libs show git` and `resh libs show fd` for the
-shape: an `ENUM` of options, a `FUNCTION (option: ...) argument: List (String)`
+shape: an `ENUM` of options, a `FUNCTION (option: ...) argument -> List (String)`
 that maps each option to argv, and one function per command that calls `run`.
-`///` comments above declarations are their docs (shown by `:symbols`). Check it
-with `resh check name.resh`, then use it with `IMPORT name;`. `resh skill install`
+`##` comments above declarations are their docs (shown by `:symbols`). Check it
+with `resh check name.resh`, then use it with `IMPORT name`. `resh skill install`
 installs a Claude Code skill that writes wrappers for you.
 
 Wrappers run the tool in resh's current directory. Change it with
-`change directory to "/path";` (it stays changed for the rest of the session);
-`current directory;` returns it. A wrapper may also take a directory parameter,
-as `fd::find ... in (dir)` does.
+`change directory to "/path"` (it stays changed for the rest of the session);
+`current directory` returns it. A wrapper may also take a directory parameter,
+as `fd.find ... in (dir)` does.
 
 ## Inspecting symbols
 
@@ -519,14 +559,14 @@ and functions with their signatures. Start `resh --json` for one JSON
 object instead of text. An unknown namespace is an error on stderr that lists
 the declared ones.
 
-`///` comment lines directly above a `FUNCTION`, `RECORD` or `ENUM` (no blank
+`##` comment lines directly above a `FUNCTION`, `RECORD` or `ENUM` (no blank
 line between) are its docs, and `:symbols` shows them. In the REPL a
-comment-only `///` line waits for the declaration below it. `NAMESPACE` applies per
+comment-only `##` line waits for the declaration below it. `NAMESPACE` applies per
 REPL entry, so put it on the same line as the declaration:
-`NAMESPACE demo; ENUM Mode { fast, slow }`.
+`NAMESPACE demo, ENUM Mode { fast, slow }`.
 
 ```
-resh> NAMESPACE demo; ENUM Mode { fast, slow }
+resh> NAMESPACE demo, ENUM Mode { fast, slow }
 resh> :symbols
 namespaces
   prelude
@@ -539,7 +579,7 @@ demo
 ```
 
 ```
-$ printf 'NAMESPACE demo; ENUM Mode { fast, slow }\n:symbols demo\n' | resh --json
+$ printf 'NAMESPACE demo, ENUM Mode { fast, slow }\n:symbols demo\n' | resh --json
 {"namespace":"demo","symbols":[{"kind":"enum","name":"Mode","doc":null,"members":[{"signature":"fast","defaults":[]},{"signature":"slow","defaults":[]}],"returns":null}]}
 ```
 

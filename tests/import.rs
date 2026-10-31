@@ -10,7 +10,7 @@ fn session() -> Session {
 fn import_loads_a_bundled_library() {
     let mut s = session();
     s.set_runner(Box::new(|c, a| Ok(format!("{c} {}", a.join(" ")))));
-    let out = s.run("IMPORT git;\ngit::status;").unwrap();
+    let out = s.run("IMPORT git,\ngit.status,").unwrap();
     assert_eq!(out.len(), 1);
     assert!(s.namespaces().contains(&"git".to_string()));
 }
@@ -18,8 +18,8 @@ fn import_loads_a_bundled_library() {
 #[test]
 fn import_twice_is_fine() {
     let mut s = session();
-    s.run("IMPORT git;").unwrap();
-    s.run("IMPORT git;").unwrap();
+    s.run("IMPORT git,").unwrap();
+    s.run("IMPORT git,").unwrap();
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn namespace_stays_unloaded_without_import() {
 
 #[test]
 fn unknown_library_lists_the_available_ones() {
-    let err = session().run("IMPORT nope;").unwrap_err();
+    let err = session().run("IMPORT nope,").unwrap_err();
     assert!(err.msg.contains("no library `nope`"), "{}", err.msg);
     assert!(err.msg.contains("git"), "{}", err.msg);
 }
@@ -37,7 +37,7 @@ fn unknown_library_lists_the_available_ones() {
 #[test]
 fn import_works_in_a_file_with_a_namespace() {
     let mut s = session();
-    s.run("NAMESPACE mine\nIMPORT git\nFUNCTION hello: String { \"hi\" }")
+    s.run("NAMESPACE mine,\nIMPORT git,\nFUNCTION hello -> String { \"hi\" }")
         .unwrap();
     assert!(s.namespaces().contains(&"git".to_string()));
 }
@@ -48,20 +48,20 @@ fn user_library_wins_over_bundled_and_adds_new_ones() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("tool.resh"),
-        "NAMESPACE tool\nFUNCTION hello: String { \"hi\" }\n",
+        "NAMESPACE tool,\nFUNCTION hello -> String { \"hi\" }\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("git.resh"),
-        "NAMESPACE git\nFUNCTION mine: Int { 1 }\n",
+        "NAMESPACE git,\nFUNCTION mine -> Int { 1 }\n",
     )
     .unwrap();
     let mut s = Session::new();
     s.set_library_dir(Some(dir.clone()));
-    s.run("IMPORT tool;\nIMPORT git;").unwrap();
-    assert_eq!(s.run("tool::hello;").unwrap().len(), 1);
-    assert_eq!(s.run("git::mine;").unwrap().len(), 1);
-    assert!(s.run("git::status;").is_err());
+    s.run("IMPORT tool,\nIMPORT git,").unwrap();
+    assert_eq!(s.run("tool.hello,").unwrap().len(), 1);
+    assert_eq!(s.run("git.mine,").unwrap().len(), 1);
+    assert!(s.run("git.status,").is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -72,7 +72,7 @@ fn library_with_the_wrong_namespace_is_rejected() {
     std::fs::write(dir.join("bad.resh"), "NAMESPACE other\n").unwrap();
     let mut s = Session::new();
     s.set_library_dir(Some(dir.clone()));
-    let err = s.run("IMPORT bad;").unwrap_err();
+    let err = s.run("IMPORT bad,").unwrap_err();
     assert!(
         err.msg.contains("must start with `NAMESPACE bad`"),
         "{}",
@@ -97,7 +97,7 @@ fn syntax_doc_and_skill_are_embedded_and_nonempty() {
 
 #[test]
 fn mixed_case_library_name_suggests_the_lowercase_one() {
-    let err = session().run("IMPORT Git;").unwrap_err();
+    let err = session().run("IMPORT Git,").unwrap_err();
     assert!(err.msg.contains("Did you mean `git`?"), "{}", err.msg);
 }
 
@@ -107,7 +107,7 @@ fn raw_unwraps_results_and_unescapes_strings() {
     s.set_runner(Box::new(|_, _| Ok("a\nb\n".to_string())));
     let mut seen = Vec::new();
     s.run_with(
-        "run (\"x\", []);\nrun (\"x\", []) |> map (_) with ((t) => (t) lines);",
+        "run (\"x\", []),\nrun (\"x\", []) . map _ with ((t) => (t) lines),",
         &mut |i, v| seen.push(i.raw(v)),
     )
     .unwrap();
@@ -117,9 +117,15 @@ fn raw_unwraps_results_and_unescapes_strings() {
 
 #[test]
 fn adjacent_arguments_error_shows_the_arguments_and_how_to_fix() {
-    let err = session().run("IMPORT git;\ngit::log { max count 1 } touching (\"a\" \"b\");").unwrap_err();
+    let err = session()
+        .run("IMPORT git,\ngit.log { max count 1 } touching (\"a\" \"b\"),")
+        .unwrap_err();
     assert!(err.msg.contains("`\"a\" \"b\"`"), "{}", err.msg);
-    assert!(err.msg.contains("no function name between them"), "{}", err.msg);
+    assert!(
+        err.msg.contains("no function name between them"),
+        "{}",
+        err.msg
+    );
 }
 
 #[test]
@@ -128,11 +134,20 @@ fn change_directory_affects_current_directory() {
     std::fs::create_dir_all(&dir).unwrap();
     let dir = dir.canonicalize().unwrap();
     let mut s = session();
-    let src = format!("change directory to \"{}\";\ncurrent directory;", dir.display());
+    let src = format!(
+        "change directory to \"{}\",\ncurrent directory,",
+        dir.display()
+    );
     let out = s.run(&src).unwrap();
-    assert_eq!(s.render(&out[1], false), format!("ok ({:?})", dir.display().to_string()));
-    let err = s.run("change directory to \"/no/such/dir\";\n").unwrap();
-    assert!(s.render(&err[0], false).contains("cannot change directory to /no/such/dir"));
+    assert_eq!(
+        s.render(&out[1], false),
+        format!("ok ({:?})", dir.display().to_string())
+    );
+    let err = s.run("change directory to \"/no/such/dir\",\n").unwrap();
+    assert!(
+        s.render(&err[0], false)
+            .contains("cannot change directory to /no/such/dir")
+    );
     std::env::set_current_dir(std::env::temp_dir()).unwrap();
     std::fs::remove_dir_all(dir).unwrap();
 }

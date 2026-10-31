@@ -19,11 +19,13 @@
 
 ## Parser
 
-- Every call-like construct (signatures, types, patterns, call expressions,
-  declaration names, brace keys) is parsed by the single meta-syntax layer in
-  `src/parser.rs`: `parse_anyfix` / `anyfix_item`, a run of `Anyfix::Word`,
-  `Anyfix::Slot` (`( … )`) and `Anyfix::Atom` (one token).
-- A new call-like construct must go through it, supplying only a slot parser and
-  an atom recogniser. Don't hand-roll another word/`(`…`)` loop.
+- resh source is anyfix expressions (`crates/anyfix-expr`). That crate does all
+  the grouping; `src/parser.rs` only reads the tree it returns. It flattens each
+  call into its name words and arguments (`flatten`, `Flat::Word` /
+  `Flat::Arg`) and recognises resh's own forms by their uppercase keyword
+  (`FUNCTION`, `MATCH`, `IF`, ...) or symbol word (`=>`, `->`, `=`).
+- A new construct is a new keyword or shape read from that tree. Don't add
+  tokens, operators or a recursive-descent parser of resh's own: chaining goes
+  through `.` (left) and `:` (right), as `crates/anyfix-expr/README.md` says.
 - Matching a call's `Seq` against declared signatures stays in the checker
   (`src/check.rs`), since only it knows the signatures.

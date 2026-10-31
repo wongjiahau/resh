@@ -1,33 +1,33 @@
-// Wrapper for `rg` (ripgrep), written in resh (see SYNTAX.md, "Running external commands").
-// `search` returns typed `Match` values, parsed from `path:line:column:text` lines (rg is always
-// run with `--no-heading --line-number --column`); `search raw` returns those lines unparsed. rg exits 1 when nothing matches, which `run` reports as `Err`.
+# Wrapper for `rg` (ripgrep), written in resh (see SYNTAX.md, "Running external commands").
+# `search` returns typed `Match` values, parsed from `path:line:column:text` lines (rg is always
+# run with `--no-heading --line-number --column`); `search raw` returns those lines unparsed. rg exits 1 when nothing matches, which `run` reports as `Err`.
 
-NAMESPACE rg
+NAMESPACE rg,
 
-ENUM Match Mode { regex, fixed string, whole word, whole line }
-ENUM Case Mode { smart, sensitive, insensitive }
+ENUM Match Mode { regex, fixed string, whole word, whole line },
+ENUM Case Mode { smart, sensitive, insensitive },
 
 ENUM Search Option {
-    match (Match Mode),                  // default regex      (--fixed-strings, --word-regexp, --line-regexp)
-    case (Case Mode),                    // default smart      (--case-sensitive, --ignore-case)
-    invert match,                        // --invert-match
-    only matching,                       // --only-matching: print just the matched part
-    multiline,                           // --multiline
-    include hidden file,                 // --hidden
-    ignore nothing,                      // --no-ignore
-    follow symlink,                      // --follow
-    file type (List (String)),           // --type rust --type toml
-    glob (List (String)),                // --glob '*.rs' --glob '!target'
+    match (Match Mode),                  # default regex      (--fixed-strings, --word-regexp, --line-regexp)
+    case (Case Mode),                    # default smart      (--case-sensitive, --ignore-case)
+    invert match,                        # --invert-match
+    only matching,                       # --only-matching: print just the matched part
+    multiline,                           # --multiline
+    include hidden file,                 # --hidden
+    ignore nothing,                      # --no-ignore
+    follow symlink,                      # --follow
+    file type (List (String)),           # --type rust --type toml
+    glob (List (String)),                # --glob '*.rs' --glob '!target'
     max depth (Int),
-    max count (Int),                     // --max-count: matches per file
+    max count (Int),                     # --max-count: matches per file
     max file size (Size),
-    context (Int),                       // --context
-    before context (Int),                // --before-context
-    after context (Int)                  // --after-context
-}
+    context (Int),                       # --context
+    before context (Int),                # --before-context
+    after context (Int)                  # --after-context
+},
 
-/// One arm per option; this is the entire translation to rg's command line.
-FUNCTION (option: Search Option) argument: List (String) {
+## One arm per option; this is the entire translation to rg's command line.
+FUNCTION (option: Search Option) argument -> List (String) {
     MATCH option {
         match (regex) => [],
         match (fixed string) => ["--fixed-strings"],
@@ -51,58 +51,58 @@ FUNCTION (option: Search Option) argument: List (String) {
         before context (n) => ["--before-context", n to string],
         after context (n) => ["--after-context", n to string]
     }
-}
+},
 
-/// One matching line. `rg` reports 1-based line and column numbers.
-RECORD Match { path (String), line (Int), column (Int), text (String) }
+## One matching line. `rg` reports 1-based line and column numbers.
+RECORD Match { path (String), line (Int), column (Int), text (String) },
 
-/// Parses one `path:line:column:text` line into a `Match`; a context line
-/// (`path-line-text`) or a `--` separator has no such shape and gives `[]`.
-FUNCTION (output: String) match: List (Match) {
-    LET parts = output split on ":" at most 4;
+## Parses one `path:line:column:text` line into a `Match`; a context line
+## (`path-line-text`) or a `--` separator has no such shape and gives `[]`.
+FUNCTION (output: String) match -> List (Match) {
+    LET parts : output split on ":" at most 4,
     IF (count parts) equals 4 THEN
         MATCH ((parts item 1) to int) {
             ok (line) => MATCH ((parts item 2) to int) {
-                ok (column) => [{ path (parts item 0), line (line), column (column), text (parts item 3) } : Match],
+                ok (column) => [{ path (parts item 0), line (line), column (column), text (parts item 3) } AS Match],
                 error (_) => []
             },
             error (_) => []
         }
     ELSE []
-}
+},
 
-/// The matching lines as typed values. Context options add lines that are not
-/// matches, so they are dropped here; use `search raw` to see them.
-FUNCTION search (pattern: String) in (dir: String) (options: Set (Search Option)):
+## The matching lines as typed values. Context options add lines that are not
+## matches, so they are dropped here; use `search raw` to see them.
+FUNCTION search (pattern: String) in (dir: String) (options: Set (Search Option)) ->
     Result (List (Match))
 {
     search raw pattern in dir options
-        |> map (_) with ((lines) => flat map (lines) with ((l) => (l) match))
-}
+        . map _ with ((lines) => flat map (lines) with ((l) => (l) match))
+},
 
-FUNCTION search raw (pattern: String) in (dir: String) (options: Set (Search Option)):
+FUNCTION search raw (pattern: String) in (dir: String) (options: Set (Search Option)) ->
     Result (List (String))
 {
     run ("rg", [
         "--no-heading", "--line-number", "--column",
-        ...(flat map (options) with ((o) => (o) argument)),
+        *(flat map (options) with ((o) => (o) argument)),
         "--", pattern, dir
     ])
-        |> map (_) with ((text) => (text) lines)
-}
+        . map _ with ((text) => (text) lines)
+},
 
-FUNCTION search (pattern: String) in (dir: String): Result (List (Match)) {
+FUNCTION search (pattern: String) in (dir: String) -> Result (List (Match)) {
     search pattern in dir {}
-}
+},
 
-FUNCTION search (pattern: String): Result (List (Match)) {
+FUNCTION search (pattern: String) -> Result (List (Match)) {
     search pattern in "." {}
 }
 
-// Usage:
-//   rg::search "TODO";
-//   rg::search "fn main" in "src" { file type ["rust"], max count 1 };
-//   rg:: {
-//       search "error" in "." { match (whole word), case (insensitive), context 2 };
-//       search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size (1 mb) };
-//   }
+# Usage:
+#   rg.search "TODO",
+#   rg.search "fn main" in "src" { file type ["rust"], max count 1 },
+#   rg.{
+#       search "error" in "." { match (whole word), case (insensitive), context 2 },
+#       search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size (1 mb) },
+#   }

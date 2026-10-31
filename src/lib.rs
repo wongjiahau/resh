@@ -1,15 +1,15 @@
 pub mod ast;
 pub mod check;
 pub mod complete;
+pub mod diag;
 pub mod eval;
-pub mod lexer;
 pub mod library;
 pub mod parser;
 pub mod pattern;
 pub mod repl;
 
+pub use diag::{Diag, Span};
 pub use eval::Value;
-pub use lexer::{Diag, Span};
 
 use ast::{Decl, Item, Stmt};
 use check::Scope;
@@ -171,7 +171,7 @@ impl Session {
                 self.globals.push((name.clone(), ty));
                 self.env.push((name.clone(), v));
             }
-            Stmt::Expr(e) | Stmt::Discard(e) => {
+            Stmt::Expr(e) => {
                 let (ir, _) = self.interp.ck.check(e, &mut self.globals)?;
                 let v = self
                     .interp

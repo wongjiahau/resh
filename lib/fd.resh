@@ -1,32 +1,32 @@
-// Wrapper for `fd`, written in resh (see SYNTAX.md, "Running external commands").
+# Wrapper for `fd`, written in resh (see SYNTAX.md, "Running external commands").
 
-NAMESPACE fd
+NAMESPACE fd,
 
-/// Alternatives that exclude each other are one variant, so the set's
-/// duplicate check rejects `{ case (fd::sensitive), case (fd::insensitive) }` for free.
-ENUM Match Mode { regex, glob, fixed string }
-ENUM Case Mode { smart, sensitive, insensitive }
+## Alternatives that exclude each other are one variant, so the set's
+## duplicate check rejects `{ case (fd.sensitive), case (fd.insensitive) }` for free.
+ENUM Match Mode { regex, glob, fixed string },
+ENUM Case Mode { smart, sensitive, insensitive },
 
 ENUM Find Option {
-    match (Match Mode),                  // default regex      (--glob, --fixed-strings)
-    case (Case Mode),                    // default smart      (--case-sensitive, --ignore-case)
-    include hidden file,                 // --hidden
-    ignore nothing,                      // --no-ignore
-    follow symlink,                      // --follow
-    full path,                           // --full-path: match against the whole path
-    kind (Entry Kind),                   // --type file | directory | symlink
-    extension (List (String)),           // --extension rs --extension toml
+    match (Match Mode),                  # default regex      (--glob, --fixed-strings)
+    case (Case Mode),                    # default smart      (--case-sensitive, --ignore-case)
+    include hidden file,                 # --hidden
+    ignore nothing,                      # --no-ignore
+    follow symlink,                      # --follow
+    full path,                           # --full-path: match against the whole path
+    kind (Entry Kind),                   # --type file | directory | symlink
+    extension (List (String)),           # --extension rs --extension toml
     min depth (Int),
     max depth (Int),
-    exclude (List (String)),             // --exclude a --exclude b
+    exclude (List (String)),             # --exclude a --exclude b
     size at least (Size),
     size at most (Size),
     changed within (Duration),
     changed before (Duration)
-}
+},
 
-/// One arm per option; this is the entire translation to fd's command line.
-FUNCTION (option: Find Option) argument: List (String) {
+## One arm per option; this is the entire translation to fd's command line.
+FUNCTION (option: Find Option) argument -> List (String) {
     MATCH option {
         match (regex) => [],
         match (glob) => ["--glob"],
@@ -48,34 +48,34 @@ FUNCTION (option: Find Option) argument: List (String) {
         changed within (d) => ["--changed-within", (d) seconds text],
         changed before (d) => ["--changed-before", (d) seconds text]
     }
-}
+},
 
-FUNCTION (kind: Entry Kind) fd name: String {
+FUNCTION (kind: Entry Kind) fd name -> String {
     MATCH kind { file => "file", directory => "directory", symlink => "symlink" }
-}
+},
 
-FUNCTION (size: Size) bytes text: String { join ((size bytes) to string) with "b" }
-FUNCTION (duration: Duration) seconds text: String { join ((duration seconds) to string) with "s" }
+FUNCTION (size: Size) bytes text -> String { join ((size bytes) to string) with "b" },
+FUNCTION (duration: Duration) seconds text -> String { join ((duration seconds) to string) with "s" },
 
-FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)):
+FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
     Result (List (String))
 {
-    run ("fd", [...(flat map (options) with ((o) => (o) argument)), "--", pattern, dir])
-        |> map (_) with ((text) => (text) lines)
-}
+    run ("fd", [*(flat map (options) with ((o) => (o) argument)), "--", pattern, dir])
+        . map _ with ((text) => (text) lines)
+},
 
-FUNCTION find (pattern: String) in (dir: String): Result (List (String)) {
+FUNCTION find (pattern: String) in (dir: String) -> Result (List (String)) {
     find pattern in dir {}
-}
+},
 
-FUNCTION find (pattern: String): Result (List (String)) {
+FUNCTION find (pattern: String) -> Result (List (String)) {
     find pattern in "." {}
 }
 
-// Usage:
-//   fd::find "main";
-//   fd::find "" in "src" { extension ["rs", "toml"], max depth 3 };
-//   fd:: {
-//       find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) };
-//       find "*.log" in "/var" { match (glob), include hidden file, exclude ["old"] };
-//   }
+# Usage:
+#   fd.find "main",
+#   fd.find "" in "src" { extension ["rs", "toml"], max depth 3 },
+#   fd.{
+#       find "test" in "." { kind (file), size at least (1 mb), changed within (7 days) },
+#       find "*.log" in "/var" { match (glob), include hidden file, exclude ["old"] },
+#   }

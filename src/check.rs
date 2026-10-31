@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ast::*;
+use crate::diag::{Diag, Res, Span};
 use crate::eval::{NATIVES, Value};
-use crate::lexer::{Diag, Res, Span};
 use crate::pattern::{Pat, Sig, enum_params, render, useful, witnesses};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +44,7 @@ pub enum Type {
     /// The inferred type of a `{ ... }` literal: one entry per field phrase,
     /// as its signature key (`port _`, `size between _ and _`) and the types of
     /// its slot values. It only becomes a `Record` when it meets a record
-    /// parameter or a `: Record Name` annotation.
+    /// parameter or a `AS Record Name` annotation.
     Struct(Vec<(String, Vec<Type>)>),
 }
 
@@ -323,16 +323,22 @@ pub enum Ir {
     If(Box<Ir>, Box<Ir>, Box<Ir>),
     Match(Box<Ir>, Vec<IrArm>),
     Tuple(Vec<Ir>),
-    /// `...xs` inside a list literal.
+    /// `*xs` inside a list literal.
     Spread(Box<Ir>),
     /// Binds the components of the tuple held by a variable, in the body.
     Untuple(String, Vec<String>, Box<Ir>),
-    Pipe(Box<Ir>, Box<Ir>),
     /// A function value: parameter name and body.
     Lambda(String, Box<Ir>),
 }
 
 pub type Scope = Vec<(String, Type)>;
+
+/// A record pattern's field: its slot patterns and the variables they bind.
+type FieldMatch = (Vec<Pat>, Vec<(String, Type)>);
+
+/// An overload that fits: its id, the type variables it bound, and the
+/// checked lambdas by argument position.
+type PassingCandidate = (usize, HashMap<String, Type>, HashMap<usize, Ir>);
 
 #[derive(Debug, Clone)]
 pub struct Checker {
@@ -345,7 +351,7 @@ pub struct Checker {
     /// and its unqualified calls and types resolve in it (plus the prelude).
     cur_ns: Option<String>,
     namespaces: HashSet<String>,
-    /// Namespaces opened by enclosing `ns:: { ... }` blocks, outermost first.
+    /// Namespaces opened by enclosing `ns.{ ... }` blocks, outermost first.
     open: RefCell<Vec<String>>,
 }
 
@@ -381,15 +387,15 @@ pub struct Symbol {
     pub ret: Option<String>,
 }
 
-/// Removes every `prefix` (`ns::`) that starts a qualified name, leaving
-/// longer identifiers that merely end in the same letters (`xns::T`) alone.
+/// Removes every `prefix` (`ns.`) that starts a qualified name, leaving
+/// longer identifiers that merely end in the same letters (`xns.T`) alone.
 fn strip_qualifier(text: &str, prefix: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(i) = rest.find(prefix) {
         let before = rest[..i].chars().next_back().or(out.chars().next_back());
         out.push_str(&rest[..i]);
-        if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':') {
+        if before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
             out.push_str(prefix);
         }
         rest = &rest[i + prefix.len()..];
@@ -450,48 +456,9 @@ fn expr_source(e: &Expr) -> String {
             [SeqItem::Word(w, _)] => w.clone(),
             _ => format!("({})", seq_source(items)),
         },
-        ExprKind::Qualified(q, inner) => format!("{q}::{}", expr_source(inner)),
         ExprKind::List(_) => "[...]".to_string(),
         ExprKind::Brace(_) => "{...}".to_string(),
         _ => "(...)".to_string(),
-    }
-}
-
-fn count_placeholders(e: &Expr) -> usize {
-    match &e.k {
-        ExprKind::Placeholder => 1,
-        ExprKind::Lambda(_, body) => count_placeholders(body),
-        ExprKind::Seq(items) => items
-            .iter()
-            .map(|i| match i {
-                SeqItem::Atom(e) => count_placeholders(e),
-                _ => 0,
-            })
-            .sum(),
-        ExprKind::List(xs) | ExprKind::Tuple(xs) => xs.iter().map(count_placeholders).sum(),
-        ExprKind::Spread(e) => count_placeholders(e),
-        ExprKind::Brace(fs) => fs
-            .iter()
-            .flat_map(|f| &f.items)
-            .map(|i| match i {
-                SeqItem::Atom(e) => count_placeholders(e),
-                SeqItem::Word(..) => 0,
-            })
-            .sum(),
-        ExprKind::If(a, b, c) => {
-            count_placeholders(a) + count_placeholders(b) + count_placeholders(c)
-        }
-        ExprKind::Match(s, arms) => {
-            count_placeholders(s)
-                + arms
-                    .iter()
-                    .map(|a| count_placeholders(&a.body))
-                    .sum::<usize>()
-        }
-        ExprKind::Ascribe(e, _) | ExprKind::Qualified(_, e) => count_placeholders(e),
-        // The right side of a nested pipe binds its own `_`.
-        ExprKind::Pipe(l, _) => count_placeholders(l),
-        _ => 0,
     }
 }
 
@@ -499,7 +466,7 @@ fn nested_namespace(chain: &str, span: Span) -> Diag {
     Diag::new(
         span,
         format!(
-            "namespaces are not nested: a file has one `NAMESPACE name`, so `{chain}` cannot be resolved; write a single qualifier, e.g. `name::call`"
+            "namespaces are not nested: a file has one `NAMESPACE name`, so `{chain}` cannot be resolved; write a single qualifier, e.g. `name.call`"
         ),
     )
 }
@@ -582,11 +549,11 @@ impl Checker {
             [] => None,
             [q] => {
                 self.known_namespace(q, t.span)?;
-                Some(format!("{q}::{}", t.name))
+                Some(format!("{q}.{}", t.name))
             }
             qs => {
                 return Err(nested_namespace(
-                    &format!("{}::{}", qs.join("::"), t.name),
+                    &format!("{}.{}", qs.join("."), t.name),
                     t.span,
                 ));
             }
@@ -650,7 +617,7 @@ impl Checker {
                 .into_iter()
                 .chain(self.open.borrow().iter())
                 .rev()
-                .find_map(|ns| self.named_ty(&format!("{ns}::{n}")))
+                .find_map(|ns| self.named_ty(&format!("{ns}.{n}")))
                 .or_else(|| self.named_ty(n))
             {
                 Some(ty) => arity(0, ty),
@@ -670,7 +637,7 @@ impl Checker {
     /// The table key of a type declared in the current file.
     fn qualify(&self, name: &str) -> String {
         match &self.cur_ns {
-            Some(ns) => format!("{ns}::{name}"),
+            Some(ns) => format!("{ns}.{name}"),
             None => name.to_string(),
         }
     }
@@ -682,7 +649,7 @@ impl Checker {
             .into_iter()
             .chain(self.open.borrow().iter())
             .rev()
-            .find_map(|ns| self.aliases.get(&format!("{ns}::{name}")))
+            .find_map(|ns| self.aliases.get(&format!("{ns}.{name}")))
             .or_else(|| self.aliases.get(name))
             .cloned()
     }
@@ -717,6 +684,41 @@ impl Checker {
         names
     }
 
+    /// A call whose first argument is a namespace name is qualified by it:
+    /// `git.status` and `fd.(option) argument`. A variable of that name in
+    /// scope wins, so `x . lines` stays a call on `x`.
+    fn qualifier<'a>(&self, items: &'a [SeqItem], sc: &Scope) -> Option<&'a str> {
+        let [SeqItem::Atom(first), _, ..] = items else {
+            return None;
+        };
+        let ExprKind::Seq(inner) = &first.k else {
+            return None;
+        };
+        let [SeqItem::Word(w, _)] = inner.as_slice() else {
+            return None;
+        };
+        (self.namespaces.contains(w.as_str()) && !sc.iter().any(|(n, _)| n == w))
+            .then_some(w.as_str())
+    }
+
+    /// The leading word of `w.call ...` when `w` names nothing at all, so it
+    /// was most likely meant as a namespace.
+    fn unknown_qualifier<'a>(&self, items: &'a [SeqItem], sc: &Scope) -> Option<&'a str> {
+        let [SeqItem::Atom(first), _, ..] = items else {
+            return None;
+        };
+        let ExprKind::Seq(inner) = &first.k else {
+            return None;
+        };
+        let [SeqItem::Word(w, _)] = inner.as_slice() else {
+            return None;
+        };
+        let known = sc.iter().any(|(n, _)| n == w)
+            || matches!(w.as_str(), "true" | "false")
+            || self.defs.iter().any(|d| Self::matches(&d.parts, inner));
+        (!known).then_some(w.as_str())
+    }
+
     fn known_namespace(&self, q: &str, span: Span) -> Res<()> {
         if self.namespaces.contains(q) {
             return Ok(());
@@ -733,13 +735,13 @@ impl Checker {
         {
             return Err(self.unknown_namespace_message(q));
         }
-        let prefix = ns.map(|n| format!("{n}::")).unwrap_or_default();
-        // A key belongs to the namespace when it is `ns::Name` (or has no `::`
+        let prefix = ns.map(|n| format!("{n}.")).unwrap_or_default();
+        // A key belongs to the namespace when it is `ns.Name` (or has no `.`
         // for the global namespace).
         let local = |key: &str| -> Option<String> {
             match ns {
                 Some(_) => key.strip_prefix(&prefix).map(str::to_string),
-                None => (!key.contains("::")).then(|| key.to_string()),
+                None => (!key.contains('.')).then(|| key.to_string()),
             }
         };
         let mut types: Vec<Symbol> = Vec::new();
@@ -801,7 +803,7 @@ impl Checker {
                 ret: Some(d.ret.to_string()),
             });
         types.extend(fns);
-        // Inside `ns`, references to its own types need no `ns::` qualifier.
+        // Inside `ns`, references to its own types need no `ns.` qualifier.
         if ns.is_some() {
             for s in &mut types {
                 s.name = strip_qualifier(&s.name, &prefix);
@@ -1161,7 +1163,12 @@ impl Checker {
         let FnBody::Block(stmts) = body else {
             unreachable!()
         };
-        let (mut ir, t) = self.block(stmts, &mut sc)?;
+        let (mut ir, mut t) = self.block(stmts, &mut sc)?;
+        // A function without a return type discards its body's value.
+        if def.ret == Type::Unit {
+            ir = Ir::Block(vec![ir, Ir::Lit(Value::Unit)]);
+            t = Type::Unit;
+        }
         for (var, names) in tuples.into_iter().rev() {
             ir = Ir::Untuple(var, names, Box::new(ir));
         }
@@ -1398,7 +1405,7 @@ impl Checker {
             return Err(Diag::new(
                 span,
                 format!(
-                    "a record literal has no type of its own here (it is {t}); annotate it: `{{ ... }} : Record Name`, or pass it where a record is expected"
+                    "a record literal has no type of its own here (it is {t}); annotate it: `{{ ... }} AS Record Name`, or pass it where a record is expected"
                 ),
             ));
         }
@@ -1423,12 +1430,6 @@ impl Checker {
                     let (ir, t) = self.check(e, sc)?;
                     irs.push(ir);
                     last = t;
-                }
-                Stmt::Discard(e) => {
-                    let (ir, _) = self.check(e, sc)?;
-                    irs.push(ir);
-                    irs.push(Ir::Lit(Value::Unit));
-                    last = Type::Unit;
                 }
                 Stmt::Scope(ns, inner, span) => {
                     self.open_scope(ns, *span)?;
@@ -1470,23 +1471,33 @@ impl Checker {
                 Some((_, t)) => Ok((Ir::Var("_".into()), t.clone())),
                 None => Err(Diag::new(
                     e.span,
-                    "`_` can only be used on the right side of `|>`",
+                    "`_` can only be used where `.` or `:` fills it: `x . f _ with (y)`",
                 )),
             },
-            ExprKind::Seq(items) => self.seq(items, e.span, sc, None),
-            ExprKind::Qualified(q, inner) => {
-                self.known_namespace(q, e.span)?;
-                match &inner.k {
-                    ExprKind::Seq(items) => self.seq(items, inner.span, sc, Some(q)),
-                    ExprKind::Qualified(q2, _) => {
-                        Err(nested_namespace(&format!("{q}::{q2}::..."), e.span))
+            ExprKind::Seq(items) => match self.qualifier(items, sc) {
+                Some(q) => self.seq(&items[1..], e.span, sc, Some(q)),
+                None => {
+                    if let [SeqItem::Atom(first), ..] = items.as_slice()
+                        && let ExprKind::Seq(inner) = &first.k
+                        && let Some(q) = self.qualifier(inner, sc)
+                    {
+                        return Err(nested_namespace(
+                            &format!("{q}.{}", seq_source(&inner[1..])),
+                            e.span,
+                        ));
                     }
-                    _ => Err(Diag::new(
-                        inner.span,
-                        format!("`{q}::` must be followed by a call, not a literal"),
-                    )),
+                    if let Some(w) = self.unknown_qualifier(items, sc) {
+                        return Err(Diag::new(
+                            e.span,
+                            format!(
+                                "`{w}` is neither a variable nor a function; if `{w}.` was meant as a namespace: {}",
+                                self.unknown_namespace_message(w)
+                            ),
+                        ));
+                    }
+                    self.seq(items, e.span, sc, None)
                 }
-            }
+            },
             ExprKind::List(xs) => {
                 let mut ty = Type::Never;
                 let mut irs = Vec::new();
@@ -1497,7 +1508,7 @@ impl Checker {
                             let Type::List(elem) = t else {
                                 return Err(Diag::new(
                                     inner.span,
-                                    format!("`...` splices a list into a list literal, found {t}"),
+                                    format!("`*` splices a list into a list literal, found {t}"),
                                 ));
                             };
                             irs.push(Ir::Spread(Box::new(ir)));
@@ -1528,7 +1539,7 @@ impl Checker {
             }
             ExprKind::Spread(_) => Err(Diag::new(
                 e.span,
-                "`...` only works inside a list literal, e.g. `[...xs, 1]`",
+                "`*` only works inside a list literal, e.g. `[*xs, 1]`",
             )),
             ExprKind::Tuple(xs) => {
                 let mut irs = Vec::new();
@@ -1555,24 +1566,6 @@ impl Checker {
                 Ok((Ir::If(Box::new(cir), Box::new(tir), Box::new(fir)), ty))
             }
             ExprKind::Match(s, arms) => self.matching(s, arms, e.span, sc),
-            ExprKind::Pipe(l, r) => {
-                let n = count_placeholders(r);
-                if n != 1 {
-                    return Err(Diag::new(
-                        r.span,
-                        format!(
-                            "the right side of `|>` must contain exactly one `_` placeholder, found {n}"
-                        ),
-                    ));
-                }
-                let (lir, lt) = self.check(l, sc)?;
-                let mark = sc.len();
-                sc.push(("_".into(), lt));
-                let res = self.check(r, sc);
-                sc.truncate(mark);
-                let (rir, rt) = res?;
-                Ok((Ir::Pipe(Box::new(lir), Box::new(rir)), rt))
-            }
             ExprKind::Ascribe(inner, ty) => {
                 let target = self.resolve_ty(ty)?;
                 let (ir, t) = self.infer(inner, sc)?;
@@ -1670,7 +1663,7 @@ impl Checker {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let mut found: Vec<Option<(Vec<Pat>, Vec<(String, Type)>)>> = vec![None; rd.fields.len()];
+        let mut found: Vec<Option<FieldMatch>> = vec![None; rd.fields.len()];
         for entry in entries {
             let mut key = Vec::new();
             let mut slot_items = Vec::new();
@@ -1957,7 +1950,7 @@ impl Checker {
         }
     }
 
-    /// Is `d` callable from the current file? `qual` is the `ns::` in front of
+    /// Is `d` callable from the current file? `qual` is the `ns.` in front of
     /// the call, if any: a qualified call sees only that namespace, an
     /// unqualified one sees the prelude and the file's own namespace.
     fn visible(&self, d: &FnDef, qual: Option<&str>) -> bool {
@@ -1973,7 +1966,7 @@ impl Checker {
         }
     }
 
-    /// Enters an `ns:: { ... }` block.
+    /// Enters an `ns.{ ... }` block.
     pub fn open_scope(&self, ns: &str, span: Span) -> Res<()> {
         self.known_namespace(ns, span)?;
         self.open.borrow_mut().push(ns.to_string());
@@ -2006,7 +1999,7 @@ impl Checker {
                 self.visible(&self.defs[i], qual) && Self::matches(&self.defs[i].parts, items)
             })
             .collect();
-        // Inside `ns:: { ... }`, the opened namespaces win over names from outside.
+        // Inside `ns.{ ... }`, the opened namespaces win over names from outside.
         if qual.is_none() {
             let open = self.open.borrow();
             let inner: Vec<usize> = cands
@@ -2024,7 +2017,7 @@ impl Checker {
         // Each argument is inferred once, on first use, independent of the
         // candidate it will be tested against.
         let mut args: Vec<Option<Res<(Ir, Type)>>> = vec![None; items.len()];
-        let mut passing: Vec<(usize, HashMap<String, Type>, HashMap<usize, Ir>)> = Vec::new();
+        let mut passing: Vec<PassingCandidate> = Vec::new();
         let mut failures: Vec<Diag> = Vec::new();
         'cand: for &id in &cands {
             let def = &self.defs[id];
@@ -2164,7 +2157,7 @@ impl Checker {
             0 => Err(Diag::new(
                 span,
                 format!(
-                    "no overload of `{}` accepts argument types {}. Candidates:{}\n  Fix: change an argument so its type matches one candidate; record literals can be fixed with `{{ ... }} : Record Name`.",
+                    "no overload of `{}` accepts argument types {}. Candidates:{}\n  Fix: change an argument so its type matches one candidate; record literals can be fixed with `{{ ... }} AS Record Name`.",
                     seq_text(items),
                     shown_args(),
                     {
@@ -2189,7 +2182,7 @@ impl Checker {
             _ => Err(Diag::new(
                 span,
                 format!(
-                    "ambiguous call `{}` with argument types {}: more than one overload fits:{}\n  Fix: annotate a record literal with `{{ ... }} : Record Name`, or give the arguments more specific types.",
+                    "ambiguous call `{}` with argument types {}: more than one overload fits:{}\n  Fix: annotate a record literal with `{{ ... }} AS Record Name`, or give the arguments more specific types.",
                     seq_text(items),
                     shown_args(),
                     candidates(&mut passing.iter().map(|(i, ..)| *i))
@@ -2213,7 +2206,10 @@ impl Checker {
                     })
                     .min()?;
                 let l = label(&d.parts);
-                Some((dist, d.ns.as_ref().map_or(l.clone(), |ns| format!("{ns}::{l}"))))
+                Some((
+                    dist,
+                    d.ns.as_ref().map_or(l.clone(), |ns| format!("{ns}.{l}")),
+                ))
             })
             .collect()
     }
@@ -2230,7 +2226,7 @@ impl Checker {
             return Diag::new(
                 span,
                 format!(
-                    "`{}` is declared in namespace `{ns}`; callers outside it must qualify the call: `{ns}::{}`, or wrap the call in a scope block: `{ns}:: {{ ... }}`",
+                    "`{}` is declared in namespace `{ns}`; callers outside it must qualify the call: `{ns}.{}`, or wrap the call in a scope block: `{ns}.{{ ... }}`",
                     label(&d.parts),
                     seq_text(items)
                 ),
@@ -2302,7 +2298,13 @@ impl Checker {
         }
         for w in &words {
             let hint = top_matches(self.similar_defs(w, false));
-            if !hint.is_empty() && !self.defs.iter().any(|d| d.parts.iter().any(|p| matches!(p, PartT::Word(x) if x == w))) {
+            if !hint.is_empty()
+                && !self.defs.iter().any(|d| {
+                    d.parts
+                        .iter()
+                        .any(|p| matches!(p, PartT::Word(x) if x == w))
+                })
+            {
                 msg.push_str(&format!(" For `{w}`:{hint}"));
             }
         }
@@ -2353,13 +2355,13 @@ mod strip_qualifier_tests {
     #[test]
     fn strips_only_whole_qualifiers() {
         assert_eq!(
-            strip_qualifier("find (root: String) with (options: fd::Options)", "fd::"),
+            strip_qualifier("find (root: String) with (options: fd.Options)", "fd."),
             "find (root: String) with (options: Options)"
         );
-        assert_eq!(strip_qualifier("List (fd::Entry)", "fd::"), "List (Entry)");
+        assert_eq!(strip_qualifier("List (fd.Entry)", "fd."), "List (Entry)");
         assert_eq!(
-            strip_qualifier("xfd::T and a::fd::T", "fd::"),
-            "xfd::T and a::fd::T"
+            strip_qualifier("xfd.T and a.fd.T", "fd."),
+            "xfd.T and a.fd.T"
         );
     }
 }

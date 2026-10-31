@@ -11,6 +11,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 rustyline = { version = "18.0.1", default-features = false, features = ["with-file-history"] }
+anyfix-expr = { path = "crates/anyfix-expr", version = "0.1.0" }
 
 [workspace]
 members = [".", "crates/anyfix-expr"]

@@ -1,27 +1,27 @@
-// Wrapper for `sed`, written in resh (see SYNTAX.md, "Running external commands").
-// Instead of sed's one-letter script language (`2,$s/a/b/g`, `/re/d`) the edits are typed
-// values; this file is the only place that knows sed's script syntax.
-//
-// Portable between BSD and GNU sed: only `-E -e` is used and the file is never edited in
-// place. `preview` returns the edited text; write it back with `write (text) to file (path)`.
-//
-// Patterns are extended regexes. A replacement may use `&` and `\1`. A TAB is the script
-// delimiter, so `/` needs no escaping, but a literal tab cannot appear in a pattern or replacement.
+# Wrapper for `sed`, written in resh (see SYNTAX.md, "Running external commands").
+# Instead of sed's one-letter script language (`2,$s/a/b/g`, `/re/d`) the edits are typed
+# values; this file is the only place that knows sed's script syntax.
+#
+# Portable between BSD and GNU sed: only `-E -e` is used and the file is never edited in
+# place. `preview` returns the edited text; write it back with `write (text) to file (path)`.
+#
+# Patterns are extended regexes. A replacement may use `&` and `\1`. A TAB is the script
+# delimiter, so `/` needs no escaping, but a literal tab cannot appear in a pattern or replacement.
 
-NAMESPACE sed
+NAMESPACE sed,
 
-/// Which lines an edit applies to.
-ENUM Scope { every line, line (Int), from line (Int) to line (Int), last line, matching (String) }
+## Which lines an edit applies to.
+ENUM Scope { every line, line (Int), from line (Int) to line (Int), last line, matching (String) },
 
 ENUM Edit {
-    replace first (String) with (String),    // s/pattern/replacement/
-    replace all (String) with (String),      // s/pattern/replacement/g
-    delete line                              // d
-}
+    replace first (String) with (String),    # s/pattern/replacement/
+    replace all (String) with (String),      # s/pattern/replacement/g
+    delete line                              # d
+},
 
-ENUM Step { in (Scope) do (Edit) }
+ENUM Step { in (Scope) do (Edit) },
 
-FUNCTION (scope: Scope) address: String {
+FUNCTION (scope: Scope) address -> String {
     MATCH scope {
         every line => "",
         line (n) => n to string,
@@ -29,37 +29,37 @@ FUNCTION (scope: Scope) address: String {
         last line => "$",
         matching (pattern) => join (join "\\\t" with pattern) with "\t"
     }
-}
+},
 
-FUNCTION substitute (pattern: String) with (replacement: String) flags (flags: String): String {
+FUNCTION substitute (pattern: String) with (replacement: String) flags (flags: String) -> String {
     join (join (join (join "s\t" with pattern) with "\t") with replacement) with (join "\t" with flags)
-}
+},
 
-FUNCTION (edit: Edit) command: String {
+FUNCTION (edit: Edit) command -> String {
     MATCH edit {
         replace first (pattern) with (replacement) => substitute pattern with replacement flags "",
         replace all (pattern) with (replacement) => substitute pattern with replacement flags "g",
         delete line => "d"
     }
-}
+},
 
-FUNCTION (step: Step) script: String {
+FUNCTION (step: Step) script -> String {
     MATCH step {
         in (scope) do (edit) => join ((scope) address) with ((edit) command)
     }
+},
+
+FUNCTION preview (path: String) with (steps: List (Step)) -> Result (String) {
+    run ("sed", ["-E", *(flat map (steps) with ((s) => ["-e", (s) script])), path])
 }
 
-FUNCTION preview (path: String) with (steps: List (Step)): Result (String) {
-    run ("sed", ["-E", ...(flat map (steps) with ((s) => ["-e", (s) script])), path])
-}
-
-// Usage (outside the namespace, wrap calls in a scope block):
-//   sed:: { preview "Cargo.toml" with [ in (every line) do (replace all "0\\.1" with "0.2") ] };
-//   sed:: {
-//       preview "log.txt" with [
-//           in (from line 1 to line 10) do (replace first "ERROR" with "WARN"),
-//           in (matching "^#") do (delete line)
-//       ]
-//   };
-// Steps run in order on sed's original line numbers, so a line deleted by an earlier step
-// can no longer open a later `from line (a) to line (b)` range; list range edits first.
+# Usage (outside the namespace, wrap calls in a scope block):
+#   sed.{ preview "Cargo.toml" with [ in (every line) do (replace all "0\\.1" with "0.2") ] },
+#   sed.{
+#       preview "log.txt" with [
+#           in (from line 1 to line 10) do (replace first "ERROR" with "WARN"),
+#           in (matching "^#") do (delete line)
+#       ]
+#   },
+# Steps run in order on sed's original line numbers, so a line deleted by an earlier step
+# can no longer open a later `from line (a) to line (b)` range; list range edits first.

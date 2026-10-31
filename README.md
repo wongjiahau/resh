@@ -13,8 +13,8 @@ serve this goal.
 
 - **Readable shell commands.** Calls read like plain phrases (anyfix names,
   `list file in (dir)`), not flag soup or terse abbreviations. Features such as
-  namespaces serve this goal: they group wrapped CLI tools (`git:commit`), and
-  deeply chained forms like `a:b:c` are valid but not the intended style.
+  namespaces serve this goal: they group wrapped CLI tools (`git.commit`), and
+  deeply chained forms like `a.b.c` are valid but not the intended style.
 - **Fast type-checking and fast execution.** Type checking is bottom-up and
   one-way (inference flows from leaves to roots only). No bidirectional type
   checking, since it is expensive.
@@ -42,7 +42,7 @@ cargo install --git https://github.com/wongjiahau/resh
 ```
 
 The wrapper libraries (`fd`, `git`, `herdr`, `rg`, `sed`) and the language prelude
-are built into the binary; load a wrapper with `IMPORT git;` (see `SYNTAX.md`,
+are built into the binary; load a wrapper with `IMPORT git` (see `SYNTAX.md`,
 "Importing libraries"). `resh libs` lists them.
 
 ### Writing wrappers for your own tools

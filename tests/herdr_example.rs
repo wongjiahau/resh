@@ -6,8 +6,11 @@ use std::rc::Rc;
 
 const HERDR: &str = include_str!("../lib/herdr.resh");
 
+/// Every `run` call: the command and its argv.
+type Calls = Rc<RefCell<Vec<(String, Vec<String>)>>>;
+
 fn argv(src: &str) -> Vec<String> {
-    let calls: Rc<RefCell<Vec<(String, Vec<String>)>>> = Rc::default();
+    let calls: Calls = Rc::default();
     let seen = calls.clone();
     let mut s = Session::new();
     s.set_runner(Box::new(move |c, a| {
@@ -29,13 +32,13 @@ fn strs(v: &[&str]) -> Vec<String> {
 
 #[test]
 fn list_agent() {
-    assert_eq!(argv("herdr::list agent;"), strs(&["agent", "list"]));
+    assert_eq!(argv("herdr.list agent,"), strs(&["agent", "list"]));
 }
 
 #[test]
 fn list_pane_in_workspace() {
     assert_eq!(
-        argv(r#"herdr:: { list pane in workspace "w2" };"#),
+        argv(r#"herdr.{ list pane in workspace "w2" },"#),
         strs(&["pane", "list", "--workspace", "w2"])
     );
 }
@@ -43,7 +46,7 @@ fn list_pane_in_workspace() {
 #[test]
 fn read_pane_plain() {
     assert_eq!(
-        argv(r#"herdr:: { read pane "w1:p1" };"#),
+        argv(r#"herdr.{ read pane "w1:p1" },"#),
         strs(&["pane", "read", "w1:p1"])
     );
 }
@@ -51,7 +54,7 @@ fn read_pane_plain() {
 #[test]
 fn read_pane_options() {
     assert_eq!(
-        argv(r#"herdr:: { read pane "w1:p1" { lines 50, source (recent unwrapped), ansi } };"#),
+        argv(r#"herdr.{ read pane "w1:p1" { lines 50, source (recent unwrapped), ansi } },"#),
         strs(&[
             "pane",
             "read",
@@ -69,7 +72,7 @@ fn read_pane_options() {
 #[test]
 fn create_workspace_options() {
     assert_eq!(
-        argv(r#"herdr:: { create workspace { label "demo", cwd "/tmp", no focus } };"#),
+        argv(r#"herdr.{ create workspace { label "demo", cwd "/tmp", no focus } },"#),
         strs(&[
             "workspace",
             "create",
@@ -85,7 +88,7 @@ fn create_workspace_options() {
 #[test]
 fn split_pane_direction() {
     assert_eq!(
-        argv(r#"herdr:: { split pane "w1:p1" (right) { keep focus, start in "/tmp" } };"#),
+        argv(r#"herdr.{ split pane "w1:p1" (right) { keep focus, start in "/tmp" } },"#),
         strs(&[
             "pane",
             "split",
@@ -102,7 +105,7 @@ fn split_pane_direction() {
 #[test]
 fn run_in_pane() {
     assert_eq!(
-        argv(r#"herdr:: { run "just test" in pane "w1:p2" };"#),
+        argv(r#"herdr.{ run "just test" in pane "w1:p2" },"#),
         strs(&["pane", "run", "w1:p2", "just test"])
     );
 }
@@ -110,7 +113,7 @@ fn run_in_pane() {
 #[test]
 fn wait_for_output_timeout_is_milliseconds() {
     assert_eq!(
-        argv(r#"herdr:: { wait for output "ok" in pane "w1:p2" { timeout (120 seconds) } };"#),
+        argv(r#"herdr.{ wait for output "ok" in pane "w1:p2" { timeout (120 seconds) } },"#),
         strs(&[
             "pane",
             "wait-output",
@@ -126,7 +129,7 @@ fn wait_for_output_timeout_is_milliseconds() {
 #[test]
 fn start_agent() {
     assert_eq!(
-        argv(r#"herdr:: { start agent "reviewer" (codex) in pane "w1:p3" };"#),
+        argv(r#"herdr.{ start agent "reviewer" (codex) in pane "w1:p3" },"#),
         strs(&[
             "agent", "start", "reviewer", "--kind", "codex", "--pane", "w1:p3"
         ])
@@ -137,7 +140,7 @@ fn start_agent() {
 fn prompt_agent_and_wait() {
     assert_eq!(
         argv(
-            r#"herdr:: { prompt agent "reviewer" with "go" { wait, give up after (30 seconds) } };"#
+            r#"herdr.{ prompt agent "reviewer" with "go" { wait, give up after (30 seconds) } },"#
         ),
         strs(&[
             "agent",
@@ -154,7 +157,7 @@ fn prompt_agent_and_wait() {
 #[test]
 fn wait_for_agent_settled() {
     assert_eq!(
-        argv(r#"herdr:: { wait for agent "reviewer" };"#),
+        argv(r#"herdr.{ wait for agent "reviewer" },"#),
         strs(&["agent", "wait", "reviewer"])
     );
 }
@@ -162,7 +165,7 @@ fn wait_for_agent_settled() {
 #[test]
 fn wait_for_agent_until_blocked() {
     assert_eq!(
-        argv(r#"herdr:: { prompt agent "reviewer" with "go" { until (blocked) } };"#),
+        argv(r#"herdr.{ prompt agent "reviewer" with "go" { until (blocked) } },"#),
         strs(&["agent", "prompt", "reviewer", "go", "--until", "blocked"])
     );
 }

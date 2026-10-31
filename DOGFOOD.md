@@ -19,5 +19,5 @@ or remove once fixed.
   `resh libs show <name>`).
 - `--raw` prints every field of every record (e.g. `list file in`), with no
   concise way to ask for just one field from the command line.
-- Calling a namespaced function without `rg::` / `IMPORT` qualification errors
+- Calling a namespaced function without `rg.` / `IMPORT` qualification errors
   (diagnostic is good; noted for discoverability only).

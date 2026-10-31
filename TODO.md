@@ -7,8 +7,8 @@ earlier ones). A task is done only when its acceptance criteria hold and
 
 Ground rules (see CLAUDE.md and README.md):
 
-- All call-like constructs go through `parse_anyfix` / `anyfix_item`
-  in `src/parser.rs`. No hand-rolled word/`(`…`)` loops.
+- resh source is anyfix expressions: `crates/anyfix-expr` groups it and
+  `src/parser.rs` reads the tree. No tokens or operators of resh's own.
 - Type checking is bottom-up only. Overloads are resolved from inferred
   argument types; an unresolvable or ambiguous call is a type error whose
   message lists the call site, inferred argument types, every candidate, and
@@ -156,8 +156,8 @@ bottom; same ground rules as above.
 
 - [ ] **A9. Typed permissions (explore).**
   Agent harness allow-lists match command strings and are brittle (`git push`
-  vs `git push --force`). Typed calls allow exact rules: allow `git::status`,
-  ask for `git::push`, deny `git::push { force }`.
+  vs `git push --force`). Typed calls allow exact rules: allow `git.status`,
+  ask for `git.push`, deny `git.push { force }`.
   *Done when:* a design note says what the harness needs, and a prototype rule
   file blocks one typed call and allows another.
 

@@ -1,31 +1,24 @@
 use std::io::{self, BufRead, IsTerminal};
 
 use crate::Session;
-use crate::complete::{Completions, ReplHelper};
 use crate::check::{Member, Symbol, SymbolKind};
+use crate::complete::{Completions, ReplHelper};
 use crate::eval::json_str;
-use crate::lexer::{Tok, lex};
+use anyfix_expr::ErrorCode;
 
 /// True when `src` ends inside an open bracket or string, so the REPL should
 /// keep reading lines before running it.
 fn is_incomplete(src: &str) -> bool {
-    match lex(src) {
-        Ok(toks) => {
-            let mut depth = 0i32;
-            for t in &toks {
-                match t.tok {
-                    Tok::LParen | Tok::LBrace | Tok::LBracket => depth += 1,
-                    Tok::RParen | Tok::RBrace | Tok::RBracket => depth -= 1,
-                    _ => {}
-                }
-            }
-            // A comment-only entry waits for the declaration it documents.
-            depth > 0
-                || (toks.iter().all(|t| matches!(t.tok, Tok::Eof))
-                    && src.lines().any(|l| l.trim_start().starts_with("///")))
-        }
-        Err(d) => d.msg.starts_with("unterminated"),
-    }
+    let parsed = anyfix_expr::parse(src);
+    let open = parsed.errors.iter().any(|e| {
+        matches!(
+            e.code,
+            ErrorCode::UnclosedBracket | ErrorCode::UnterminatedString
+        )
+    });
+    // A comment-only entry waits for the declaration it documents.
+    open || (parsed.syntax.nodes().is_empty()
+        && src.lines().any(|l| l.trim_start().starts_with("##")))
 }
 
 /// Where the interactive REPL keeps its history: `$RESH_HISTORY`, else `~/.resh_history`.
@@ -91,8 +84,7 @@ fn feed(session: &mut Session, buf: &mut String, line: &str, json: bool) -> Resu
     if is_incomplete(buf) {
         return Ok(false);
     }
-    // The REPL supplies the final `;`, so a one-line entry can omit it.
-    let src = std::mem::take(buf) + ";";
+    let src = std::mem::take(buf);
     if !src.trim().is_empty() {
         let result = session.run_with(&src, &mut |interp, v| {
             println!("{}", interp.render(v, json))
@@ -362,7 +354,10 @@ mod tests {
     #[test]
     fn namespace_list() {
         let names = vec!["prelude".to_string(), "fd".to_string()];
-        assert_eq!(render_namespaces(&names, false), "namespaces\n  prelude\n  fd");
+        assert_eq!(
+            render_namespaces(&names, false),
+            "namespaces\n  prelude\n  fd"
+        );
         assert_eq!(
             render_namespaces(&names, true),
             "{\"namespaces\":[\"prelude\",\"fd\"]}"

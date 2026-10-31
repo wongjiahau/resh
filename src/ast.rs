@@ -1,15 +1,15 @@
-use crate::lexer::Span;
+use crate::diag::Span;
 
 #[derive(Debug, Clone)]
 pub struct TyExpr {
-    /// Namespace qualifiers, outermost first: `a::b::T` is `["a", "b"]`.
+    /// Namespace qualifiers, outermost first: `git.Commit` is `["git"]`.
     pub qualifiers: Vec<String>,
     pub name: String,
     pub args: Vec<TyExpr>,
     pub span: Span,
 }
 
-/// One piece of a mixfix signature: a literal word or a bracketed parameter.
+/// One piece of an anyfix signature: a literal word or a bracketed parameter.
 /// `ty == None` parses but the checker rejects it: parameters need a type.
 #[derive(Debug, Clone)]
 pub enum Part {
@@ -18,7 +18,7 @@ pub enum Part {
         name: String,
         ty: Option<TyExpr>,
     },
-    /// `((name: Type, name: Type))`: one tuple parameter with a binder per component.
+    /// `((name : Type, name : Type))`: one tuple parameter with a binder per component.
     Tuple(Vec<(String, TyExpr)>),
 }
 
@@ -84,9 +84,7 @@ pub enum Decl {
 pub enum Stmt {
     Let(String, Expr, Span),
     Expr(Expr),
-    /// `expr;` as the last statement of a block: evaluated, value discarded.
-    Discard(Expr),
-    /// `ns:: { stmts }`: inside, calls and types of `ns` resolve unqualified
+    /// `ns.{ stmts }`: inside, calls and types of `ns` resolve unqualified
     /// and win over names from outside.
     Scope(String, Vec<Stmt>, Span),
 }
@@ -112,15 +110,14 @@ pub enum ExprKind {
     Float(f64),
     Str(String),
     Placeholder,
-    /// An unresolved mixfix call (or a lone word). Resolved against the
-    /// signature table by the checker.
+    /// An unresolved anyfix call (or a lone word), flattened into its words
+    /// and arguments. Resolved against the signature table by the checker,
+    /// which also reads a leading namespace argument (`git.status`) as a
+    /// qualifier.
     Seq(Vec<SeqItem>),
-    /// `ns::call`: the qualifier applies to the whole call on its right, and
-    /// is right associative: `a::b::c d` is `Qualified(a, Qualified(b, Seq[c d]))`.
-    Qualified(String, Box<Expr>),
-    /// `[a, ...b, c]`: elements may be `Spread`.
+    /// `[a, *b, c]`: elements may be `Spread`.
     List(Vec<Expr>),
-    /// `...xs`: splices a list into the list literal that contains it.
+    /// `*xs`: splices a list into the list literal that contains it.
     Spread(Box<Expr>),
     /// `(a, b)`: two or more values.
     Tuple(Vec<Expr>),
@@ -128,8 +125,7 @@ pub enum ExprKind {
     Brace(Vec<BraceEntry>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Match(Box<Expr>, Vec<Arm>),
-    Pipe(Box<Expr>, Box<Expr>),
-    /// `expr : Type` — states the type an expression must fit.
+    /// `expr AS Type`: states the type an expression must fit.
     Ascribe(Box<Expr>, TyExpr),
     /// `(x) => body`: a function value of one parameter.
     Lambda(String, Box<Expr>),
