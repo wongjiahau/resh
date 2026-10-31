@@ -5,12 +5,12 @@ ENUM Sort Key { name, size, modified time, extension, unsorted },
 ## Mirrors `ls`: recursive = -R, include hidden file = -A, directory itself = -d,
 ## reverse = -r, follow symlink = -L, sort by = (-S | -t | -X | -U; default by name).
 RECORD List Options {
-    recursive (Boolean DEFAULT false),
-    include hidden file (Boolean DEFAULT false),
-    directory itself (Boolean DEFAULT false),
-    reverse (Boolean DEFAULT false),
-    follow symlink (Boolean DEFAULT false),
-    sort by (Sort Key DEFAULT name)
+    recursive (Boolean DEFAULT (false)),
+    include hidden file (Boolean DEFAULT (false)),
+    directory itself (Boolean DEFAULT (false)),
+    reverse (Boolean DEFAULT (false)),
+    follow symlink (Boolean DEFAULT (false)),
+    sort by (Sort Key DEFAULT (name))
 },
 
 ## A fallible result whose error is a message.

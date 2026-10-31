@@ -47,7 +47,7 @@ ENUM Prompt Option {
 },
 
 FUNCTION (option: Create Option) argument -> List (String) {
-    MATCH option {
+    MATCH (option) {
         cwd (path) => ["--cwd", path],
         label (text) => ["--label", text],
         focus => ["--focus"],
@@ -56,8 +56,8 @@ FUNCTION (option: Create Option) argument -> List (String) {
 },
 
 FUNCTION (option: Split Option) argument -> List (String) {
-    MATCH option {
-        ratio (r) => ["--ratio", r to string],
+    MATCH (option) {
+        ratio (r) => ["--ratio", (r) to string],
         start in (path) => ["--cwd", path],
         take focus => ["--focus"],
         keep focus => ["--no-focus"]
@@ -65,21 +65,21 @@ FUNCTION (option: Split Option) argument -> List (String) {
 },
 
 FUNCTION (option: Read Option) argument -> List (String) {
-    MATCH option {
+    MATCH (option) {
         source (s) => ["--source", (s) herdr name],
-        lines (n) => ["--lines", n to string],
+        lines (n) => ["--lines", (n) to string],
         ansi => ["--format", "ansi"]
     }
 },
 
 FUNCTION (option: Wait Option) argument -> List (String) {
-    MATCH option {
+    MATCH (option) {
         timeout (d) => ["--timeout", (d) milliseconds text]
     }
 },
 
 FUNCTION (option: Prompt Option) argument -> List (String) {
-    MATCH option {
+    MATCH (option) {
         wait => ["--wait"],
         until (state) => ["--until", (state) herdr name],
         give up after (d) => ["--timeout", (d) milliseconds text]
@@ -87,21 +87,21 @@ FUNCTION (option: Prompt Option) argument -> List (String) {
 },
 
 FUNCTION (direction: Direction) herdr name -> String {
-    MATCH direction { left => "left", right => "right", up => "up", down => "down" }
+    MATCH (direction) { left => "left", right => "right", up => "up", down => "down" }
 },
 
 FUNCTION (source: Read Source) herdr name -> String {
-    MATCH source { visible => "visible", recent => "recent", recent unwrapped => "recent-unwrapped" }
+    MATCH (source) { visible => "visible", recent => "recent", recent unwrapped => "recent-unwrapped" }
 },
 
 FUNCTION (state: Agent State) herdr name -> String {
-    MATCH state {
+    MATCH (state) {
         idle => "idle", working => "working", blocked => "blocked", done => "done", unknown => "unknown"
     }
 },
 
 FUNCTION (kind: Agent Kind) herdr name -> String {
-    MATCH kind {
+    MATCH (kind) {
         claude => "claude", codex => "codex", gemini => "gemini", opencode => "opencode",
         pi => "pi", cursor => "cursor", copilot => "copilot", amp => "amp", grok => "grok"
     }
@@ -109,7 +109,7 @@ FUNCTION (kind: Agent Kind) herdr name -> String {
 
 ## herdr takes milliseconds; a `Duration` is whole seconds, so append three zeros.
 FUNCTION (duration: Duration) milliseconds text -> String {
-    join ((duration seconds) to string) with "000"
+    join (((duration) seconds) to string) with "000"
 },
 
 # ---------- inspect ----------
@@ -156,7 +156,7 @@ FUNCTION read pane (id: String) (options: Set (Read Option)) -> Result (String) 
 },
 
 FUNCTION read pane (id: String) -> Result (String) {
-    read pane id {}
+    read pane (id) {}
 },
 
 FUNCTION read agent (target: String) (options: Set (Read Option)) -> Result (String) {
@@ -164,7 +164,7 @@ FUNCTION read agent (target: String) (options: Set (Read Option)) -> Result (Str
 },
 
 FUNCTION read agent (target: String) -> Result (String) {
-    read agent target {}
+    read agent (target) {}
 },
 
 # ---------- layout ----------
@@ -196,7 +196,7 @@ FUNCTION split pane (id: String) (direction: Direction) (options: Set (Split Opt
 },
 
 FUNCTION split pane (id: String) (direction: Direction) -> Result (String) {
-    split pane id direction {}
+    split pane (id) (direction) {}
 },
 
 # ---------- run things ----------
@@ -225,7 +225,7 @@ FUNCTION wait for output (text: String) in pane (id: String) (options: Set (Wait
 },
 
 FUNCTION wait for output (text: String) in pane (id: String) -> Result (String) {
-    wait for output text in pane id {}
+    wait for output (text) in pane (id) {}
 },
 
 # ---------- agents ----------
@@ -247,7 +247,7 @@ FUNCTION prompt agent (target: String) with (text: String) (options: Set (Prompt
 },
 
 FUNCTION prompt agent (target: String) with (text: String) -> Result (String) {
-    prompt agent target with text {}
+    prompt agent (target) with (text) {}
 },
 
 ## Without `until`, waits for the first settled state (idle, done or blocked).
@@ -259,7 +259,7 @@ FUNCTION wait for agent (target: String) (options: Set (Wait Option)) -> Result 
 },
 
 FUNCTION wait for agent (target: String) -> Result (String) {
-    wait for agent target {}
+    wait for agent (target) {}
 }
 
 # Usage:

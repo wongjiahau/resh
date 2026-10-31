@@ -22,8 +22,11 @@
 - resh source is anyfix expressions (`crates/anyfix-expr`). That crate does all
   the grouping; `src/parser.rs` only reads the tree it returns. It flattens each
   call into its name words and arguments (`flatten`, `Flat::Word` /
-  `Flat::Arg`) and recognises resh's own forms by their uppercase keyword
-  (`FUNCTION`, `MATCH`, `IF`, ...) or symbol word (`=>`, `->`, `=`).
+  `Flat::Arg`) and recognises resh's own forms by their exact call shape
+  (`IF _ THEN _ ELSE _`, `MATCH _ _`, `_ AS _`, `_ => _`, ...). It never searches
+  a call for keywords or splits one call into several expressions.
+- A bare word is always part of a call's name, never a value: the checker only
+  lets arguments fill slots, so a variable is written `(n) to string`.
 - A new construct is a new keyword or shape read from that tree. Don't add
   tokens, operators or a recursive-descent parser of resh's own: chaining goes
   through `.` (left) and `:` (right), as `crates/anyfix-expr/README.md` says.

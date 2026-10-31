@@ -74,14 +74,17 @@ write (text) to file (path)
 Result (T) Or (E)
 ```
 
-A slot takes a single item: a variable or other single word, a number, a
-string, a list or `{ ... }` literal, or a parenthesized expression.
+A slot takes a single item: a number, a string, a list or `{ ... }` literal,
+or anything in parentheses. A bare word is always part of the name, never a
+value, so a variable, an enum variant or a call without parameters fills a slot
+in parentheses. The checker matches each call by its words alone; it never
+reads a name word as a value.
 
 ```
-count (items)        # slot is a parenthesized expression
-count items          # a lone variable fills a slot too
-print "hello"        # slot is an atom, no parentheses needed
-print (1 mb)         # two tokens, parentheses required
+count (items)        # a variable fills a slot in parentheses
+(n) to string        # `n to string` would be one call named `n to string`
+print "hello"        # a string is one item, no parentheses needed
+print (1 mb)         # a call is several items, parentheses required
 ```
 
 ### Chaining with `.` and `:`
@@ -99,7 +102,7 @@ print (1 mb)         # two tokens, parentheses required
 
 ```
 run ("git", ["log"]) . map _ with ((text) => (text) lines)
-IF (n) equals 0 THEN "zero" ELSE : IF (n) equals 1 THEN "one" ELSE : "many"
+IF ((n) equals 0) THEN "zero" ELSE : IF ((n) equals 1) THEN "one" ELSE : "many"
 ```
 
 ## Namespaces
@@ -205,21 +208,39 @@ REPL. `resh run`, `resh check` and `resh -c` do not read it.
 
 `LET name : value` binds a single-word name. `:` binds loosest, so the value
 may be a whole pipeline: `LET n : files . count _`. A type may be stated with
-`LET (name : Type) : value`, which means `LET name : value AS Type`.
+`LET (name : Type) : value`, which means `LET name : (value) AS (Type)`.
 
-`value AS Type` states the type an expression must fit anywhere, e.g. to give a
-record literal its record: `f ({ x 1 } AS Apple)`.
+`(value) AS (Type)` states the type an expression must fit anywhere, e.g. to
+give a record literal its record: `f ({ x 1 } AS (Apple))`.
+
+## Keyword forms
+
+Each of resh's own forms is one call of a fixed shape: the keywords are its
+name words and every other part is one item. The parser recognises the form by
+its name alone, so a condition, a branch or a value longer than one item goes
+in parentheses.
+
+| Form | Call |
+| --- | --- |
+| `IF (c) THEN (a) ELSE (b)` | `IF _ THEN _ ELSE _` |
+| `MATCH (value) { arms }`, `value . MATCH { arms }` | `MATCH _ _`, `_ MATCH _` |
+| `(value) AS (Type)` | `_ AS _` |
+| `LET name : value`, `LET (name : Type) : value` | `LET name _`, `LET _ _` |
+| `(param) => body`, `pattern => body` | `_ => _` |
+| `*list` | `* _` |
+| `(Type DEFAULT value)` in a field slot | a type followed by `DEFAULT _` |
 
 ## Conditionals and MATCH
 
-`IF condition THEN a ELSE b` needs a `Boolean` condition, and both branches
-must have the same type. Chain it to the right with `:`:
+`IF (condition) THEN (a) ELSE (b)` needs a `Boolean` condition, and both
+branches must have the same type. Chain it to the right with `:`, which fills
+the `ELSE` slot with the rest:
 
 ```
-IF (n) equals 0 THEN "zero" ELSE : IF (n) equals 1 THEN "one" ELSE : "many"
+IF ((n) equals 0) THEN "zero" ELSE : IF ((n) equals 1) THEN "one" ELSE : "many"
 ```
 
-`MATCH value { pattern => result, ... }` takes the value to match either after
+`MATCH (value) { pattern => result, ... }` takes the value to match either after
 the keyword or from `.`: `option . MATCH { ... }`. Patterns are described in
 "Enum variants and patterns" and "Destructuring".
 
@@ -243,16 +264,17 @@ lowercase.
 RECORD Server Config {
     host (String DEFAULT "localhost"),
     port (Int DEFAULT 8080),
-    timeout (Duration DEFAULT 30 seconds)
+    timeout (Duration DEFAULT (30 seconds))
 }
 ```
 
 - Slots hold types only, never names: `between (Int) and (Int)`.
 - A field with no slots is a plain marker word. For an on/off option, use a
   `Boolean` slot. In a literal, a bare `Boolean` field name is sugar for
-  `true`: `{ verbose }` means `{ verbose true }`. (Optional flags belong in a
+  `true`: `{ verbose }` means `{ verbose (true) }`. (Optional flags belong in a
   `Set (E)`; see below.)
-- A slot may carry `DEFAULT value`. Each slot of a multi-slot field has its own
+- A slot may carry `DEFAULT value`, where the value is one item:
+  `(Boolean DEFAULT (false))`, `(Int DEFAULT 8080)`. Each slot of a multi-slot field has its own
   default.
 - A field may be omitted in a literal only if every slot has a `DEFAULT`.
   There are no optional fields, so destructuring always sees every field.
@@ -269,11 +291,9 @@ Record literals are unnamed (and so are set literals). Entries are anyfix phrase
 
 - Slot values follow the anyfix rule: atoms are bare, anything longer needs
   parentheses.
-- Bare words in an entry are always part of the field's name, because the
-  parser is context-free and cannot tell a name word from a value. The only
-  exceptions are the Boolean literals `true` and `false`. A slot holding an
-  enum variant, a variable or a zero-parameter call is therefore parenthesized:
-  `{ sort by (size) }`, not `{ sort by size }`.
+- Bare words in an entry are always part of the field's name, so a slot
+  holding an enum variant, a variable, `true`/`false` or a call without
+  parameters is parenthesized: `{ sort by (size) }`, not `{ sort by size }`.
 - The literal's type is inferred structurally (the set of field signatures with
   their slot types) and matched against the candidate overloads. See
   *Overload resolution*.
@@ -284,7 +304,7 @@ There are no accessor functions. The only way to take values out of a record is
 a `MATCH` with a record pattern:
 
 ```
-MATCH config {
+MATCH (config) {
     { host (h), port (p), timeout (t) } => ...
 }
 ```
@@ -513,10 +533,10 @@ ENUM Find Option {
 },
 
 FUNCTION (option: Find Option) argument -> List (String) {
-    MATCH option {
+    MATCH (option) {
         include hidden file => ["--hidden"],
         extension (e) => ["--extension", e],
-        max depth (n) => ["--max-depth", n to string],
+        max depth (n) => ["--max-depth", (n) to string],
         exclude (patterns) => flat map (patterns) with ((p) => ["--exclude", p])
     }
 },

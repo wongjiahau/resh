@@ -27,7 +27,7 @@ ENUM Find Option {
 
 ## One arm per option; this is the entire translation to fd's command line.
 FUNCTION (option: Find Option) argument -> List (String) {
-    MATCH option {
+    MATCH (option) {
         match (regex) => [],
         match (glob) => ["--glob"],
         match (fixed string) => ["--fixed-strings"],
@@ -40,8 +40,8 @@ FUNCTION (option: Find Option) argument -> List (String) {
         full path => ["--full-path"],
         kind (k) => ["--type", (k) fd name],
         extension (es) => flat map (es) with ((e) => ["--extension", e]),
-        min depth (n) => ["--min-depth", n to string],
-        max depth (n) => ["--max-depth", n to string],
+        min depth (n) => ["--min-depth", (n) to string],
+        max depth (n) => ["--max-depth", (n) to string],
         exclude (ps) => flat map (ps) with ((p) => ["--exclude", p]),
         size at least (s) => ["--size", join "+" with ((s) bytes text)],
         size at most (s) => ["--size", join "-" with ((s) bytes text)],
@@ -51,11 +51,11 @@ FUNCTION (option: Find Option) argument -> List (String) {
 },
 
 FUNCTION (kind: Entry Kind) fd name -> String {
-    MATCH kind { file => "file", directory => "directory", symlink => "symlink" }
+    MATCH (kind) { file => "file", directory => "directory", symlink => "symlink" }
 },
 
-FUNCTION (size: Size) bytes text -> String { join ((size bytes) to string) with "b" },
-FUNCTION (duration: Duration) seconds text -> String { join ((duration seconds) to string) with "s" },
+FUNCTION (size: Size) bytes text -> String { join (((size) bytes) to string) with "b" },
+FUNCTION (duration: Duration) seconds text -> String { join (((duration) seconds) to string) with "s" },
 
 FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
     Result (List (String))
@@ -65,11 +65,11 @@ FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
 },
 
 FUNCTION find (pattern: String) in (dir: String) -> Result (List (String)) {
-    find pattern in dir {}
+    find (pattern) in (dir) {}
 },
 
 FUNCTION find (pattern: String) -> Result (List (String)) {
-    find pattern in "." {}
+    find (pattern) in "." {}
 }
 
 # Usage:

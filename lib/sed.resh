@@ -22,29 +22,29 @@ ENUM Edit {
 ENUM Step { in (Scope) do (Edit) },
 
 FUNCTION (scope: Scope) address -> String {
-    MATCH scope {
+    MATCH (scope) {
         every line => "",
-        line (n) => n to string,
-        from line (a) to line (b) => join (join (a to string) with ",") with (b to string),
+        line (n) => (n) to string,
+        from line (a) to line (b) => join (join ((a) to string) with ",") with ((b) to string),
         last line => "$",
-        matching (pattern) => join (join "\\\t" with pattern) with "\t"
+        matching (pattern) => join (join "\\\t" with (pattern)) with "\t"
     }
 },
 
 FUNCTION substitute (pattern: String) with (replacement: String) flags (flags: String) -> String {
-    join (join (join (join "s\t" with pattern) with "\t") with replacement) with (join "\t" with flags)
+    join (join (join (join "s\t" with (pattern)) with "\t") with (replacement)) with (join "\t" with (flags))
 },
 
 FUNCTION (edit: Edit) command -> String {
-    MATCH edit {
-        replace first (pattern) with (replacement) => substitute pattern with replacement flags "",
-        replace all (pattern) with (replacement) => substitute pattern with replacement flags "g",
+    MATCH (edit) {
+        replace first (pattern) with (replacement) => substitute (pattern) with (replacement) flags "",
+        replace all (pattern) with (replacement) => substitute (pattern) with (replacement) flags "g",
         delete line => "d"
     }
 },
 
 FUNCTION (step: Step) script -> String {
-    MATCH step {
+    MATCH (step) {
         in (scope) do (edit) => join ((scope) address) with ((edit) command)
     }
 },

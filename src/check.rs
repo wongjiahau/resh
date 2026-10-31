@@ -1597,7 +1597,7 @@ impl Checker {
     }
 
     /// A record literal is inferred from its entries alone. Bare words of an
-    /// entry belong to the field name (except `true`/`false`); slot values are
+    /// entry belong to the field name; slot values are
     /// atoms or parenthesized expressions, each inferred on its own.
     fn brace(&self, fs: &[BraceEntry], sc: &mut Scope) -> Res<(Ir, Type)> {
         let mut irs: Vec<(String, Vec<Ir>)> = Vec::new();
@@ -1608,13 +1608,6 @@ impl Checker {
             let mut etys = Vec::new();
             for item in &f.items {
                 match item {
-                    // `true` and `false` are the Boolean literals, not name words:
-                    // `{ verbose true }`.
-                    SeqItem::Word(w, _) if w == "true" || w == "false" => {
-                        key.push("_");
-                        eirs.push(Ir::Lit(Value::Bool(w == "true")));
-                        etys.push(Type::Bool);
-                    }
                     SeqItem::Word(w, _) => key.push(w.as_str()),
                     SeqItem::Atom(e) => {
                         key.push("_");
@@ -1907,7 +1900,7 @@ impl Checker {
         parts.len() == items.len()
             && parts.iter().zip(items).all(|(p, i)| match (p, i) {
                 (PartT::Word(a), SeqItem::Word(b, _)) => a == b,
-                (PartT::Param(..) | PartT::Tuple(_), _) => true,
+                (PartT::Param(..) | PartT::Tuple(_), SeqItem::Atom(_)) => true,
                 _ => false,
             })
     }
@@ -2028,17 +2021,11 @@ impl Checker {
                     continue;
                 };
                 let pty = &pty;
-                let (arg_span, arg) = match item {
-                    SeqItem::Atom(e) => (e.span, e.clone()),
-                    SeqItem::Word(w, s) => (
-                        *s,
-                        Expr {
-                            k: ExprKind::Seq(vec![SeqItem::Word(w.clone(), *s)]),
-                            span: *s,
-                        },
-                    ),
+                let SeqItem::Atom(arg) = item else {
+                    unreachable!("`matches` lets only arguments fill slots")
                 };
-                let inferred = args[i].get_or_insert_with(|| self.infer(&arg, sc));
+                let arg_span = arg.span;
+                let inferred = args[i].get_or_insert_with(|| self.infer(arg, sc));
                 let aty = match inferred {
                     Ok((_, t)) => t.clone(),
                     Err(d) => {
@@ -2253,6 +2240,33 @@ impl Checker {
                     } else {
                         vars.join(", ")
                     }
+                ),
+            );
+        }
+        // A variable written as a bare word is part of the call's name.
+        let bare_vars: Vec<&str> = items
+            .iter()
+            .filter_map(|i| match i {
+                SeqItem::Word(w, _) if sc.iter().any(|(n, _)| n == w) => Some(w.as_str()),
+                SeqItem::Word(w, _) if matches!(w.as_str(), "true" | "false") => Some(w.as_str()),
+                _ => None,
+            })
+            .collect();
+        if let Some(v) = bare_vars.first() {
+            let fixed: Vec<String> = items
+                .iter()
+                .map(|i| match i {
+                    SeqItem::Word(w, _) if bare_vars.contains(&w.as_str()) => format!("({w})"),
+                    SeqItem::Word(w, _) => w.clone(),
+                    SeqItem::Atom(e) => expr_source(e),
+                })
+                .collect();
+            return Diag::new(
+                span,
+                format!(
+                    "no function matches `{}`: `{v}` is a bare word, so it is part of the call's name. A value fills a slot in parentheses: `{}`",
+                    seq_source(items),
+                    fixed.join(" ")
                 ),
             );
         }

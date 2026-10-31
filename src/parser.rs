@@ -449,13 +449,15 @@ impl Reader<'_> {
                         .iter()
                         .position(|f| matches!(f, Flat::Word("DEFAULT", _)))
                     {
-                        Some(i) => {
-                            let rest = &inner[i + 1..];
-                            if rest.is_empty() {
-                                return self.err(slot.span, "expected a value after `DEFAULT`");
+                        Some(i) => match &inner[i + 1..] {
+                            [Flat::Arg(value)] => (&inner[..i], Some(self.expr(value)?)),
+                            _ => {
+                                return self.err(
+                                    slot.span,
+                                    "expected one value after `DEFAULT`: `(Type DEFAULT value)`, with a longer value in parentheses",
+                                );
                             }
-                            (&inner[..i], Some(self.flat_expr(rest)?))
-                        }
+                        },
                         None => (&inner[..], None),
                     };
                     parts.push(FieldPart::Slot {
@@ -688,7 +690,20 @@ impl Reader<'_> {
         };
         match items {
             [Flat::Arg(n)] => return self.expr(n),
-            [Flat::Word("IF", _), ..] => return self.if_expr(items),
+            [
+                Flat::Word("IF", _),
+                Flat::Arg(cond),
+                Flat::Word("THEN", _),
+                Flat::Arg(yes),
+                Flat::Word("ELSE", _),
+                Flat::Arg(no),
+            ] => {
+                return mk(ExprKind::If(
+                    Box::new(self.expr(cond)?),
+                    Box::new(self.expr(yes)?),
+                    Box::new(self.expr(no)?),
+                ));
+            }
             [Flat::Arg(param), Flat::Word("=>", _), Flat::Arg(body)] => {
                 let Some(name) = single_word(param) else {
                     return self.err(
@@ -706,16 +721,34 @@ impl Reader<'_> {
             }
             _ => {}
         }
-        if let Some(i) = word_at("MATCH").filter(|&i| i <= 1) {
-            return self.match_expr(items, i);
-        }
-        if let Some(i) = word_at("AS") {
-            if i == 0 || i + 1 == items.len() {
-                return self.err(first, "`AS` is written `value AS Type`");
+        match items {
+            [Flat::Word("MATCH", _), Flat::Arg(subject), Flat::Arg(arms)]
+            | [Flat::Arg(subject), Flat::Word("MATCH", _), Flat::Arg(arms)] => {
+                return self.match_expr(subject, arms, first);
             }
-            let value = self.flat_expr(&items[..i])?;
-            let ty = self.ty_flat(&items[i + 1..], flat_span(&items[i + 1]))?;
-            return mk(ExprKind::Ascribe(Box::new(value), ty));
+            [Flat::Arg(value), Flat::Word("AS", _), Flat::Arg(ty)] => {
+                return mk(ExprKind::Ascribe(Box::new(self.expr(value)?), self.ty(ty)?));
+            }
+            _ => {}
+        }
+        for (keyword, shape) in [
+            ("IF", "`IF (condition) THEN (value) ELSE (value)`"),
+            ("THEN", "`IF (condition) THEN (value) ELSE (value)`"),
+            ("ELSE", "`IF (condition) THEN (value) ELSE (value)`"),
+            (
+                "MATCH",
+                "`MATCH (value) { arms }` or `value . MATCH { arms }`",
+            ),
+            ("AS", "`(value) AS (Type)`"),
+        ] {
+            if let Some(i) = word_at(keyword) {
+                return self.err(
+                    flat_span(&items[i]),
+                    format!(
+                        "`{keyword}` is part of the call {shape}: each part is one item, so a longer expression goes in parentheses (or a `,` is missing before it)"
+                    ),
+                );
+            }
         }
         for item in items {
             if let Flat::Word(w, s) = item {
@@ -745,53 +778,15 @@ impl Reader<'_> {
         ))
     }
 
-    /// `IF cond THEN a ELSE b`; chain with `:`, `... ELSE : IF ...`.
-    fn if_expr(&self, items: &[Flat]) -> Res<Expr> {
-        let span = flat_span(&items[0]);
-        let find = |word: &str, from: usize| {
-            items[from..]
-                .iter()
-                .position(|f| matches!(f, Flat::Word(w, _) if *w == word))
-                .map(|i| i + from)
-        };
-        let Some(then) = find("THEN", 1) else {
-            return self.err(span, "expected `THEN` after the IF condition");
-        };
-        let Some(els) = find("ELSE", then + 1) else {
-            return self.err(span, "expected `ELSE` after the THEN branch");
-        };
-        let part = |from: usize, to: usize, what: &str| {
-            if from == to {
-                self.err(span, format!("expected {what}"))
-            } else {
-                self.flat_expr(&items[from..to])
-            }
-        };
-        let cond = part(1, then, "a condition after `IF`")?;
-        let yes = part(then + 1, els, "a value after `THEN`")?;
-        let no = part(els + 1, items.len(), "a value after `ELSE`")?;
-        Ok(Expr {
-            k: ExprKind::If(Box::new(cond), Box::new(yes), Box::new(no)),
-            span: self.at(span),
-        })
-    }
-
-    /// `MATCH subject { arms }` or `subject . MATCH { arms }`.
-    fn match_expr(&self, items: &[Flat], keyword: usize) -> Res<Expr> {
-        let span = flat_span(&items[keyword]);
-        let arms_node = match items.last() {
-            Some(Flat::Arg(n)) if braces(n).is_some() && items.len() > keyword + 1 => *n,
-            _ => return self.err(span, "expected `{ arms }` at the end of the MATCH"),
-        };
-        let subject: Vec<Flat> = items[..keyword]
-            .iter()
-            .chain(&items[keyword + 1..items.len() - 1])
-            .copied()
-            .collect();
-        if subject.is_empty() {
-            return self.err(span, "expected the value to MATCH: `MATCH value { ... }`");
+    /// `MATCH (subject) { arms }` or `subject . MATCH { arms }`.
+    fn match_expr(&self, subject: &Node, arms_node: &Node, span: anyfix_expr::Span) -> Res<Expr> {
+        if braces(arms_node).is_none() {
+            return self.err(
+                arms_node.span,
+                "expected `{ arms }` at the end of the MATCH",
+            );
         }
-        let subject = self.flat_expr(&subject)?;
+        let subject = self.expr(subject)?;
         let mut arms = Vec::new();
         for arm in braces(arms_node).expect("checked above") {
             match flatten(arm).as_slice() {

@@ -29,7 +29,7 @@ ENUM Shape {
 },
 
 FUNCTION describe (s: Shape) -> String {
-    MATCH s {
+    MATCH (s) {
         circle (r) => "circle",
         (w) by (h) => "rectangle",
         empty => "nothing"
@@ -39,7 +39,8 @@ FUNCTION describe (s: Shape) -> String {
 
 #[test]
 fn anyfix_constructors_and_match() {
-    let src = format!("{SHAPES}\ndescribe (3.0 by 4.0),\ndescribe (circle 1.0),\ndescribe empty,");
+    let src =
+        format!("{SHAPES}\ndescribe (3.0 by 4.0),\ndescribe (circle 1.0),\ndescribe (empty),");
     assert_eq!(
         run(&src),
         vec![
@@ -54,7 +55,7 @@ fn anyfix_constructors_and_match() {
 fn non_exhaustive_match_is_an_error() {
     let src = r#"
 ENUM Light { red, green },
-FUNCTION name (l: Light) -> String { MATCH l { red => "r" } }
+FUNCTION name (l: Light) -> String { MATCH (l) { red => "r" } }
 "#;
     assert!(run_err(src).contains("non-exhaustive MATCH; missing: green"));
 }
@@ -65,12 +66,12 @@ fn record_literal_defaults_and_bare_boolean_shorthand() {
 RECORD Job {
     name (String),
     retries (Int DEFAULT 3),
-    dry run (Boolean DEFAULT false)
+    dry run (Boolean DEFAULT (false))
 },
 LET (j : Job) : { name "build", dry run },
-MATCH j { { name (n), retries (_), dry run (_) } => n },
-MATCH j { { name (_), retries (r), dry run (_) } => r },
-MATCH j { { name (_), retries (_), dry run (d) } => d },
+MATCH (j) { { name (n), retries (_), dry run (_) } => n },
+MATCH (j) { { name (_), retries (r), dry run (_) } => r },
+MATCH (j) { { name (_), retries (_), dry run (d) } => d },
 "#;
     assert_eq!(
         run(src),
@@ -87,9 +88,9 @@ RECORD Person {
     between (Int) and (Int)
 },
 LET (p : Person) : { "Ada" is name, age 36, between 1 and 5 },
-MATCH p { { (a) is name, age (_), between (_) and (_) } => a },
-MATCH p { { (_) is name, age (g), between (lo) and (hi) } => g },
-MATCH p { { (_) is name, age (_), between (lo) and (hi) } => hi },
+MATCH (p) { { (a) is name, age (_), between (_) and (_) } => a },
+MATCH (p) { { (_) is name, age (g), between (lo) and (hi) } => g },
+MATCH (p) { { (_) is name, age (_), between (lo) and (hi) } => hi },
 "#;
     assert_eq!(
         run(src),
@@ -107,7 +108,7 @@ fn dot_takes_at_most_one_placeholder() {
 fn user_function_with_infix_signature_and_generics() {
     let src = r#"
 FUNCTION (a: List (T)) has more than (b: List (T)) -> Boolean {
-    IF (count a) equals (count b) THEN false ELSE true
+    IF ((count (a)) equals (count (b))) THEN (false) ELSE (true)
 },
 [1, 2, 3] has more than [1],
 "#;
@@ -118,7 +119,7 @@ FUNCTION (a: List (T)) has more than (b: List (T)) -> Boolean {
 
 #[test]
 fn unknown_name_lists_variables_in_scope() {
-    let msg = run_err("LET x : 1,\ncount y,");
+    let msg = run_err("LET x : 1,\ncount (y),");
     assert!(msg.contains("unknown name `y`"), "{msg}");
     assert!(msg.contains("x"), "{msg}");
 }
@@ -157,7 +158,7 @@ FUNCTION sum (t: Triple) -> Int { 3 },
 #[test]
 fn overload_is_chosen_by_argument_types() {
     let src = format!(
-        "{OVERLOADS}\ndescribe 1,\ndescribe true,\ndescribe [\"a\"],\ndescribe [],\ndescribe {{ items [1] }},"
+        "{OVERLOADS}\ndescribe 1,\ndescribe (true),\ndescribe [\"a\"],\ndescribe [],\ndescribe {{ items [1] }},"
     );
     let want: Vec<Value> = ["int", "boolean", "list", "list", "bag"]
         .iter()
@@ -197,7 +198,7 @@ FUNCTION f (b: Banana) -> Int { 2 }
     assert!(msg.contains("ambiguous call"), "{msg}");
     assert!(msg.contains("{ ... } AS Record Name"), "{msg}");
     assert_eq!(
-        run(&format!("{src},\nf ({{ x 1 }} AS Banana),")),
+        run(&format!("{src},\nf ({{ x 1 }} AS (Banana)),")),
         vec![Value::Int(2)]
     );
 }
@@ -206,7 +207,7 @@ FUNCTION f (b: Banana) -> Int { 2 }
 fn bare_record_literal_has_no_type_of_its_own() {
     let msg = run_err("LET x : { a 1 },");
     assert!(msg.contains("annotate it"), "{msg}");
-    let msg = run_err("RECORD Apple { x (Int) },\nLET x : { y 1 } AS Apple,");
+    let msg = run_err("RECORD Apple { x (Int) },\nLET x : { y 1 } AS (Apple),");
     assert!(msg.contains("has no field `y (Int)`"), "{msg}");
     assert!(msg.contains("its fields are: x (Int)"), "{msg}");
 }
@@ -214,7 +215,8 @@ fn bare_record_literal_has_no_type_of_its_own() {
 #[test]
 fn omitted_fields_need_a_default() {
     let decl = "RECORD Job { name (String), retries (Int DEFAULT 3) },\n";
-    let get = "FUNCTION retries (j: Job) -> Int { MATCH j { { name (_), retries (r) } => r } },\n";
+    let get =
+        "FUNCTION retries (j: Job) -> Int { MATCH (j) { { name (_), retries (r) } => r } },\n";
     assert_eq!(
         run(&format!("{decl}{get}retries {{ name \"b\" }},")),
         vec![Value::Int(3)]
@@ -236,8 +238,8 @@ fn no_coercions_and_empty_values_fit_anywhere() {
     run("read file \"nope.txt\",");
     // `none` and `[]` are subtypes of every Option / List.
     run("count [],");
-    run("LET x : IF true THEN (some 1) ELSE none,\nx,");
-    let msg = run_err("IF true THEN 1 ELSE \"a\",");
+    run("LET x : IF (true) THEN (some 1) ELSE (none),\nx,");
+    let msg = run_err("IF (true) THEN 1 ELSE \"a\",");
     assert!(msg.contains("IF branches must have the same type"), "{msg}");
 }
 
@@ -472,14 +474,14 @@ NAMESPACE fd,
 ENUM Mode { regex, glob },
 
 FUNCTION name (m: Mode) -> String {
-    MATCH m { regex => "regex", glob => "glob" }
+    MATCH (m) { regex => "regex", glob => "glob" }
 },
 
 FUNCTION helper -> Int { 41 },
 FUNCTION find (pattern: String) in (dir: String) -> String {
-    join pattern with dir
+    join (pattern) with (dir)
 },
-FUNCTION find (pattern: String) -> Int { (helper) equals 41 . IF _ THEN count [pattern] ELSE 0 },
+FUNCTION find (pattern: String) -> Int { (helper) equals 41 . IF _ THEN (count [pattern]) ELSE 0 },
 "#;
 
     fn session_with_fd() -> Session {
@@ -529,8 +531,8 @@ FUNCTION find (pattern: String) -> Int { (helper) equals 41 . IF _ THEN count [p
         let src = r#"
 FUNCTION show (m: fd.Mode) -> Int { 1 },
 LET (m : fd.Mode) : fd.regex,
-show m,
-fd.name m,
+show (m),
+fd.name (m),
 "#;
         assert_eq!(
             s.run(src).unwrap(),
@@ -610,13 +612,13 @@ RECORD Server Config {
 },
 
 FUNCTION summary (c: Server Config) -> List (String) {
-    MATCH c { { host (h), port (p) } => [h, "x"] }
+    MATCH (c) { { host (h), port (p) } => [h, "x"] }
 },
 FUNCTION port number (c: Server Config) -> Int {
-    MATCH c { { host (_), port (p) } => p }
+    MATCH (c) { { host (_), port (p) } => p }
 },
 FUNCTION host name (c: Server Config) -> String {
-    MATCH c { { port (_), host (h) } => h }
+    MATCH (c) { { port (_), host (h) } => h }
 },
 "#;
 
@@ -669,8 +671,8 @@ FUNCTION host name (c: Server Config) -> String {
     fn entry_order_is_free_and_annotation_names_the_record() {
         let src = r#"
 LET (c : Server Config) : { port 1, host "h" },
-MATCH c { { host (h), port (p) } => p },
-MATCH c { { port (p), host (h) } => h },
+MATCH (c) { { host (h), port (p) } => p },
+MATCH (c) { { port (p), host (h) } => h },
 "#;
         assert_eq!(server(src), vec![Value::Int(1), Value::Str("h".into())]);
     }
@@ -679,7 +681,7 @@ MATCH c { { port (p), host (h) } => h },
     fn single_case_match_destructures_every_field() {
         let src = r#"
 LET (c : Server Config) : { port 443 },
-MATCH c { { host (h), port (p) } => [h] },
+MATCH (c) { { host (h), port (p) } => [h] },
 "#;
         assert_eq!(
             server(src),
@@ -735,13 +737,13 @@ MATCH c { { host (h), port (p) } => [h] },
     fn bare_field_name_is_true_only_for_a_boolean_field() {
         let msg = err("RECORD Rec { depth (Int DEFAULT 1) },\nLET (r : Rec) : { depth },");
         assert!(msg.contains("has no field `depth`"), "{msg}");
-        let src = "RECORD Rec { verbose (Boolean DEFAULT false) },\nLET (r : Rec) : { verbose },\nMATCH r { { verbose (v) } => v },";
+        let src = "RECORD Rec { verbose (Boolean DEFAULT (false)) },\nLET (r : Rec) : { verbose },\nMATCH (r) { { verbose (v) } => v },";
         assert_eq!(run(src), vec![Value::Bool(true)]);
         // The explicit form is the same field.
-        let src = "RECORD Rec { verbose (Boolean DEFAULT true) },\nLET (r : Rec) : { verbose false },\nMATCH r { { verbose (v) } => v },";
+        let src = "RECORD Rec { verbose (Boolean DEFAULT (true)) },\nLET (r : Rec) : { verbose (false) },\nMATCH (r) { { verbose (v) } => v },";
         assert_eq!(run(src), vec![Value::Bool(false)]);
         let msg = err(
-            "RECORD Rec { verbose (Boolean DEFAULT true) },\nLET (r : Rec) : { verbose, verbose false },",
+            "RECORD Rec { verbose (Boolean DEFAULT (true)) },\nLET (r : Rec) : { verbose, verbose (false) },",
         );
         assert!(msg.contains("is given twice"), "{msg}");
     }
@@ -751,9 +753,9 @@ MATCH c { { host (h), port (p) } => [h] },
         let src = r#"
 RECORD Rec { between (Int DEFAULT 1) and (Int DEFAULT 9) },
 LET (r : Rec) : {},
-MATCH r { { between (lo) and (hi) } => hi },
+MATCH (r) { { between (lo) and (hi) } => hi },
 LET (s : Rec) : { between 2 and 3 },
-MATCH s { { between (lo) and (hi) } => lo },
+MATCH (s) { { between (lo) and (hi) } => lo },
 "#;
         assert_eq!(run(src), vec![Value::Int(9), Value::Int(2)]);
     }
@@ -764,9 +766,9 @@ MATCH s { { between (lo) and (hi) } => lo },
 RECORD Inner { n (Int DEFAULT 7) },
 RECORD Outer { inner (Inner DEFAULT {}), tag (String) },
 LET (o : Outer) : { tag "t" },
-MATCH o { { inner (i), tag (_) } => MATCH i { { n (n) } => n } },
+MATCH (o) { { inner (i), tag (_) } => MATCH (i) { { n (n) } => n } },
 LET (p : Outer) : { inner { n 1 }, tag "t" },
-MATCH p { { inner (i), tag (_) } => MATCH i { { n (n) } => n } },
+MATCH (p) { { inner (i), tag (_) } => MATCH (i) { { n (n) } => n } },
 "#;
         assert_eq!(run(src), vec![Value::Int(7), Value::Int(1)]);
     }
@@ -774,10 +776,10 @@ MATCH p { { inner (i), tag (_) } => MATCH i { { n (n) } => n } },
     #[test]
     fn default_may_call_a_function_declared_later_in_the_file() {
         let src = r#"
-RECORD Rec { n (Int DEFAULT forty two) },
+RECORD Rec { n (Int DEFAULT (forty two)) },
 FUNCTION forty two -> Int { 42 },
 LET (r : Rec) : {},
-MATCH r { { n (n) } => n },
+MATCH (r) { { n (n) } => n },
 "#;
         assert_eq!(run(src), vec![Value::Int(42)]);
     }
@@ -811,7 +813,7 @@ MATCH r { { n (n) } => n },
         let msg = err("RECORD Rec { a (n: Int) }");
         assert!(!msg.is_empty());
         let msg = err("RECORD Rec { a (Int DEFAULT) }");
-        assert!(msg.contains("expected a value after `DEFAULT`"), "{msg}");
+        assert!(msg.contains("expected one value after `DEFAULT`"), "{msg}");
     }
 
     #[test]
@@ -835,18 +837,18 @@ MATCH r { { n (n) } => n },
 
     #[test]
     fn destructuring_names_every_field_and_only_known_ones() {
-        let msg = server_err("LET (c : Server Config) : {},\nMATCH c { { host (h) } => h },");
+        let msg = server_err("LET (c : Server Config) : {},\nMATCH (c) { { host (h) } => h },");
         assert!(
             msg.contains("must list every field; missing: port (Int)"),
             "{msg}"
         );
         let msg = server_err(
-            "LET (c : Server Config) : {},\nMATCH c { { host (h), port (p), tls (t) } => h },",
+            "LET (c : Server Config) : {},\nMATCH (c) { { host (h), port (p), tls (t) } => h },",
         );
         assert!(msg.contains("has no field pattern `tls _`"), "{msg}");
         assert!(msg.contains("host (String), port (Int)"), "{msg}");
         let msg = server_err(
-            "LET (c : Server Config) : {},\nMATCH c { { host (h), host (g), port (p) } => h },",
+            "LET (c : Server Config) : {},\nMATCH (c) { { host (h), host (g), port (p) } => h },",
         );
         assert!(msg.contains("is listed twice"), "{msg}");
     }
@@ -854,13 +856,14 @@ MATCH r { { n (n) } => n },
     #[test]
     fn a_second_record_arm_is_unreachable_when_the_first_cannot_fail() {
         let msg = server_err(
-            "LET (c : Server Config) : {},\nMATCH c { { host (h), port (p) } => h, { host (h), port (p) } => h },",
+            "LET (c : Server Config) : {},\nMATCH (c) { { host (h), port (p) } => h, { host (h), port (p) } => h },",
         );
         assert!(msg.contains("unreachable"), "{msg}");
-        let msg = server_err("LET (c : Server Config) : {},\nMATCH c { bar => 1 },");
+        let msg = server_err("LET (c : Server Config) : {},\nMATCH (c) { bar => 1 },");
         assert!(msg.contains("pattern must be a record pattern"), "{msg}");
-        let msg =
-            server_err("LET (c : Server Config) : {},\nMATCH c { { host (h), port (p) _ } => h },");
+        let msg = server_err(
+            "LET (c : Server Config) : {},\nMATCH (c) { { host (h), port (p) _ } => h },",
+        );
         assert!(msg.contains("words and slots only"), "{msg}");
     }
 
@@ -868,20 +871,20 @@ MATCH r { { n (n) } => n },
     fn destructured_names_have_the_slot_types() {
         // `h` is a String, so it cannot be returned as an Int.
         let msg = server_err(
-            "FUNCTION bad (c: Server Config) -> Int { MATCH c { { host (h), port (_) } => h } }",
+            "FUNCTION bad (c: Server Config) -> Int { MATCH (c) { { host (h), port (_) } => h } }",
         );
         assert!(msg.contains("declared to return Int"), "{msg}");
         assert!(msg.contains("String"), "{msg}");
         // `(_)` ignores a slot and binds nothing.
         let msg =
-            server_err("LET (c : Server Config) : {},\nMATCH c { { host (_), port (_) } => _ },");
+            server_err("LET (c : Server Config) : {},\nMATCH (c) { { host (_), port (_) } => _ },");
         assert!(msg.contains("`_` can only be used"), "{msg}");
     }
 
     #[test]
     fn enum_match_still_rejects_record_patterns() {
         let msg = err(
-            "ENUM Light { a, b },\nFUNCTION f (e: Light) -> Int { MATCH e { { x (y) } => 1 } }",
+            "ENUM Light { a, b },\nFUNCTION f (e: Light) -> Int { MATCH (e) { { x (y) } => 1 } }",
         );
         assert!(msg.contains("no variant of `Light` matches"), "{msg}");
     }
@@ -967,11 +970,12 @@ MATCH r { { n (n) } => n },
                    link count (_), owner id (_), group id (_), modified at (_), \
                    accessed at (_), inode number (_), block count (_), link target (_)";
         let src =
-            format!("FUNCTION entry size (e: Entry) -> Int {{ MATCH e {{ {{ {all} }} => s }} }}");
+            format!("FUNCTION entry size (e: Entry) -> Int {{ MATCH (e) {{ {{ {all} }} => s }} }}");
         assert!(Session::new().run(&src).is_ok());
         let short = all.replace(", link target (_)", "");
-        let src =
-            format!("FUNCTION entry size (e: Entry) -> Int {{ MATCH e {{ {{ {short} }} => s }} }}");
+        let src = format!(
+            "FUNCTION entry size (e: Entry) -> Int {{ MATCH (e) {{ {{ {short} }} => s }} }}"
+        );
         let msg = err(&src);
         assert!(
             msg.contains("missing: link target (Option (String))"),
@@ -1683,7 +1687,7 @@ mod fd_example {
     fn nested_patterns_check_exhaustiveness() {
         let (mut s, _) = session(Ok(""));
         let e = s
-            .run("ENUM Wrap { w (Entry Kind) },\nFUNCTION f (x: Wrap) -> Int { MATCH x { w (file) => 1, w (directory) => 2 } }")
+            .run("ENUM Wrap { w (Entry Kind) },\nFUNCTION f (x: Wrap) -> Int { MATCH (x) { w (file) => 1, w (directory) => 2 } }")
             .unwrap_err();
         assert!(
             e.msg.contains("non-exhaustive") && e.msg.contains("symlink"),
@@ -2215,7 +2219,7 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) },
 "#;
 
     fn with(body: &str) -> String {
-        format!("{EXPR}\nFUNCTION f (x: Wrap) -> Int {{ MATCH x {{ {body} }} }},\n")
+        format!("{EXPR}\nFUNCTION f (x: Wrap) -> Int {{ MATCH (x) {{ {body} }} }},\n")
     }
 
     #[test]
@@ -2285,8 +2289,7 @@ ENUM Wrap { w (Color), pair (Color) and (Color), deep (Wrap) },
 
     #[test]
     fn a_non_enum_slot_cannot_hold_a_nested_pattern() {
-        let src =
-            "ENUM Num { num (Int) },\nFUNCTION f (x: Num) -> Int { MATCH x { num (k (j)) => 1 } }";
+        let src = "ENUM Num { num (Int) },\nFUNCTION f (x: Num) -> Int { MATCH (x) { num (k (j)) => 1 } }";
         let msg = run_err(src);
         assert!(msg.contains("not an enum"), "{msg}");
     }
@@ -2304,7 +2307,7 @@ ENUM Shape { dot (Dot), blank },
 
     fn with(body: &str) -> String {
         format!(
-            "{DECLS}\nFUNCTION f (x: Shape) -> Int {{ MATCH x {{ {body} }} }},\nLET (d : Dot) : {{ color (red), size (7) }},\n"
+            "{DECLS}\nFUNCTION f (x: Shape) -> Int {{ MATCH (x) {{ {body} }} }},\nLET (d : Dot) : {{ color (red), size (7) }},\n"
         )
     }
 
@@ -2330,10 +2333,10 @@ ENUM Shape { dot (Dot), blank },
 
     #[test]
     fn refutable_record_arms_can_be_followed_by_more_arms() {
-        let src = "ENUM Color { red, green },\nRECORD Dot { color (Color), size (Int) },\nFUNCTION f (d: Dot) -> Int { MATCH d { { color (red), size (n) } => n, { color (green), size (_) } => 0 } },\nLET (d : Dot) : { color (green), size (3) },\nf (d),";
+        let src = "ENUM Color { red, green },\nRECORD Dot { color (Color), size (Int) },\nFUNCTION f (d: Dot) -> Int { MATCH (d) { { color (red), size (n) } => n, { color (green), size (_) } => 0 } },\nLET (d : Dot) : { color (green), size (3) },\nf (d),";
         assert_eq!(run(src).last(), Some(&Value::Int(0)));
         let msg = run_err(
-            "ENUM Color { red, green },\nRECORD Dot { color (Color), size (Int) },\nFUNCTION f (d: Dot) -> Int { MATCH d { { color (red), size (n) } => n } }",
+            "ENUM Color { red, green },\nRECORD Dot { color (Color), size (Int) },\nFUNCTION f (d: Dot) -> Int { MATCH (d) { { color (red), size (n) } => n } }",
         );
         assert!(
             msg.contains("missing: { color (green), size (_) }"),
@@ -2343,7 +2346,7 @@ ENUM Shape { dot (Dot), blank },
 
     #[test]
     fn a_wildcard_matches_a_record() {
-        let src = "RECORD Dot { size (Int) },\nFUNCTION f (d: Dot) -> Int { MATCH d { _ => 1 } },\nLET (d : Dot) : { size (3) },\nf (d),";
+        let src = "RECORD Dot { size (Int) },\nFUNCTION f (d: Dot) -> Int { MATCH (d) { _ => 1 } },\nLET (d : Dot) : { size (3) },\nf (d),";
         assert_eq!(run(src).last(), Some(&Value::Int(1)));
     }
 }
@@ -2435,7 +2438,7 @@ mod anyfix_forms {
 
     #[test]
     fn if_chains_to_the_right_with_colon() {
-        let sign = "FUNCTION sign (n: Int) -> String {\n    IF (n) equals 0 THEN \"zero\" ELSE : IF (n) equals 1 THEN \"one\" ELSE : \"many\"\n},\n";
+        let sign = "FUNCTION sign (n: Int) -> String {\n    IF ((n) equals 0) THEN \"zero\" ELSE : IF ((n) equals 1) THEN \"one\" ELSE : \"many\"\n},\n";
         assert_eq!(
             run(&format!("{sign}sign 0, sign 1, sign 5,")),
             vec![
@@ -2460,8 +2463,7 @@ mod anyfix_forms {
 
     #[test]
     fn as_states_a_type() {
-        let src =
-            "RECORD Apple { x (Int) },\nFUNCTION f (a: Apple) -> Int { 1 },\nf ({ x 1 } AS Apple),";
+        let src = "RECORD Apple { x (Int) },\nFUNCTION f (a: Apple) -> Int { 1 },\nf ({ x 1 } AS (Apple)),";
         assert_eq!(run(src), vec![Value::Int(1)]);
     }
 
@@ -2472,9 +2474,9 @@ mod anyfix_forms {
     }
 
     #[test]
-    fn variables_still_fill_slots_without_parentheses() {
+    fn a_variable_fills_a_slot_in_parentheses() {
         assert_eq!(
-            run("LET n : 4,\nn to string,"),
+            run("LET n : 4,\n(n) to string,"),
             vec![Value::Str("4".into())]
         );
     }
