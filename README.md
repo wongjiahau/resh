@@ -42,7 +42,7 @@ cargo install --git https://github.com/wongjiahau/resh
 ```
 
 The wrapper libraries (`fd`, `git`, `herdr`, `rg`, `sed`) and the language prelude
-are built into the binary; load a wrapper with `IMPORT git` (see `SYNTAX.md`,
+are built into the binary; load a wrapper with `IMPORT : git` (see `SYNTAX.md`,
 "Importing libraries"). `resh libs` lists them.
 
 ### Writing wrappers for your own tools

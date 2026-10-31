@@ -2,12 +2,12 @@
 # `search` returns typed `Match` values, parsed from `path:line:column:text` lines (rg is always
 # run with `--no-heading --line-number --column`); `search raw` returns those lines unparsed. rg exits 1 when nothing matches, which `run` reports as `Err`.
 
-NAMESPACE rg,
+NAMESPACE : rg,
 
-ENUM Match Mode { regex, fixed string, whole word, whole line },
-ENUM Case Mode { smart, sensitive, insensitive },
+ENUM : Match Mode = { regex, fixed string, whole word, whole line },
+ENUM : Case Mode = { smart, sensitive, insensitive },
 
-ENUM Search Option {
+ENUM : Search Option = {
     match (Match Mode),                  # default regex      (--fixed-strings, --word-regexp, --line-regexp)
     case (Case Mode),                    # default smart      (--case-sensitive, --ignore-case)
     invert match,                        # --invert-match
@@ -27,7 +27,7 @@ ENUM Search Option {
 },
 
 ## One arm per option; this is the entire translation to rg's command line.
-FUNCTION (option: Search Option) argument -> List (String) {
+FUNCTION : (option: Search Option) argument -> List (String) = {
     MATCH (option) {
         match (regex) => [],
         match (fixed string) => ["--fixed-strings"],
@@ -54,12 +54,12 @@ FUNCTION (option: Search Option) argument -> List (String) {
 },
 
 ## One matching line. `rg` reports 1-based line and column numbers.
-RECORD Match { path (String), line (Int), column (Int), text (String) },
+RECORD : Match = { path (String), line (Int), column (Int), text (String) },
 
 ## Parses one `path:line:column:text` line into a `Match`; a context line
 ## (`path-line-text`) or a `--` separator has no such shape and gives `[]`.
-FUNCTION (output: String) match -> List (Match) {
-    LET parts : output . split on ":" at most 4,
+FUNCTION : (output: String) match -> List (Match) = {
+    LET (parts) : output . split on ":" at most 4,
     IF (count (parts) . equals 4) THEN (
         MATCH (parts . item 1 . to int) {
             ok (line) => MATCH (parts . item 2 . to int) {
@@ -76,16 +76,16 @@ FUNCTION (output: String) match -> List (Match) {
 
 ## The matching lines as typed values. Context options add lines that are not
 ## matches, so they are dropped here; use `search raw` to see them.
-FUNCTION search (pattern: String) in (dir: String) (options: Set (Search Option)) ->
+FUNCTION : search (pattern: String) in (dir: String) (options: Set (Search Option)) ->
     Result (List (Match))
-{
+= {
     search raw (pattern) in (dir) (options)
         . map _ with : (lines) => flat map (lines) with : (l) => (l) match
 },
 
-FUNCTION search raw (pattern: String) in (dir: String) (options: Set (Search Option)) ->
+FUNCTION : search raw (pattern: String) in (dir: String) (options: Set (Search Option)) ->
     Result (List (String))
-{
+= {
     run ("rg", [
         "--no-heading", "--line-number", "--column",
         *(flat map (options) with : (o) => (o) argument),
@@ -94,11 +94,11 @@ FUNCTION search raw (pattern: String) in (dir: String) (options: Set (Search Opt
         . map _ with : (text) => (text) lines
 },
 
-FUNCTION search (pattern: String) in (dir: String) -> Result (List (Match)) {
+FUNCTION : search (pattern: String) in (dir: String) -> Result (List (Match)) = {
     search (pattern) in (dir) {}
 },
 
-FUNCTION search (pattern: String) -> Result (List (Match)) {
+FUNCTION : search (pattern: String) -> Result (List (Match)) = {
     search (pattern) in "." {}
 }
 

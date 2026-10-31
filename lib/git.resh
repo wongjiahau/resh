@@ -2,17 +2,17 @@
 # `status` lines are `XY path` (porcelain v1), `log` lines are `short-hash subject`, and `diff`
 # is the unified diff text. Nothing here modifies the repository.
 
-NAMESPACE git,
+NAMESPACE : git,
 
-ENUM Untracked Mode { all, normal, hidden },
+ENUM : Untracked Mode = { all, normal, hidden },
 
-ENUM Status Option {
+ENUM : Status Option = {
     untracked (Untracked Mode),          # default normal    (--untracked-files=all | normal | no)
     ignored,                             # --ignored
     branch                               # --branch: first line is `## branch...upstream`
 },
 
-ENUM Log Option {
+ENUM : Log Option = {
     max count (Int),                     # --max-count
     author (String),                     # --author
     message matching (String),           # --grep
@@ -23,7 +23,7 @@ ENUM Log Option {
     first parent                         # --first-parent
 },
 
-ENUM Diff Option {
+ENUM : Diff Option = {
     staged,                              # --cached
     against (String),                    # a revision, e.g. `HEAD~3`
     name only,                           # --name-only
@@ -32,7 +32,7 @@ ENUM Diff Option {
     context (Int)                        # --unified
 },
 
-FUNCTION (option: Status Option) argument -> List (String) {
+FUNCTION : (option: Status Option) argument -> List (String) = {
     MATCH (option) {
         untracked (all) => ["--untracked-files=all"],
         untracked (normal) => [],
@@ -42,7 +42,7 @@ FUNCTION (option: Status Option) argument -> List (String) {
     }
 },
 
-FUNCTION (option: Log Option) argument -> List (String) {
+FUNCTION : (option: Log Option) argument -> List (String) = {
     MATCH (option) {
         max count (n) => ["--max-count", n . to string],
         author (name) => ["--author", name],
@@ -55,7 +55,7 @@ FUNCTION (option: Log Option) argument -> List (String) {
     }
 },
 
-FUNCTION (option: Diff Option) argument -> List (String) {
+FUNCTION : (option: Diff Option) argument -> List (String) = {
     MATCH (option) {
         staged => ["--cached"],
         against (revision) => [revision],
@@ -66,20 +66,20 @@ FUNCTION (option: Diff Option) argument -> List (String) {
     }
 },
 
-FUNCTION (duration: Duration) seconds text -> String { duration . seconds . to string },
+FUNCTION : (duration: Duration) seconds text -> String = { duration . seconds . to string },
 
-FUNCTION status (options: Set (Status Option)) -> Result (List (String)) {
+FUNCTION : status (options: Set (Status Option)) -> Result (List (String)) = {
     run ("git", ["status", "--porcelain=v1", *(flat map (options) with : (o) => (o) argument)])
         . map _ with : (text) => (text) lines
 },
 
-FUNCTION status -> Result (List (String)) {
+FUNCTION : status -> Result (List (String)) = {
     status {}
 },
 
-FUNCTION log (options: Set (Log Option)) touching (paths: List (String)) ->
+FUNCTION : log (options: Set (Log Option)) touching (paths: List (String)) ->
     Result (List (String))
-{
+= {
     run ("git", [
         "log", "--format=%h %s",
         *(flat map (options) with : (o) => (o) argument),
@@ -88,23 +88,23 @@ FUNCTION log (options: Set (Log Option)) touching (paths: List (String)) ->
         . map _ with : (text) => (text) lines
 },
 
-FUNCTION log (options: Set (Log Option)) -> Result (List (String)) {
+FUNCTION : log (options: Set (Log Option)) -> Result (List (String)) = {
     log (options) touching []
 },
 
-FUNCTION log -> Result (List (String)) {
+FUNCTION : log -> Result (List (String)) = {
     log {} touching []
 },
 
-FUNCTION diff (options: Set (Diff Option)) touching (paths: List (String)) -> Result (String) {
+FUNCTION : diff (options: Set (Diff Option)) touching (paths: List (String)) -> Result (String) = {
     run ("git", ["diff", *(flat map (options) with : (o) => (o) argument), "--", *paths])
 },
 
-FUNCTION diff (options: Set (Diff Option)) -> Result (String) {
+FUNCTION : diff (options: Set (Diff Option)) -> Result (String) = {
     diff (options) touching []
 },
 
-FUNCTION diff -> Result (String) {
+FUNCTION : diff -> Result (String) = {
     diff {} touching []
 }
 

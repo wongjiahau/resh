@@ -23,8 +23,10 @@
   the grouping; `src/parser.rs` only reads the tree it returns. It flattens each
   call into its name words and arguments (`flatten`, `Flat::Word` /
   `Flat::Arg`) and recognises resh's own forms by their exact call shape
-  (`IF _ THEN _ ELSE _`, `MATCH _ _`, `_ AS _`, `_ => _`, ...). It never searches
-  a call for keywords or splits one call into several expressions.
+  (`IF _ THEN _ ELSE _`, `MATCH _ _`, `_ AS _`, `_ => _`, ...). Declarations
+  are `KEYWORD : thing` with `thing` a fixed shape too (`FUNCTION _` of
+  `_ -> _ = _`). It never searches a call for keywords, takes a keyword off the
+  front of a name, or splits one call into several expressions.
 - A bare word is always part of a call's name, never a value: the checker only
   lets arguments fill slots, so a variable is written `(n) to string`.
 - A new construct is a new keyword or shape read from that tree. Don't add

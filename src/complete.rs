@@ -102,7 +102,8 @@ impl Completions {
                 .map(|(_, w)| w);
             return (start + ns.len() + 1, pool.map_or(vec![], |p| keep(p, rest)));
         }
-        if before[..start].trim_end().ends_with("IMPORT") {
+        let keyword = before[..start].trim_end();
+        if keyword.ends_with("IMPORT") || keyword.ends_with("IMPORT :") {
             return (start, keep(&self.libraries, word));
         }
         (start, keep(&self.global, word))
@@ -150,7 +151,7 @@ mod tests {
     fn session() -> Completions {
         let mut s = Session::new();
         s.set_library_dir(None);
-        s.run("IMPORT rg").unwrap();
+        s.run("IMPORT : rg").unwrap();
         Completions::of(&s)
     }
 
@@ -181,8 +182,8 @@ mod tests {
     #[test]
     fn completes_library_names_after_import() {
         let c = session();
-        let (start, got) = c.candidates("IMPORT g", 8);
-        assert_eq!(start, 7);
+        let (start, got) = c.candidates("IMPORT : g", 10);
+        assert_eq!(start, 9);
         assert_eq!(got, ["git"]);
     }
 }

@@ -5,7 +5,7 @@ description: Write a typed resh wrapper (a `.resh` library) for an existing CLI 
 
 A wrapper is a `.resh` library with one `NAMESPACE`, typed options as `ENUM`s,
 and functions that build an argv and call the `run` primitive. Users load it
-with `IMPORT <name>`. This skill makes new ones in the same shape as the
+with `IMPORT : <name>`. This skill makes new ones in the same shape as the
 bundled ones. It needs the `resh` binary on `PATH`.
 
 ## Steps
@@ -26,10 +26,10 @@ bundled ones. It needs the `resh` binary on `PATH`.
    `--json`, `-z`, …), always pass them, and document the output shape in the
    header comment.
 3. **Design the surface.**
-   - One `ENUM <Command> Option` per command, one member per flag, named as a
+   - One `ENUM : <Command> Option` per command, one member per flag, named as a
      readable phrase (`include hidden file`, not `H`). Alternatives that exclude
      each other are one variant carrying an enum.
-   - A `FUNCTION (option: <Command> Option) argument -> List (String) { ... }` that maps each
+   - A `FUNCTION : (option: <Command> Option) argument -> List (String) = { ... }` that maps each
      member to argv with `MATCH`.
    - One function per command that takes `Set (<Command> Option)` and returns
      `Result (T)`; parse stdout into typed values (`lines`, records) where the
@@ -43,17 +43,17 @@ bundled ones. It needs the `resh` binary on `PATH`.
    and never invoke it while testing.
 5. **Write it** to `<user library directory>/<tool>.resh`, where the directory is
    the one `resh libs` prints (`~/.config/resh/lib` by default), unless the user
-   names another path. The file must start with `NAMESPACE <tool>`; the file name
+   names another path. The file must start with `NAMESPACE : <tool>`; the file name
    and namespace must match, or `IMPORT` rejects it.
 6. **Check it.** Run `resh check <file>`. It type-checks without running anything.
    Diagnostics list the call site, the inferred types and every candidate
    signature; fix what they say and re-run until it exits 0. Then confirm it loads:
-   `resh -c 'IMPORT <tool>'`. If a needed language feature is missing, say so
+   `resh -c 'IMPORT : <tool>'`. If a needed language feature is missing, say so
    rather than working around it with something unidiomatic.
-7. **Smoke-test read-only commands** with `resh -c 'IMPORT <tool>, <tool>.<command> ...'`
+7. **Smoke-test read-only commands** with `resh -c 'IMPORT : <tool>, <tool>.<command> ...'`
    only when running them is harmless.
 8. **Report** the namespace, the commands covered, what was left out on purpose,
-   how to use it (`IMPORT <tool>`) and any language gaps hit.
+   how to use it (`IMPORT : <tool>`) and any language gaps hit.
 
 ## Working inside the resh repository
 

@@ -6,15 +6,15 @@ otherwise.
 ## Quick start
 
 ```
-$ resh -c 'IMPORT git, git.status'          # run one snippet
+$ resh -c 'IMPORT : git, git.status'          # run one snippet
 $ resh                                         # a REPL; :symbols lists what is available
 $ resh run script.resh                         # run a file
 $ resh run script.resh --raw                   # plain text instead of `ok ("...")`
 ```
 
 ```
-IMPORT git,
-LET recent : git.log { max count 3 },        # ok ([...]) or error ("...")
+IMPORT : git,
+LET (recent) : git.log { max count 3 },        # ok ([...]) or error ("...")
 recent,
 git.{ diff { staged } },                    # a scope block: names of `git` unqualified
 ```
@@ -56,8 +56,8 @@ the calls a meaning.
   drops it and returns `Unit`.
 
 ```
-LET files : list file in "src",
-FUNCTION answer -> Int { LET x : 41, x },
+LET (files) : list file in "src",
+FUNCTION : answer -> Int = { LET (x) : 41, x },
 answer,
 ```
 
@@ -122,14 +122,14 @@ IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ## Namespaces
 
 ```
-NAMESPACE git,
+NAMESPACE : git,
 
-RECORD Commit { hash (String), message (String) },
+RECORD : Commit = { hash (String), message (String) },
 
-FUNCTION commit (message: String) -> Result (Commit) { ... }
+FUNCTION : commit (message: String) -> Result (Commit) = { ... }
 ```
 
-- `NAMESPACE name` applies file-wide: it must come first in the file, and every
+- `NAMESPACE : name` applies file-wide: it must come first in the file, and every
   declaration in the file belongs to it. One namespace per file. Members do not
   repeat the prefix.
 - Namespaces are written with `.`: `git.commit "x"` is the call `commit _` of
@@ -142,9 +142,9 @@ FUNCTION commit (message: String) -> Result (Commit) { ... }
 - A function that starts with a slot is qualified the same way:
   `fd.(option) argument`.
 - A qualified type is `git.Commit`. After `->`, put it in parentheses,
-  `-> (git.Commit) { ... }`, since `.` would otherwise take the whole
+  `-> (git.Commit) = { ... }`, since `.` would otherwise take the whole
   signature as its left side.
-- Namespaces do not nest: a file has one `NAMESPACE name` (a single word), so
+- Namespaces do not nest: a file has one `NAMESPACE : name` (a single word), so
   `a.b.c d` is a type error. Use flat anyfix names
   (`git.remote add (name) (url)`). See the README objective
   "Readable shell commands".
@@ -183,14 +183,14 @@ rg.{
 
 ## Importing libraries
 
-`IMPORT name` loads the wrapper library `name`, so its namespace can be used:
+`IMPORT : name` loads the wrapper library `name`, so its namespace can be used:
 
 ```
-IMPORT git,
+IMPORT : git,
 git.status,
 ```
 
-- A library is a `.resh` file that starts with `NAMESPACE name`. `resh` looks
+- A library is a `.resh` file that starts with `NAMESPACE : name`. `resh` looks
   for `name.resh` in the user library directory first (`$RESH_LIB_DIR`, else
   `$XDG_CONFIG_HOME/resh/lib`, else `~/.config/resh/lib`), then among the
   libraries bundled in the binary (`fd`, `git`, `herdr`, `rg`, `sed`). A user
@@ -211,8 +211,8 @@ When the REPL starts it runs the init file, if it exists: `$RESH_INIT`, else
 tab completion):
 
 ```
-IMPORT git,
-IMPORT rg,
+IMPORT : git,
+IMPORT : rg,
 ```
 
 Its results are not printed, and an error in it is reported without stopping the
@@ -220,9 +220,9 @@ REPL. `resh run`, `resh check` and `resh -c` do not read it.
 
 ## Let bindings
 
-`LET name : value` binds a single-word name. `:` binds loosest, so the value
-may be a whole pipeline: `LET n : files . count _`. A type may be stated with
-`LET (name : Type) : value`, which means `LET name : (value) AS (Type)`.
+`LET (name) : value` binds a single-word name. `:` binds loosest, so the value
+may be a whole pipeline: `LET (n) : files . count _`. A type may be stated with
+`LET (name : Type) : value`, which means `LET (name) : (value) AS (Type)`.
 
 `(value) AS (Type)` states the type an expression must fit anywhere, e.g. to
 give a record literal its record: `f ({ x 1 } AS (Apple))`.
@@ -239,10 +239,20 @@ in parentheses.
 | `IF (c) THEN (a) ELSE (b)` | `IF _ THEN _ ELSE _` |
 | `MATCH (value) { arms }`, `value . MATCH { arms }` | `MATCH _ _`, `_ MATCH _` |
 | `(value) AS (Type)` | `_ AS _` |
-| `LET name : value`, `LET (name : Type) : value` | `LET name _`, `LET _ _` |
+| `LET (name) : value`, `LET (name : Type) : value` | `LET _ _` |
 | `(param) => body`, `pattern => body` | `_ => _` |
 | `*list` | `* _` |
-| `(Type DEFAULT value)` in a field slot | a type followed by `DEFAULT _` |
+| `(Type . DEFAULT value)` in a field slot | `_ DEFAULT _` |
+| `FUNCTION : signature -> Type = { body }` | `FUNCTION _` of `_ -> _ = _` |
+| `FUNCTION : signature = { body }` (returns `Unit`) | `FUNCTION _` of `_ = _` |
+| `RECORD : Name = { fields }`, `ENUM : Name = { variants }` | `RECORD _`, `ENUM _` of `_ = _` |
+| `TYPE : Name (T) = Type` | `TYPE _` of `_ = _` |
+| `NAMESPACE : name`, `IMPORT : name` | `NAMESPACE _`, `IMPORT _` |
+
+A declaration is `KEYWORD : thing`, and `thing` has its own fixed shape, so no
+keyword is ever taken off the front of a name. A qualified return type goes in
+parentheses, `-> (git.Commit) = { ... }`, since `.` would otherwise take
+everything before it.
 
 ## Conditionals and MATCH
 
@@ -260,7 +270,7 @@ the keyword or from `.`: `option . MATCH { ... }`. Patterns are described in
 
 ## Type aliases
 
-`TYPE Result (T) = Result (T) Or (String)` gives a shorter name to a type. The
+`TYPE : Result (T) = Result (T) Or (String)` gives a shorter name to a type. The
 left side is an anyfix pattern whose slots are single capital letters; the right
 side is any type, which may use those letters. `Result (_)` and `Result (_) Or (_)`
 are different identifiers, so both exist: the prelude declares the first as the
@@ -275,10 +285,10 @@ it declares the same field; the parenthesized form is the norm. Field words are
 lowercase.
 
 ```
-RECORD Server Config {
-    host (String DEFAULT "localhost"),
-    port (Int DEFAULT 8080),
-    timeout (Duration DEFAULT (30 seconds))
+RECORD : Server Config = {
+    host (String . DEFAULT "localhost"),
+    port (Int . DEFAULT 8080),
+    timeout (Duration . DEFAULT (30 seconds))
 }
 ```
 
@@ -288,7 +298,7 @@ RECORD Server Config {
   `true`: `{ verbose }` means `{ verbose (true) }`. (Optional flags belong in a
   `Set (E)`; see below.)
 - A slot may carry `DEFAULT value`, where the value is one item:
-  `(Boolean DEFAULT (false))`, `(Int DEFAULT 8080)`. Each slot of a multi-slot field has its own
+  `(Boolean . DEFAULT (false))`, `(Int . DEFAULT 8080)`. Each slot of a multi-slot field has its own
   default.
 - A field may be omitted in a literal only if every slot has a `DEFAULT`.
   There are no optional fields, so destructuring always sees every field.
@@ -349,7 +359,7 @@ MATCH (config) {
 - Outside the file's namespace, a variant value is qualified like any call:
   `{ match (fd.glob) }`, or unqualified inside a scope block
   `fd.{ ... { match (glob) } ... }`. Patterns inside the file are unqualified.
-- A function's return type may start on the line after `->`, and the `{` on
+- A function's return type may start on the line after `->`, and `= {` on
   the line after the type.
 
 ## Sets
@@ -359,7 +369,7 @@ once. It is the way to take optional, order-independent flags: absence is the
 natural state, so there is no `Option`, no sentinel default and no `some`.
 
 ```
-ENUM Find Option {
+ENUM : Find Option = {
     include hidden file,
     extension (List (String)),
     max depth (Int),
@@ -430,7 +440,7 @@ parentheses inside the slot (this is how `run` is declared below). The
 components are bound as variables in the body:
 
 ```
-FUNCTION run ((command: String, args: List (String))) -> ... { ... }
+FUNCTION : run ((command: String, args: List (String))) -> ... = { ... }
 ```
 
 - A tuple has two or more components; `(x)` is just parentheses.
@@ -473,9 +483,9 @@ List literals accept `*` to splice a list in place:
 A unit is an ordinary suffix function. There is no special syntax.
 
 ```
-FUNCTION (n: Int) kb -> Size { ... },
-FUNCTION (n: Int) mb -> Size { ... },
-FUNCTION (n: Int) days -> Duration { ... }
+FUNCTION : (n: Int) kb -> Size = { ... },
+FUNCTION : (n: Int) mb -> Size = { ... },
+FUNCTION : (n: Int) days -> Duration = { ... }
 ```
 
 `Size` (held in bytes, decimal: `1 kb` = 1000) and `Duration` (held in seconds)
@@ -517,7 +527,7 @@ Wrappers around existing CLI tools are written in resh itself, on top of a
 single primitive:
 
 ```
-FUNCTION run ((command: String, args: List (String))) -> Result (String) { NATIVE "run" }
+FUNCTION : run ((command: String, args: List (String))) -> Result (String) = { NATIVE "run" }
 ```
 
 Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
@@ -537,16 +547,16 @@ Stdout is returned as `Ok`; stderr and the exit code as `Err`. Precisely:
 A wrapper builds a `List (String)` from its typed options and calls `run`:
 
 ```
-NAMESPACE fd,
+NAMESPACE : fd,
 
-ENUM Find Option {
+ENUM : Find Option = {
     include hidden file,
     extension (String),
     max depth (Int),
     exclude (List (String))
 },
 
-FUNCTION (option: Find Option) argument -> List (String) {
+FUNCTION : (option: Find Option) argument -> List (String) = {
     MATCH (option) {
         include hidden file => ["--hidden"],
         extension (e) => ["--extension", e],
@@ -555,9 +565,9 @@ FUNCTION (option: Find Option) argument -> List (String) {
     }
 },
 
-FUNCTION find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
+FUNCTION : find (pattern: String) in (dir: String) (options: Set (Find Option)) ->
     Result (List (String))
-{
+= {
     run ("fd", [*(flat map (options) with : (o) => (o) argument), pattern, dir])
         . map _ with : (text) => (text) lines
 }
@@ -573,11 +583,11 @@ fd.find "" in "src" { extension ["rs"], max depth 3 },
 
 A wrapper is a library (see "Importing libraries") for one CLI tool. Put it in
 `name.resh` in the user library directory (`resh libs` prints it), starting with
-`NAMESPACE name`. Look at `resh libs show git` and `resh libs show fd` for the
-shape: an `ENUM` of options, a `FUNCTION (option: ...) argument -> List (String)`
+`NAMESPACE : name`. Look at `resh libs show git` and `resh libs show fd` for the
+shape: an `ENUM` of options, a `FUNCTION : (option: ...) argument -> List (String)`
 that maps each option to argv, and one function per command that calls `run`.
 `##` comments above declarations are their docs (shown by `:symbols`). Check it
-with `resh check name.resh`, then use it with `IMPORT name`. `resh skill install`
+with `resh check name.resh`, then use it with `IMPORT : name`. `resh skill install`
 installs a Claude Code skill that writes wrappers for you.
 
 Wrappers run the tool in resh's current directory. Change it with
@@ -597,10 +607,10 @@ the declared ones.
 line between) are its docs, and `:symbols` shows them. In the REPL a
 comment-only `##` line waits for the declaration below it. `NAMESPACE` applies per
 REPL entry, so put it on the same line as the declaration:
-`NAMESPACE demo, ENUM Mode { fast, slow }`.
+`NAMESPACE : demo, ENUM : Mode = { fast, slow }`.
 
 ```
-resh> NAMESPACE demo, ENUM Mode { fast, slow }
+resh> NAMESPACE : demo, ENUM : Mode = { fast, slow }
 resh> :symbols
 namespaces
   prelude
@@ -613,7 +623,7 @@ demo
 ```
 
 ```
-$ printf 'NAMESPACE demo, ENUM Mode { fast, slow }\n:symbols demo\n' | resh --json
+$ printf 'NAMESPACE : demo, ENUM : Mode = { fast, slow }\n:symbols demo\n' | resh --json
 {"namespace":"demo","symbols":[{"kind":"enum","name":"Mode","doc":null,"members":[{"signature":"fast","defaults":[]},{"signature":"slow","defaults":[]}],"returns":null}]}
 ```
 
