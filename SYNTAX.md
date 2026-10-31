@@ -133,18 +133,22 @@ FUNCTION (commit (message: String)) RETURNS (Result (Commit)) { ... }
 - `NAMESPACE : name` applies file-wide: it must come first in the file, and every
   declaration in the file belongs to it. One namespace per file. Members do not
   repeat the prefix.
-- Namespaces are written with `.`: `git.commit "x"` is the call `commit _` of
-  namespace `git`, because `.` hands `git` to the call's first slot. A
-  variable with the same name wins over the namespace.
+- A namespace qualifies a call by sitting in its first slot: `git.commit "x"`
+  is sugar for `(git) commit "x"`, the call `_ commit _` whose first argument
+  is the namespace `git`. A variable with the same name wins over the
+  namespace.
 - Everything can be namespaced: functions, types, enums, records.
 - Outside the namespace, names are qualified. Inside the file, they resolve
   unqualified.
 - There is no file-level `USE`; callers qualify, or open a scope block (below).
-- A function that starts with a slot is qualified the same way:
-  `fd.(option) argument`.
-- A qualified type is `git.Commit`, e.g. `RETURNS (git.Commit) { ... }`.
+- A function that starts with a slot is qualified the same way, with the
+  namespace in a new slot before it: `fd.(option) argument` is the call
+  `_ _ argument`.
+- A qualified type also has the namespace in its first slot: `git.Commit` is
+  `(git) Commit`, e.g. `RETURNS (git.Commit) { ... }`.
 - Namespaces do not nest: a file has one `NAMESPACE : name` (a single word), so
-  `a.b.c d` is a type error. Use flat anyfix names
+  a qualified call cannot qualify another. `a.b.c d` is the call `_ c d` whose
+  first slot is `(a) b`, a type error. Use flat anyfix names
   (`git.remote add (name) (url)`). See the README objective
   "Readable shell commands".
 - Unqualified calls and types in a file see the prelude and that file's own
@@ -158,8 +162,8 @@ LET (c : git.Commit) : ...,
 
 ### Scope blocks
 
-`ns.{ statements }` opens `ns` for the statements inside: its functions,
-variants and types are written unqualified.
+`ns.{ statements }`, sugar for `(ns) { statements }`, opens `ns` for the
+statements inside: its functions, variants and types are written unqualified.
 
 ```
 rg.{
@@ -279,7 +283,8 @@ IF (n . equals 0) THEN "zero" ELSE : IF (n . equals 1) THEN "one" ELSE : "many"
 ```
 
 `MATCH (value) { pattern : result, ... }` takes the value to match either after
-the keyword or from `.`: `option . MATCH { ... }`. Patterns are described in
+the keyword or before it: `(option) MATCH { ... }`, usually written
+`option . MATCH { ... }`. Patterns are described in
 "Enum variants and patterns" and "Destructuring".
 
 ## Type aliases

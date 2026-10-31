@@ -13,8 +13,9 @@ serve this goal.
 
 - **Readable shell commands.** Calls read like plain phrases (anyfix names,
   `list file in (dir)`), not flag soup or terse abbreviations. Features such as
-  namespaces serve this goal: they group wrapped CLI tools (`git.commit`), and
-  deeply chained forms like `a.b.c` are valid but not the intended style.
+  namespaces serve this goal: they group wrapped CLI tools (`git.commit "x"`).
+  Namespaces do not nest; wrappers use flat anyfix names instead
+  (`git.remote add (name) (url)`).
 - **Readability over writeability.** Code is read far more than it is typed,
   and agents write most of it. When the two conflict, choose the form that
   reads clearer, even if it is longer to type.
