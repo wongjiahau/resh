@@ -338,9 +338,17 @@ mod qualifiers {
     }
 
     /// Renders the parse tree of an expression with every argument that is a
-    /// call parenthesised: `git.commit "x"` becomes `(git) commit "x"`.
+    /// call parenthesised: `a.b c` becomes `(a) b c`, and `git -> commit "x"`
+    /// becomes `git -> (commit "x")`.
     fn shape(e: &Expr) -> String {
         match &e.k {
+            ExprKind::Qualified { namespace, call } => format!(
+                "{namespace} -> ({})",
+                shape(&Expr {
+                    k: ExprKind::Seq(call.clone()),
+                    span: e.span,
+                })
+            ),
             ExprKind::Seq(items) => items
                 .iter()
                 .map(|i| match i {
@@ -388,16 +396,16 @@ mod qualifiers {
     #[test]
     fn qualified_function_call() {
         assert_eq!(
-            shape(&only_expr(r#"git.commit "x","#)),
-            r#"(git) commit "x""#
+            shape(&only_expr(r#"git -> commit "x","#)),
+            r#"git -> (commit "x")"#
         );
     }
 
     #[test]
-    fn qualifier_fills_the_first_slot_of_the_whole_call() {
+    fn qualifier_takes_the_whole_call() {
         assert_eq!(
-            shape(&only_expr(r#"fd.find "" in "src" {},"#)),
-            r#"(fd) find "" in "src" {}"#
+            shape(&only_expr(r#"fd -> find "" in "src" {},"#)),
+            r#"fd -> (find "" in "src" {})"#
         );
     }
 
@@ -407,13 +415,16 @@ mod qualifiers {
     }
 
     #[test]
-    fn qualified_infix_call_puts_the_qualifier_first() {
-        assert_eq!(shape(&only_expr("fd.(x) argument,")), "(fd) (x) argument");
+    fn qualified_call_may_start_with_a_slot() {
+        assert_eq!(
+            shape(&only_expr("fd -> (x) argument,")),
+            "fd -> ((x) argument)"
+        );
     }
 
     #[test]
     fn qualified_type_in_let_annotation() {
-        let (value, ty) = only_let_ascription("LET (c : git.Commit) : make commit,");
+        let (value, ty) = only_let_ascription("LET (c : git -> Commit) : make commit,");
         assert_eq!(ty.qualifiers, vec!["git".to_string()]);
         assert_eq!(ty.name, "Commit");
         assert!(ty.args.is_empty());
@@ -422,7 +433,7 @@ mod qualifiers {
 
     #[test]
     fn qualified_type_inside_a_type_slot() {
-        let (_, ty) = only_let_ascription("LET (c : List (git.Commit)) : x,");
+        let (_, ty) = only_let_ascription("LET (c : List (git -> Commit)) : x,");
         assert_eq!(ty.name, "List _");
         assert_eq!(ty.args[0].qualifiers, vec!["git".to_string()]);
         assert_eq!(ty.args[0].name, "Commit");
@@ -430,7 +441,7 @@ mod qualifiers {
 
     #[test]
     fn qualified_type_in_signature() {
-        let items = parse("FUNCTION (show (c: git.Commit)) RETURNS (git.Commit) { c }");
+        let items = parse("FUNCTION (show (c: git -> Commit)) RETURNS (git -> Commit) { c }");
         let [Item::Decl(Decl::Function { ret, .. })] = items.as_slice() else {
             panic!("expected one function");
         };
@@ -456,14 +467,14 @@ mod qualifiers {
 
     #[test]
     fn checker_reports_unknown_namespace() {
-        let d = check_err(r#"git.commit "x","#);
+        let d = check_err(r#"git -> commit "x","#);
         assert!(
             d.msg
                 .contains("unknown namespace `git`; declared namespaces: none"),
             "{}",
             d.msg
         );
-        let d = check_err("FUNCTION (show (c: git.Commit)) RETURNS (Int) { 1 }");
+        let d = check_err("FUNCTION (show (c: git -> Commit)) RETURNS (Int) { 1 }");
         assert!(d.msg.contains("unknown namespace `git`"), "{}", d.msg);
     }
 }
@@ -506,10 +517,10 @@ FUNCTION (find (pattern: String)) RETURNS (Int) { helper . equals 41 . IF _ THEN
     fn other_file_calls_namespaced_function_qualified() {
         let mut s = session_with_fd();
         assert_eq!(
-            s.run(r#"fd.find "a" in "b","#).unwrap(),
+            s.run(r#"fd -> find "a" in "b","#).unwrap(),
             vec![Value::Str("ab".into())]
         );
-        assert_eq!(s.run(r#"fd.find "a","#).unwrap(), vec![Value::Int(1)]);
+        assert_eq!(s.run(r#"fd -> find "a","#).unwrap(), vec![Value::Int(1)]);
     }
 
     #[test]
@@ -517,7 +528,7 @@ FUNCTION (find (pattern: String)) RETURNS (Int) { helper . equals 41 . IF _ THEN
         let mut s = session_with_fd();
         let msg = err(&mut s, r#"find "a" in "b","#);
         assert!(msg.contains("declared in namespace `fd`"), "{msg}");
-        assert!(msg.contains(r#"`fd.find "#), "{msg}");
+        assert!(msg.contains(r#"`fd -> find "#), "{msg}");
         // `helper` has no parameters: same hint for a bare word.
         let msg = err(&mut s, "helper,");
         assert!(msg.contains("declared in namespace `fd`"), "{msg}");
@@ -526,7 +537,7 @@ FUNCTION (find (pattern: String)) RETURNS (Int) { helper . equals 41 . IF _ THEN
     #[test]
     fn names_inside_the_file_resolve_unqualified_and_qualified() {
         let mut s = Session::new();
-        let src = format!("{FD}\nfind \"a\",\nfd.find \"a\",");
+        let src = format!("{FD}\nfind \"a\",\nfd -> find \"a\",");
         assert_eq!(s.run(&src).unwrap(), vec![Value::Int(1), Value::Int(1)]);
     }
 
@@ -534,10 +545,10 @@ FUNCTION (find (pattern: String)) RETURNS (Int) { helper . equals 41 . IF _ THEN
     fn namespaced_types_are_referenced_qualified_from_outside() {
         let mut s = session_with_fd();
         let src = r#"
-FUNCTION (show (m: fd.Mode)) RETURNS (Int) { 1 },
-LET (m : fd.Mode) : fd.regex,
+FUNCTION (show (m: fd -> Mode)) RETURNS (Int) { 1 },
+LET (m : fd -> Mode) : fd -> regex,
 show (m),
-fd.name (m),
+fd -> name (m),
 "#;
         assert_eq!(
             s.run(src).unwrap(),
@@ -550,7 +561,7 @@ fd.name (m),
     #[test]
     fn unknown_namespace_lists_the_declared_ones() {
         let mut s = session_with_fd();
-        let msg = err(&mut s, r#"git.find "a","#);
+        let msg = err(&mut s, r#"git -> find "a","#);
         assert!(msg.contains("unknown namespace `git`"), "{msg}");
         assert!(msg.contains("declared namespaces: fd"), "{msg}");
     }
@@ -558,16 +569,35 @@ fd.name (m),
     #[test]
     fn qualified_call_only_sees_that_namespace() {
         let mut s = session_with_fd();
-        let msg = err(&mut s, r#"fd.count [1],"#);
+        let msg = err(&mut s, r#"fd -> count [1],"#);
         assert!(msg.contains("no function matches"), "{msg}");
         assert!(msg.contains("in namespace `fd`"), "{msg}");
     }
 
     #[test]
+    fn a_namespace_in_a_slot_points_to_the_arrow() {
+        let mut s = session_with_fd();
+        let msg = err(&mut s, r#"fd.find "a","#);
+        assert!(msg.contains("`fd` is a namespace, not a value"), "{msg}");
+        assert!(msg.contains(r#"`fd -> find "a"`"#), "{msg}");
+    }
+
+    #[test]
+    fn the_left_of_the_arrow_is_a_namespace_name() {
+        let mut s = session_with_fd();
+        let msg = err(&mut s, r#"LET (x) : 1, x .-> find "a","#);
+        assert!(msg.contains("unknown namespace `x`"), "{msg}");
+        let msg = err(&mut s, r#"(1) -> find "a","#);
+        assert!(msg.contains("a single lowercase word"), "{msg}");
+    }
+
+    #[test]
     fn namespaces_do_not_nest() {
         let mut s = session_with_fd();
-        let msg = err(&mut s, r#"fd.git.find "a","#);
-        assert!(msg.contains("namespaces are not nested"), "{msg}");
+        let msg = err(&mut s, r#"fd -> git -> find "a","#);
+        assert!(msg.contains("Namespaces do not nest"), "{msg}");
+        let msg = err(&mut s, r#"fd .-> git .-> find "a","#);
+        assert!(msg.contains("namespaces do not nest"), "{msg}");
     }
 
     #[test]
@@ -588,7 +618,7 @@ fd.name (m),
         let mut s = Session::new();
         s.run("# header\n\nNAMESPACE : fd,\nFUNCTION (one) RETURNS (Int) { 1 }")
             .unwrap();
-        assert_eq!(s.run("fd.one,").unwrap(), vec![Value::Int(1)]);
+        assert_eq!(s.run("fd -> one,").unwrap(), vec![Value::Int(1)]);
     }
 
     #[test]
@@ -599,7 +629,7 @@ fd.name (m),
         s.run("NAMESPACE : b,\nFUNCTION (one) RETURNS (Int) { 2 }")
             .unwrap();
         assert_eq!(
-            s.run("a.one,\nb.one,").unwrap(),
+            s.run("a -> one,\nb -> one,").unwrap(),
             vec![Value::Int(1), Value::Int(2)]
         );
     }
@@ -1370,14 +1400,14 @@ FUNCTION (find (pattern: String) in (dir: String) (options: Set (Find Option))) 
     #[test]
     fn size_at_least_one_mb_type_checks() {
         let v = session()
-            .run(r#"fd.find "" in "." { size at least : 1 mb },"#)
+            .run(r#"fd -> find "" in "." { size at least : 1 mb },"#)
             .unwrap_or_else(|d| panic!("{d}"));
         assert_eq!(v, vec![Value::Int(1)]);
     }
 
     #[test]
     fn size_at_least_five_days_is_a_type_error() {
-        let msg = match session().run(r#"fd.find "" in "." { size at least : 5 days },"#) {
+        let msg = match session().run(r#"fd -> find "" in "." { size at least : 5 days },"#) {
             Ok(v) => panic!("expected an error, got {v:?}"),
             Err(d) => d.msg,
         };
@@ -1387,10 +1417,10 @@ FUNCTION (find (pattern: String) in (dir: String) (options: Set (Find Option))) 
     #[test]
     fn duration_units_fit_duration_slots() {
         session()
-            .run(r#"fd.find "" in "." { changed within : 2 hours, max depth 1 },"#)
+            .run(r#"fd -> find "" in "." { changed within : 2 hours, max depth 1 },"#)
             .unwrap_or_else(|d| panic!("{d}"));
         session()
-            .run(r#"fd.find "" in "." { changed within : 3 days . ago },"#)
+            .run(r#"fd -> find "" in "." { changed within : 3 days . ago },"#)
             .unwrap_or_else(|d| panic!("{d}"));
     }
 
@@ -1571,13 +1601,13 @@ mod fd_example {
 
     #[test]
     fn usage_plain() {
-        assert_eq!(argv(r#"fd.find "main","#), strs(&["--", "main", "."]));
+        assert_eq!(argv(r#"fd -> find "main","#), strs(&["--", "main", "."]));
     }
 
     #[test]
     fn usage_extension_and_depth() {
         assert_eq!(
-            argv(r#"fd.find "" in "src" { extension ["rs", "toml"], max depth 3 },"#),
+            argv(r#"fd -> find "" in "src" { extension ["rs", "toml"], max depth 3 },"#),
             strs(&[
                 "--extension",
                 "rs",
@@ -1596,7 +1626,7 @@ mod fd_example {
     fn usage_kind_size_duration() {
         assert_eq!(
             argv(
-                r#"fd.find "test" in "." { kind (file), size at least : 1 mb, changed within : 7 days },"#
+                r#"fd -> find "test" in "." { kind (file), size at least : 1 mb, changed within : 7 days },"#
             ),
             strs(&[
                 "--type",
@@ -1616,7 +1646,7 @@ mod fd_example {
     fn usage_glob_hidden_exclude() {
         assert_eq!(
             argv(
-                r#"fd.find "*.log" in "/var" { match : fd.glob, include hidden file, exclude ["old"] },"#
+                r#"fd -> find "*.log" in "/var" { match : fd -> glob, include hidden file, exclude ["old"] },"#
             ),
             strs(&[
                 "--glob",
@@ -1634,7 +1664,7 @@ mod fd_example {
     fn scope_block_takes_unqualified_variants() {
         assert_eq!(
             argv(
-                r#"fd.{ find "*.log" in "/var" { match (glob), include hidden file, exclude ["old"] }, }"#
+                r#"fd -> { find "*.log" in "/var" { match (glob), include hidden file, exclude ["old"] }, }"#
             ),
             strs(&[
                 "--glob",
@@ -1651,7 +1681,7 @@ mod fd_example {
     #[test]
     fn result_is_lines_of_stdout() {
         let (mut s, _) = session(Ok("a.rs\nb.rs\n"));
-        let v = s.run(r#"fd.find "x","#).unwrap();
+        let v = s.run(r#"fd -> find "x","#).unwrap();
         let list = Value::List(vec![Value::Str("a.rs".into()), Value::Str("b.rs".into())]);
         assert_eq!(v, vec![Value::Variant("Result".into(), 0, vec![list])]);
     }
@@ -1659,7 +1689,7 @@ mod fd_example {
     #[test]
     fn error_is_passed_through() {
         let (mut s, _) = session(Err("boom"));
-        let v = s.run(r#"fd.find "x","#).unwrap();
+        let v = s.run(r#"fd -> find "x","#).unwrap();
         assert_eq!(
             v,
             vec![Value::Variant(
@@ -1674,19 +1704,19 @@ mod fd_example {
     fn bad_calls_are_type_errors() {
         let (mut s, _) = session(Ok(""));
         let e = s
-            .run(r#"fd.find "" in "." { max depth 1, max depth 2 },"#)
+            .run(r#"fd -> find "" in "." { max depth 1, max depth 2 },"#)
             .unwrap_err();
         assert!(e.msg.contains("max depth"), "{}", e.msg);
         let e = s
-            .run(r#"fd.find "" in "." { case : fd.sensitive, case : fd.insensitive },"#)
+            .run(r#"fd -> find "" in "." { case : fd -> sensitive, case : fd -> insensitive },"#)
             .unwrap_err();
         assert!(e.msg.contains("case"), "{}", e.msg);
         let e = s
-            .run(r#"fd.find "" in "." { size at least : 5 days },"#)
+            .run(r#"fd -> find "" in "." { size at least : 5 days },"#)
             .unwrap_err();
         assert!(e.msg.contains("Size"), "{}", e.msg);
         let e = s.run(r#"find "x","#).unwrap_err();
-        assert!(e.msg.contains("fd."), "{}", e.msg);
+        assert!(e.msg.contains("fd -> "), "{}", e.msg);
     }
 
     #[test]
@@ -1750,7 +1780,7 @@ mod rg_example {
         let (mut s, _) = session(Ok(
             "a.rs-1-ctx: with:colons\na.rs:2:5:let x: i32 = 1;\n--\nb.rs:10:1:fn main() {}\n",
         ));
-        let out = s.run(r#"rg.search "x","#).unwrap();
+        let out = s.run(r#"rg -> search "x","#).unwrap();
         let shown = s.render(&out[0], false);
         assert!(
             shown.contains("line 2,") && shown.contains("column 5,"),
@@ -1763,19 +1793,22 @@ mod rg_example {
     #[test]
     fn search_raw_keeps_every_line() {
         let (mut s, _) = session(Ok("a.rs-1-ctx\na.rs:2:5:x\n"));
-        let out = s.run(r#"rg.search raw "x" in "." {},"#).unwrap();
+        let out = s.run(r#"rg -> search raw "x" in "." {},"#).unwrap();
         assert!(s.render(&out[0], false).contains("a.rs-1-ctx"));
     }
 
     #[test]
     fn usage_plain() {
-        assert_eq!(argv(r#"rg.search "TODO","#), expected(&[], &["TODO", "."]));
+        assert_eq!(
+            argv(r#"rg -> search "TODO","#),
+            expected(&[], &["TODO", "."])
+        );
     }
 
     #[test]
     fn usage_type_and_count() {
         assert_eq!(
-            argv(r#"rg.search "fn main" in "src" { file type ["rust"], max count 1 },"#),
+            argv(r#"rg -> search "fn main" in "src" { file type ["rust"], max count 1 },"#),
             expected(&["--type", "rust", "--max-count", "1"], &["fn main", "src"])
         );
     }
@@ -1784,7 +1817,7 @@ mod rg_example {
     fn usage_word_case_context() {
         assert_eq!(
             argv(
-                r#"rg.search "error" in "." { match : rg.whole word, case : rg.insensitive, context 2 },"#
+                r#"rg -> search "error" in "." { match : rg -> whole word, case : rg -> insensitive, context 2 },"#
             ),
             expected(
                 &["--word-regexp", "--ignore-case", "--context", "2"],
@@ -1797,7 +1830,7 @@ mod rg_example {
     fn usage_hidden_glob_size() {
         assert_eq!(
             argv(
-                r#"rg.search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size : 1 mb },"#
+                r#"rg -> search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size : 1 mb },"#
             ),
             expected(
                 &[
@@ -1817,7 +1850,7 @@ mod rg_example {
     #[test]
     fn result_is_typed_matches() {
         let (mut s, _) = session(Ok("a.rs:1:1:x\nb.rs:2:3:x\n"));
-        let v = s.run(r#"rg.search "x","#).unwrap();
+        let v = s.run(r#"rg -> search "x","#).unwrap();
         let m = |p: &str, l: i64, c: i64| {
             Value::Record(
                 "rg.Match".into(),
@@ -1836,7 +1869,7 @@ mod rg_example {
     #[test]
     fn error_is_passed_through() {
         let (mut s, _) = session(Err("no matches"));
-        let v = s.run(r#"rg.search "x","#).unwrap();
+        let v = s.run(r#"rg -> search "x","#).unwrap();
         assert_eq!(
             v,
             vec![Value::Variant(
@@ -1851,7 +1884,7 @@ mod rg_example {
     fn scope_block_drops_every_qualifier() {
         assert_eq!(
             argv(
-                r#"rg.{
+                r#"rg -> {
                     search "error" in "." { match : whole word, case (insensitive), context 2 },
                 }"#
             ),
@@ -1865,28 +1898,28 @@ mod rg_example {
     #[test]
     fn scope_block_ends_with_its_brace() {
         let (mut s, _) = session(Ok(""));
-        s.run(r#"rg.{ search "x", }"#).unwrap();
+        s.run(r#"rg -> { search "x", }"#).unwrap();
         let e = s.run(r#"search "x","#).unwrap_err();
-        assert!(e.msg.contains("rg."), "{}", e.msg);
+        assert!(e.msg.contains("rg -> "), "{}", e.msg);
         let e = s
             .run(r#"search "x" in "." { match : whole word },"#)
             .unwrap_err();
-        assert!(e.msg.contains("rg."), "{}", e.msg);
+        assert!(e.msg.contains("rg -> "), "{}", e.msg);
     }
 
     #[test]
     fn bad_calls_are_type_errors() {
         let (mut s, _) = session(Ok(""));
         let e = s
-            .run(r#"rg.search "" in "." { max count 1, max count 2 },"#)
+            .run(r#"rg -> search "" in "." { max count 1, max count 2 },"#)
             .unwrap_err();
         assert!(e.msg.contains("max count"), "{}", e.msg);
         let e = s
-            .run(r#"rg.search "" in "." { max file size : 5 days },"#)
+            .run(r#"rg -> search "" in "." { max file size : 5 days },"#)
             .unwrap_err();
         assert!(e.msg.contains("Size"), "{}", e.msg);
         let e = s.run(r#"search "x","#).unwrap_err();
-        assert!(e.msg.contains("rg."), "{}", e.msg);
+        assert!(e.msg.contains("rg -> "), "{}", e.msg);
     }
 }
 
@@ -1943,20 +1976,20 @@ mod statements {
     fn scope_block_resolves_unqualified_and_namespace_wins() {
         let mut s = Session::new();
         s.run(ZZ).unwrap();
-        assert_eq!(s.run("zz.{ count [1], }").unwrap(), vec![Value::Int(99)]);
+        assert_eq!(s.run("zz -> { count [1], }").unwrap(), vec![Value::Int(99)]);
         assert_eq!(s.run("count [1],").unwrap(), vec![Value::Int(1)]);
-        assert_eq!(s.run("zz.count [1],").unwrap(), vec![Value::Int(99)]);
+        assert_eq!(s.run("zz -> count [1],").unwrap(), vec![Value::Int(99)]);
         // Names the namespace lacks still come from the prelude.
         assert_eq!(
-            s.run("zz.{ count [1, 2, 3], }").unwrap(),
+            s.run("zz -> { count [1, 2, 3], }").unwrap(),
             vec![Value::Int(99)]
         );
         assert_eq!(
-            s.run("zz.{ [1] . count _, }").unwrap(),
+            s.run("zz -> { [1] . count _, }").unwrap(),
             vec![Value::Int(99)]
         );
         assert_eq!(
-            s.run("zz.{ 5 . to string, }").unwrap(),
+            s.run("zz -> { 5 . to string, }").unwrap(),
             vec![Value::Str("5".into())]
         );
     }
@@ -1966,14 +1999,14 @@ mod statements {
         let mut s = Session::new();
         s.run(ZZ).unwrap();
         let v = s
-            .run("FUNCTION (f) RETURNS (Int) { zz.{ count [1] } },\nf,")
+            .run("FUNCTION (f) RETURNS (Int) { zz -> { count [1] } },\nf,")
             .unwrap();
         assert_eq!(v, vec![Value::Int(99)]);
     }
 
     #[test]
     fn scope_block_names_a_declared_namespace() {
-        let msg = run_err("nope.{ count [1], }");
+        let msg = run_err("nope -> { count [1], }");
         assert!(msg.contains("unknown namespace `nope`"), "{msg}");
     }
 }
@@ -2404,7 +2437,7 @@ mod sed_example {
     fn replace_all_on_every_line() {
         assert_eq!(
             argv(
-                r#"sed.{ preview "f.txt" with [ in (every line) do : replace all "a/b" with "c" ] },"#
+                r#"sed -> { preview "f.txt" with [ in (every line) do : replace all "a/b" with "c" ] },"#
             ),
             expected(&["s\ta/b\tc\tg"])
         );
@@ -2414,7 +2447,7 @@ mod sed_example {
     fn scopes_become_addresses() {
         assert_eq!(
             argv(
-                r#"sed.{ preview "f.txt" with [
+                r#"sed -> { preview "f.txt" with [
                     in (from line 1 to line 10) do : replace first "x" with "y",
                     in (matching "^#") do : delete line,
                     in (last line) do : delete line,
@@ -2501,23 +2534,24 @@ mod user_operators {
     fn symbol_words_once_used_by_resh_can_be_declared() {
         let src = r#"
 FUNCTION ((a: Int) = (b: Int)) RETURNS (Boolean) { a . equals (b) },
-FUNCTION ((a: Int) -> (b: Int)) RETURNS (List (Int)) { [a, b] },
 FUNCTION ((a: Int) => (b: Int)) RETURNS (Int) { b },
 FUNCTION (* (a: Int)) RETURNS (Int) { a },
 3 = 3,
-1 -> 2,
 1 => 2,
 * 5,
 "#;
         assert_eq!(
             run(src),
-            vec![
-                Value::Bool(true),
-                Value::List(vec![Value::Int(1), Value::Int(2)]),
-                Value::Int(2),
-                Value::Int(5)
-            ]
+            vec![Value::Bool(true), Value::Int(2), Value::Int(5)]
         );
+    }
+
+    #[test]
+    fn arrow_is_reserved_for_namespace_access() {
+        let err = resh::Session::new()
+            .run("FUNCTION ((a: Int) -> (b: Int)) RETURNS (Int) { b },")
+            .unwrap_err();
+        assert!(err.msg.contains("cannot be declared"), "{}", err.msg);
     }
 
     #[test]

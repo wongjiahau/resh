@@ -101,9 +101,9 @@ FUNCTION (search (pattern: String)) RETURNS (Result (List (Match))) {
 }
 
 # Usage:
-#   rg.search "TODO",
-#   rg.search "fn main" in "src" { file type ["rust"], max count 1 },
-#   rg.{
+#   rg -> search "TODO",
+#   rg -> search "fn main" in "src" { file type ["rust"], max count 1 },
+#   rg -> {
 #       search "error" in "." { match (whole word), case (insensitive), context 2 },
 #       search "secret" in "." { include hidden file, glob ["!target", "!*.lock"], max file size (1 mb) },
 #   }

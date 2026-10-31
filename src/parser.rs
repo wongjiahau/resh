@@ -14,8 +14,11 @@ use crate::diag::{Diag, Res, Span};
 
 /// The words resh gives a meaning to. Keywords are uppercase, so a lowercase
 /// word (`match`, `if`) stays free for user names. resh's own forms use only
-/// these words, never symbol words, so every symbol word (`=`, `->`, `++`)
-/// stays free for user-declared operators.
+/// these words and the one symbol word `ARROW` (`->`, namespace access), so
+/// every other symbol word (`=`, `=>`, `++`) stays free for user-declared
+/// operators.
+pub const ARROW: &str = "->";
+
 pub const KEYWORDS: &[&str] = &[
     "FUNCTION",
     "RECORD",
@@ -47,7 +50,7 @@ pub fn parse_program(src: &str) -> Res<Vec<Item>> {
         let double_colon = src.get(at..).is_some_and(|r| r.starts_with("::"))
             || (at > 0 && src.get(at - 1..).is_some_and(|r| r.starts_with("::")));
         let msg = if double_colon {
-            "a namespace qualifier is written with `.`: `git.status`, and a scope block `git.{ ... }`".to_string()
+            "a namespace qualifier is written with `->`: `git -> status`, and a scope block `git -> { ... }`".to_string()
         } else {
             error.message.clone()
         };
@@ -358,6 +361,10 @@ impl Reader<'_> {
         let parts = items
             .iter()
             .map(|item| match item {
+                Flat::Word(ARROW, s) => self.err(
+                    *s,
+                    "`->` is resh's namespace access (`git -> status`) and cannot be declared; pick another symbol",
+                ),
                 Flat::Word(w, _) => Ok(Part::Word(w.to_string())),
                 Flat::Arg(n) => self.param(n, bare_types),
             })
@@ -458,23 +465,22 @@ impl Reader<'_> {
     }
 
     /// An anyfix type: capitalized words and `(Type)` slots, e.g.
-    /// `Result (List (Entry)) Or (String)`, optionally qualified: `git.Commit`.
+    /// `Result (List (Entry)) Or (String)`, optionally qualified: `git -> Commit`.
     /// `name` keeps the words with `_` standing in for each slot (`Result _ Or _`).
     fn ty_flat(&self, items: &[Flat], span: anyfix_expr::Span) -> Res<TyExpr> {
-        // `-> (git.Commit) { ... }`: parentheses keep a qualified type whole.
+        // `List ((git -> Commit))`: parentheses keep a type whole.
         if let [Flat::Arg(inner)] = items
             && matches!(inner.kind, NodeKind::Call(_))
         {
             return self.ty(inner);
         }
-        let (qualifiers, items) = match items {
-            [Flat::Arg(q), rest @ ..]
-                if !rest.is_empty() && single_word(q).is_some_and(is_lowercase_word) =>
-            {
-                (vec![single_word(q).unwrap_or_default().to_string()], rest)
-            }
-            _ => (Vec::new(), items),
-        };
+        if let [Flat::Arg(left), Flat::Word(ARROW, _), Flat::Arg(right)] = items {
+            let namespace = self.namespace_name(left)?;
+            let mut ty = self.ty(right)?;
+            ty.qualifiers.insert(0, namespace);
+            ty.span = self.at(span);
+            return Ok(ty);
+        }
         let mut names = Vec::new();
         let mut args = Vec::new();
         for item in items {
@@ -499,11 +505,22 @@ impl Reader<'_> {
             return self.err(span, "expected a type");
         }
         Ok(TyExpr {
-            qualifiers,
+            qualifiers: Vec::new(),
             name: names.join(" "),
             args,
             span: self.at(span),
         })
+    }
+
+    /// The namespace on the left of `->`: a single lowercase word.
+    fn namespace_name(&self, node: &Node) -> Res<String> {
+        match single_word(node) {
+            Some(w) if is_lowercase_word(w) => Ok(w.to_string()),
+            _ => self.err(
+                node.span,
+                "the left of `->` is a namespace name, a single lowercase word: `git -> status`; namespaces do not nest",
+            ),
+        }
     }
 
     fn check_capitalized(&self, w: &str, span: anyfix_expr::Span) -> Res<()> {
@@ -546,14 +563,13 @@ impl Reader<'_> {
                 },
                 _ => self.let_shape(node),
             },
-            [Flat::Arg(ns), Flat::Arg(body)] if braces(body).is_some() => match single_word(ns) {
-                Some(ns) => Ok(Stmt::Scope(
-                    ns.to_string(),
+            [Flat::Arg(ns), Flat::Word(ARROW, _), Flat::Arg(body)] if braces(body).is_some() => {
+                Ok(Stmt::Scope(
+                    self.namespace_name(ns)?,
                     self.block(braces(body).expect("checked above"))?,
                     span,
-                )),
-                None => Ok(Stmt::Expr(self.expr(node)?)),
-            },
+                ))
+            }
             _ => {
                 if let Some(keyword) = head(&flat).filter(|k| {
                     ["FUNCTION", "RECORD", "ENUM", "TYPE", "NAMESPACE", "IMPORT"].contains(k)
@@ -698,6 +714,25 @@ impl Reader<'_> {
             [Flat::Arg(value), Flat::Word("AS", _), Flat::Arg(ty)] => {
                 return mk(ExprKind::Ascribe(Box::new(self.expr(value)?), self.ty(ty)?));
             }
+            [Flat::Arg(ns), Flat::Word(ARROW, _), Flat::Arg(call)] => {
+                let namespace = self.namespace_name(ns)?;
+                if braces(call).is_some() {
+                    return self.err(
+                        call.span,
+                        format!("a scope block `{namespace} -> {{ ... }}` is a statement; use it on its own, not inside an expression"),
+                    );
+                }
+                let call = match flatten(call).as_slice() {
+                    [Flat::Arg(_)] => {
+                        return self.err(
+                            call.span,
+                            format!("`->` takes a call on its right, found a value; write the call to resolve in `{namespace}`: `{namespace} -> name`"),
+                        );
+                    }
+                    items => items.iter().map(|f| self.seq_item(f)).collect::<Res<_>>()?,
+                };
+                return mk(ExprKind::Qualified { namespace, call });
+            }
             _ => {}
         }
         for (keyword, shape) in [
@@ -720,6 +755,15 @@ impl Reader<'_> {
                     ),
                 );
             }
+        }
+        if let Some(s) = items.iter().find_map(|item| match item {
+            Flat::Word(ARROW, s) => Some(s),
+            _ => None,
+        }) {
+            return self.err(
+                *s,
+                "`->` takes one namespace on its left and one call on its right: `git -> commit (message)`. Namespaces do not nest, and a call with its own symbol words goes in parentheses: `ns -> (a + b)`",
+            );
         }
         if let Some((w, s)) = items.iter().find_map(|item| match item {
             Flat::Word(w, s) if KEYWORDS.contains(w) => Some((w, s)),

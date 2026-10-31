@@ -54,8 +54,8 @@ FUNCTION (preview (path: String) with (steps: List (Step))) RETURNS (Result (Str
 }
 
 # Usage (outside the namespace, wrap calls in a scope block):
-#   sed.{ preview "Cargo.toml" with [ in (every line) do (replace all "0\\.1" with "0.2") ] },
-#   sed.{
+#   sed -> { preview "Cargo.toml" with [ in (every line) do (replace all "0\\.1" with "0.2") ] },
+#   sed -> {
 #       preview "log.txt" with [
 #           in (from line 1 to line 10) do (replace first "ERROR" with "WARN"),
 #           in (matching "^#") do (delete line)

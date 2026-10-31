@@ -258,8 +258,8 @@ FUNCTION (wait for agent (target: String)) RETURNS (Result (String)) {
 }
 
 # Usage:
-#   herdr.list agent,
-#   herdr.{
+#   herdr -> list agent,
+#   herdr -> {
 #       read pane "w1:p1" { lines 50, source (recent unwrapped) },
 #       split pane "w1:p1" (right) { keep focus, start in "/tmp" },
 #       run "just test" in pane "w1:p2",

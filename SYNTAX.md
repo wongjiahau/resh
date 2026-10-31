@@ -6,7 +6,7 @@ otherwise.
 ## Quick start
 
 ```
-$ resh -c 'IMPORT : git, git.status'          # run one snippet
+$ resh -c 'IMPORT : git, git -> status'       # run one snippet
 $ resh                                         # a REPL; :symbols lists what is available
 $ resh run script.resh                         # run a file
 $ resh run script.resh --raw                   # plain text instead of `ok ("...")`
@@ -14,9 +14,9 @@ $ resh run script.resh --raw                   # plain text instead of `ok ("...
 
 ```
 IMPORT : git,
-LET (recent) : git.log { max count 3 },        # ok ([...]) or error ("...")
+LET (recent) : git -> log { max count 3 },     # ok ([...]) or error ("...")
 recent,
-git.{ diff { staged } },                    # a scope block: names of `git` unqualified
+git -> { diff { staged } },                    # a scope block: names of `git` unqualified
 ```
 
 Calls read like phrases (see "Anyfix"). Optional flags go in a `{ ... }` set.
@@ -133,40 +133,44 @@ FUNCTION (commit (message: String)) RETURNS (Result (Commit)) { ... }
 - `NAMESPACE : name` applies file-wide: it must come first in the file, and every
   declaration in the file belongs to it. One namespace per file. Members do not
   repeat the prefix.
-- A namespace qualifies a call by sitting in its first slot: `git.commit "x"`
-  is sugar for `(git) commit "x"`, the call `_ commit _` whose first argument
-  is the namespace `git`. A variable with the same name wins over the
-  namespace.
+- `ns -> call` qualifies a call: `git -> commit "x"` is the call `commit _`
+  of namespace `git`. It is the form `_ -> _`: the namespace on the left, one
+  call on the right. `->` is the only symbol word resh reserves; it cannot be
+  declared as an operator.
+- A namespace is not a value. `git.commit "x"` is the call `_ commit _` with
+  `git` in its first slot, so it is an error that points to `git -> commit "x"`.
 - Everything can be namespaced: functions, types, enums, records.
 - Outside the namespace, names are qualified. Inside the file, they resolve
   unqualified.
 - There is no file-level `USE`; callers qualify, or open a scope block (below).
-- A function that starts with a slot is qualified the same way, with the
-  namespace in a new slot before it: `fd.(option) argument` is the call
-  `_ _ argument`.
-- A qualified type also has the namespace in its first slot: `git.Commit` is
-  `(git) Commit`, e.g. `RETURNS (git.Commit) { ... }`.
-- Namespaces do not nest: a file has one `NAMESPACE : name` (a single word), so
-  a qualified call cannot qualify another. `a.b.c d` is the call `_ c d` whose
-  first slot is `(a) b`, a type error. Use flat anyfix names
-  (`git.remote add (name) (url)`). See the README objective
+- A function that starts with a slot is qualified the same way:
+  `fd -> (option) argument`.
+- A qualified type is written the same way: `git -> Commit`, e.g.
+  `RETURNS (git -> Commit) { ... }`.
+- The right of `->` is one call, so a call with symbol words of its own goes
+  in parentheses: `ns -> (a + b)`, since `ns -> a + b` is the call
+  `_ -> _ + _`.
+- Namespaces do not nest: a file has one `NAMESPACE : name` (a single word),
+  and the left of `->` is a single namespace name, so `a -> b -> c` and
+  `a .-> b .-> c` are errors. Use flat anyfix names
+  (`git -> remote add (name) (url)`). See the README objective
   "Readable shell commands".
 - Unqualified calls and types in a file see the prelude and that file's own
   namespace. A call to a namespaced function without its qualifier is an error
   that names the namespace.
 
 ```
-git.commit "fix bug",
-LET (c : git.Commit) : ...,
+git -> commit "fix bug",
+LET (c : git -> Commit) : ...,
 ```
 
 ### Scope blocks
 
-`ns.{ statements }`, sugar for `(ns) { statements }`, opens `ns` for the
-statements inside: its functions, variants and types are written unqualified.
+`ns -> { statements }` opens `ns` for the statements inside: its functions,
+variants and types are written unqualified. It is a statement, not a value.
 
 ```
-rg.{
+rg -> {
     search "error" in "src" { match : whole word, case (insensitive) },
     search "TODO",
 }
@@ -178,7 +182,7 @@ rg.{
 - Inside, `ns` wins over names from outside: if a call fits a function of `ns`,
   an outer function with the same shape is not considered. Outer names
   (including the prelude) are still reachable when `ns` has no such shape, or
-  with an explicit qualifier (`other.name`).
+  with an explicit qualifier (`other -> name`).
 - Variant values need no special rule: in `{ match (whole word) }` the variant
   resolves because the block opened `rg`.
 - Blocks nest; the innermost opened namespace wins over the outer ones.
@@ -190,7 +194,7 @@ rg.{
 
 ```
 IMPORT : git,
-git.status,
+git -> status,
 ```
 
 - A library is a `.resh` file that starts with `NAMESPACE : name`. `resh` looks
@@ -252,6 +256,7 @@ in parentheses.
 | `RECORD (Name) { fields }`, `ENUM (Name) { variants }` | `RECORD _ _`, `ENUM _ _` |
 | `TYPE (Name (T)) : Type` | `TYPE _ _` |
 | `NAMESPACE : name`, `IMPORT : name` | `NAMESPACE _`, `IMPORT _` |
+| `ns -> call`, `ns -> Type`, `ns -> { statements }` | `_ -> _` |
 
 A declaration's signature or name goes in parentheses, since bare words would
 otherwise join the keyword in one call name: `FUNCTION (status) { ... }`, not
@@ -261,8 +266,9 @@ A MATCH arm `pattern : value` is the pattern's call with the value in a new last
 slot. A wildcard arm is `(_) : value`, because in `_ : value` the `:` fills the
 `_` itself.
 
-Every keyword is an uppercase word. resh's own forms never use a symbol word, so
-every symbol word is free for your own operators:
+Every keyword is an uppercase word. Apart from `->` (namespace access), resh's
+own forms never use a symbol word, so every other symbol word is free for your
+own operators:
 
 ```
 FUNCTION ((a: String) ++ (b: String)) RETURNS (String) { join (a) with (b) },
@@ -376,8 +382,8 @@ MATCH (config) {
   as a pattern (`missing: deep (w (_))`), and an arm that earlier arms already
   cover (including any arm after `(_)`) is an error.
 - Outside the file's namespace, a variant value is qualified like any call:
-  `{ match (fd.glob) }`, or unqualified inside a scope block
-  `fd.{ ... { match (glob) } ... }`. Patterns inside the file are unqualified.
+  `{ match (fd -> glob) }`, or unqualified inside a scope block
+  `fd -> { ... { match (glob) } ... }`. Patterns inside the file are unqualified.
 - A long signature may break before `RETURNS (Type)`.
 
 ## Sets
@@ -395,9 +401,9 @@ ENUM (Find Option) {
     exclude (List (String))
 },
 
-fd.find "" in "src" { extension ["rs"], max depth 3 },
-fd.find "" in "." { size between (1 mb) and (5 gb), include hidden file },
-fd.find "main" in "src" {}
+fd -> find "" in "src" { extension ["rs"], max depth 3 },
+fd -> find "" in "." { size between (1 mb) and (5 gb), include hidden file },
+fd -> find "main" in "src" {}
 ```
 
 - A set literal uses the same `{ ... }` syntax as a record literal: anyfix
@@ -409,7 +415,7 @@ fd.find "main" in "src" {}
   in one literal is a type error naming both positions:
 
 ```
-fd.find "" in "src" { max depth 1, max depth 2 }
+fd -> find "" in "src" { max depth 1, max depth 2 }
 # type error: `max depth` given twice
 ```
 
@@ -521,7 +527,7 @@ are prelude records, built only through these functions:
 Multi-token values need parentheses inside a slot, like any other call:
 
 ```
-fd.find "" in "." { size between (500 kb) and (2 mb) }
+fd -> find "" in "." { size between (500 kb) and (2 mb) }
 ```
 
 ## Overload resolution
@@ -593,7 +599,7 @@ FUNCTION (find (pattern: String) in (dir: String) (options: Set (Find Option)))
 Callers:
 
 ```
-fd.find "" in "src" { extension ["rs"], max depth 3 },
+fd -> find "" in "src" { extension ["rs"], max depth 3 },
 ```
 
 ## Writing a wrapper
@@ -610,7 +616,7 @@ installs a Claude Code skill that writes wrappers for you.
 Wrappers run the tool in resh's current directory. Change it with
 `change directory to "/path"` (it stays changed for the rest of the session);
 `current directory` returns it. A wrapper may also take a directory parameter,
-as `fd.find ... in (dir)` does.
+as `fd -> find ... in (dir)` does.
 
 ## Inspecting symbols
 

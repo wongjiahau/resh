@@ -2,7 +2,7 @@ use crate::diag::Span;
 
 #[derive(Debug, Clone)]
 pub struct TyExpr {
-    /// Namespace qualifiers, outermost first: `git.Commit` is `["git"]`.
+    /// Namespace qualifiers, outermost first: `git -> Commit` is `["git"]`.
     pub qualifiers: Vec<String>,
     pub name: String,
     pub args: Vec<TyExpr>,
@@ -84,7 +84,7 @@ pub enum Decl {
 pub enum Stmt {
     Let(String, Expr, Span),
     Expr(Expr),
-    /// `ns.{ stmts }`: inside, calls and types of `ns` resolve unqualified
+    /// `ns -> { stmts }`: inside, calls and types of `ns` resolve unqualified
     /// and win over names from outside.
     Scope(String, Vec<Stmt>, Span),
 }
@@ -111,10 +111,13 @@ pub enum ExprKind {
     Str(String),
     Placeholder,
     /// An unresolved anyfix call (or a lone word), flattened into its words
-    /// and arguments. Resolved against the signature table by the checker,
-    /// which also reads a leading namespace argument (`git.status`) as a
-    /// qualifier.
+    /// and arguments. Resolved against the signature table by the checker.
     Seq(Vec<SeqItem>),
+    /// `ns -> call`: a call resolved only among the declarations of `ns`.
+    Qualified {
+        namespace: String,
+        call: Vec<SeqItem>,
+    },
     /// `[a, SPREAD (b), c]`: elements may be `Spread`.
     List(Vec<Expr>),
     /// `SPREAD (xs)`: splices a list into the list literal that contains it.

@@ -10,7 +10,7 @@ fn session() -> Session {
 fn import_loads_a_bundled_library() {
     let mut s = session();
     s.set_runner(Box::new(|c, a| Ok(format!("{c} {}", a.join(" ")))));
-    let out = s.run("IMPORT : git,\ngit.status,").unwrap();
+    let out = s.run("IMPORT : git,\ngit -> status,").unwrap();
     assert_eq!(out.len(), 1);
     assert!(s.namespaces().contains(&"git".to_string()));
 }
@@ -59,9 +59,9 @@ fn user_library_wins_over_bundled_and_adds_new_ones() {
     let mut s = Session::new();
     s.set_library_dir(Some(dir.clone()));
     s.run("IMPORT : tool,\nIMPORT : git,").unwrap();
-    assert_eq!(s.run("tool.hello,").unwrap().len(), 1);
-    assert_eq!(s.run("git.mine,").unwrap().len(), 1);
-    assert!(s.run("git.status,").is_err());
+    assert_eq!(s.run("tool -> hello,").unwrap().len(), 1);
+    assert_eq!(s.run("git -> mine,").unwrap().len(), 1);
+    assert!(s.run("git -> status,").is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -118,7 +118,7 @@ fn raw_unwraps_results_and_unescapes_strings() {
 #[test]
 fn adjacent_arguments_error_shows_the_arguments_and_how_to_fix() {
     let err = session()
-        .run("IMPORT : git,\ngit.log { max count 1 } touching : \"a\" \"b\",")
+        .run("IMPORT : git,\ngit -> log { max count 1 } touching : \"a\" \"b\",")
         .unwrap_err();
     assert!(err.msg.contains("`\"a\" \"b\"`"), "{}", err.msg);
     assert!(

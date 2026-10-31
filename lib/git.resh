@@ -108,8 +108,8 @@ FUNCTION (diff) RETURNS (Result (String)) {
 }
 
 # Usage:
-#   git.status,
-#   git.{
+#   git -> status,
+#   git -> {
 #       status { untracked (all), branch },
 #       log { max count 5, author "alice", no merge },
 #       log { changed within (7 days) } touching ["src"],

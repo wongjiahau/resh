@@ -32,13 +32,13 @@ fn strs(v: &[&str]) -> Vec<String> {
 
 #[test]
 fn status_plain() {
-    assert_eq!(argv("git.status,"), strs(&["status", "--porcelain=v1"]));
+    assert_eq!(argv("git -> status,"), strs(&["status", "--porcelain=v1"]));
 }
 
 #[test]
 fn status_options() {
     assert_eq!(
-        argv("git.{ status { untracked (all), branch } },"),
+        argv("git -> { status { untracked (all), branch } },"),
         strs(&[
             "status",
             "--porcelain=v1",
@@ -51,7 +51,7 @@ fn status_options() {
 #[test]
 fn log_options_and_paths() {
     assert_eq!(
-        argv(r#"git.{ log { max count 5, author "alice", no merge } touching ["src"] },"#),
+        argv(r#"git -> { log { max count 5, author "alice", no merge } touching ["src"] },"#),
         strs(&[
             "log",
             "--format=%h %s",
@@ -69,7 +69,7 @@ fn log_options_and_paths() {
 #[test]
 fn log_since_uses_duration_units() {
     assert_eq!(
-        argv("git.{ log { changed within : 7 days } },"),
+        argv("git -> { log { changed within : 7 days } },"),
         strs(&["log", "--format=%h %s", "--since=604800 seconds ago", "--"])
     );
 }
@@ -77,7 +77,7 @@ fn log_since_uses_duration_units() {
 #[test]
 fn diff_staged_stat() {
     assert_eq!(
-        argv("git.{ diff { staged, stat } },"),
+        argv("git -> { diff { staged, stat } },"),
         strs(&["diff", "--cached", "--stat", "--"])
     );
 }
@@ -85,7 +85,7 @@ fn diff_staged_stat() {
 #[test]
 fn diff_against_revision_for_paths() {
     assert_eq!(
-        argv(r#"git.{ diff { against "HEAD~3", name only } touching ["src", "tests"] },"#),
+        argv(r#"git -> { diff { against "HEAD~3", name only } touching ["src", "tests"] },"#),
         strs(&["diff", "HEAD~3", "--name-only", "--", "src", "tests"])
     );
 }

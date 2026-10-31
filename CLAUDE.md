@@ -34,8 +34,9 @@
   tokens, operators or a recursive-descent parser of resh's own: chaining goes
   through `.` (left) and `:` (right), as `crates/anyfix-expr/README.md` says.
 - resh's own forms use word keywords only (`LET`, `IF`, `MATCH`, `AS`, ...),
-  never symbol words. Every symbol word (`=`, `->`, `=>`, `*`, `++`, ...) is
-  left to users, so they can declare it as an ordinary function such as
-  `_ = _`.
+  never symbol words. The one exception is `->`, namespace access
+  (`git -> status`, the form `_ -> _`). Every other symbol word (`=`, `=>`,
+  `*`, `++`, ...) is left to users, so they can declare it as an ordinary
+  function such as `_ = _`. Don't add more exceptions.
 - Matching a call's `Seq` against declared signatures stays in the checker
   (`src/check.rs`), since only it knows the signatures.
