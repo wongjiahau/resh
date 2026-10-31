@@ -1,5 +1,12 @@
 # resh conventions
 
+## No backward compatibility (until release)
+
+- resh has no users yet. Change syntax, semantics and APIs freely: no
+  deprecated aliases, no shims, no old form kept alongside the new one.
+- Update every caller, library, test and doc in the same commit instead.
+- Don't let compatibility rule out a design.
+
 ## Naming
 
 - Avoid "of" in names, including function names, record fields, and type names.
