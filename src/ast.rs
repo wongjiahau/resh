@@ -59,8 +59,11 @@ pub enum Decl {
         body: FnBody,
         doc: Option<String>,
     },
+    /// `RECORD (Order (T)) { ... }`: `name` is the key with `_` for each type
+    /// parameter (`Order _`), `params` the parameters as written.
     Record {
         name: String,
+        params: Vec<TyExpr>,
         fields: Vec<FieldAst>,
         span: Span,
         doc: Option<String>,

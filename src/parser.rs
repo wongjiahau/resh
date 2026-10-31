@@ -249,8 +249,13 @@ impl Reader<'_> {
                 let Some(body) = braces(body) else {
                     return self.decl_shape(node, keyword);
                 };
+                let pattern = self.ty(name)?;
+                if !pattern.qualifiers.is_empty() {
+                    return self.err(name.span, "a declared name has no `->` qualifier");
+                }
                 Ok(Some(Decl::Record {
-                    name: self.decl_name(name)?,
+                    name: pattern.name,
+                    params: pattern.args,
                     fields: body.iter().map(|f| self.field(f)).collect::<Res<_>>()?,
                     span,
                     doc,
@@ -298,7 +303,7 @@ impl Reader<'_> {
             "FUNCTION" => {
                 "`FUNCTION (signature) RETURNS (Type) { body }`, or `FUNCTION (signature) { body }` without a return type"
             }
-            "RECORD" => "`RECORD (Name) { field (Type), ... }`",
+            "RECORD" => "`RECORD (Name) { field (Type), ... }` or `RECORD (Name (T)) { ... }`",
             "ENUM" => "`ENUM (Name) { variant, ... }`",
             _ => "`TYPE (Name (T)) : Type`",
         };

@@ -36,9 +36,9 @@ pub fn enum_params(enums: &Enums, en: &str, targs: &[Type]) -> HashMap<String, T
 
 /// Types of the parameter slots of variant `c` of `ty`.
 fn fields(sig: &Sig, ty: &Type, c: usize) -> Vec<Type> {
-    if let Type::Record(rn) = ty {
+    if let Type::Record(rn, args) = ty {
         return sig.records[rn]
-            .fields
+            .fields_at(args)
             .iter()
             .flat_map(|f| f.slots.iter().map(|s| s.ty.clone()))
             .collect();
@@ -60,7 +60,7 @@ fn fields(sig: &Sig, ty: &Type, c: usize) -> Vec<Type> {
 fn variant_count(sig: &Sig, ty: &Type) -> usize {
     match ty {
         Type::Enum(en, _) => sig.enums[en].variants.len(),
-        Type::Record(_) => 1,
+        Type::Record(..) => 1,
         _ => 0,
     }
 }
@@ -176,7 +176,7 @@ pub fn render(sig: &Sig, ty: &Type, pat: &Pat) -> String {
     };
     let fs = fields(sig, ty, *c);
     let mut args = args.iter().zip(&fs);
-    if let Type::Record(rn) = ty {
+    if let Type::Record(rn, _) = ty {
         let fields: Vec<String> = sig.records[rn]
             .fields
             .iter()

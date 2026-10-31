@@ -35,7 +35,8 @@ pub enum Type {
     /// only known from a sibling argument, so it is checked against the
     /// `Function` parameter of each candidate overload.
     Lambda,
-    Record(String),
+    /// A record by declaration key (`Order _`) and its type arguments.
+    Record(String, Vec<Type>),
     Enum(String, Vec<Type>),
     Param(String),
     /// The bottom type: a subtype of everything. The element type of `[]`,
@@ -64,7 +65,7 @@ impl fmt::Display for Type {
                 write!(f, "({})", ts.join(", "))
             }
             Type::Lambda => write!(f, "lambda"),
-            Type::Record(n) => write!(f, "{}", qualified_display(n)),
+            Type::Record(n, args) => write!(f, "{}", qualified_display(&fill(n, args))),
             Type::Enum(n, args) if args.is_empty() => write!(f, "{}", qualified_display(n)),
             Type::Enum(n, args) if n == "Result" && args.len() == 2 && args[1] == Type::Str => {
                 write!(f, "Result ({})", args[0])
@@ -102,6 +103,18 @@ pub fn qualified_display(key: &str) -> String {
     }
 }
 
+/// A type key with each `_` replaced by its argument: `Order (Int)`.
+fn fill(key: &str, args: &[Type]) -> String {
+    let mut args = args.iter();
+    key.split(' ')
+        .map(|w| match (w == "_").then(|| args.next()).flatten() {
+            Some(t) => format!("({t})"),
+            None => w.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// `a <: b`: every value of type `a` is a valid `b`. Covariant everywhere
 /// (values are immutable). Record literals are handled by `Checker::fits`.
 pub fn sub(a: &Type, b: &Type) -> bool {
@@ -112,7 +125,7 @@ pub fn sub(a: &Type, b: &Type) -> bool {
         (Type::Tuple(xs), Type::Tuple(ys)) => {
             xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| sub(x, y))
         }
-        (Type::Enum(n, xs), Type::Enum(m, ys)) => {
+        (Type::Enum(n, xs), Type::Enum(m, ys)) | (Type::Record(n, xs), Type::Record(m, ys)) => {
             n == m && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| sub(x, y))
         }
         _ => a == b,
@@ -140,7 +153,7 @@ fn overlap(a: &Type, b: &Type) -> bool {
         (Type::Tuple(xs), Type::Tuple(ys)) => {
             xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| overlap(x, y))
         }
-        (Type::Enum(n, xs), Type::Enum(m, ys)) => {
+        (Type::Enum(n, xs), Type::Enum(m, ys)) | (Type::Record(n, xs), Type::Record(m, ys)) => {
             n == m && xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| overlap(x, y))
         }
         _ => a == b,
@@ -167,6 +180,10 @@ pub(crate) fn subst(t: &Type, m: &HashMap<String, Type>, keep_unbound: bool) -> 
             n.clone(),
             a.iter().map(|x| subst(x, m, keep_unbound)).collect(),
         ),
+        Type::Record(n, a) => Type::Record(
+            n.clone(),
+            a.iter().map(|x| subst(x, m, keep_unbound)).collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -177,7 +194,9 @@ fn unbound_param(t: &Type, m: &HashMap<String, Type>) -> bool {
         Type::Param(n) => !m.contains_key(n),
         Type::List(x) | Type::Set(x) => unbound_param(x, m),
         Type::Function(a, r) => unbound_param(a, m) || unbound_param(r, m),
-        Type::Enum(_, xs) | Type::Tuple(xs) => xs.iter().any(|x| unbound_param(x, m)),
+        Type::Enum(_, xs) | Type::Record(_, xs) | Type::Tuple(xs) => {
+            xs.iter().any(|x| unbound_param(x, m))
+        }
         _ => false,
     }
 }
@@ -305,9 +324,66 @@ impl FieldDef {
 
 #[derive(Debug, Clone)]
 pub struct RecordDef {
+    /// Type parameters, as in `RECORD (Order (T))`.
+    pub params: Vec<String>,
     pub fields: Vec<FieldDef>,
     /// The `//` comment lines directly above the declaration, if any.
     pub doc: Option<String>,
+}
+
+impl RecordDef {
+    /// The fields of the record type with arguments `args`: each slot type
+    /// with the record's parameters replaced.
+    pub fn fields_at(&self, args: &[Type]) -> Vec<FieldDef> {
+        let map: HashMap<String, Type> = self.params.iter().cloned().zip(args.to_vec()).collect();
+        self.fields
+            .iter()
+            .map(|f| FieldDef {
+                key: f.key.clone(),
+                slots: f
+                    .slots
+                    .iter()
+                    .map(|s| SlotDef {
+                        ty: subst(&s.ty, &map, false),
+                        default: s.default.clone(),
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+}
+
+/// The parameters of a type pattern (`Order (T)`, `Result (T)`): single
+/// capital letters.
+fn type_params(args: &[TyExpr], example: &str) -> Res<Vec<String>> {
+    args.iter()
+        .map(|a| {
+            let single = a.name.len() == 1 && a.name.chars().all(|c| c.is_ascii_uppercase());
+            if !single || !a.args.is_empty() || !a.qualifiers.is_empty() {
+                return Err(Diag::new(
+                    a.span,
+                    format!("a type parameter is a single capital letter, e.g. `{example}`"),
+                ));
+            }
+            Ok(a.name.clone())
+        })
+        .collect()
+}
+
+/// Every type parameter `t` mentions.
+fn params_in(t: &Type, out: &mut Vec<String>) {
+    match t {
+        Type::Param(n) => out.push(n.clone()),
+        Type::List(x) | Type::Set(x) => params_in(x, out),
+        Type::Function(a, r) => {
+            params_in(a, out);
+            params_in(r, out);
+        }
+        Type::Enum(_, xs) | Type::Record(_, xs) | Type::Tuple(xs) => {
+            xs.iter().for_each(|x| params_in(x, out))
+        }
+        _ => {}
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -570,16 +646,17 @@ impl Checker {
                 ));
             }
         };
-        if let Some(full) = qualified {
-            return self.named_ty(&full).ok_or_else(|| {
-                Diag::new(
-                    t.span,
-                    format!("unknown type `{}`", qualified_display(&full)),
-                )
-            });
-        }
         let args: Res<Vec<Type>> = t.args.iter().map(|a| self.resolve_ty(a)).collect();
         let args = args?;
+        if let Some(full) = qualified {
+            return match self.named_ty(&full, args) {
+                Some(ty) => ty.map_err(|n| self.arity_error(t, n)),
+                None => Err(Diag::new(
+                    t.span,
+                    format!("unknown type `{}`", qualified_display(&full)),
+                )),
+            };
+        }
         let arity = |n: usize, ty: Type| -> Res<Type> {
             if args.len() == n {
                 Ok(ty)
@@ -632,11 +709,18 @@ impl Checker {
                 .into_iter()
                 .chain(self.open.borrow().iter())
                 .rev()
-                .find_map(|ns| self.named_ty(&format!("{ns}.{n}")))
-                .or_else(|| self.named_ty(n))
+                .find(|ns| self.has_type(&format!("{ns}.{n}")))
+                .map(|ns| format!("{ns}.{n}"))
+                .or_else(|| self.has_type(n).then(|| n.to_string()))
             {
-                Some(ty) => arity(0, ty),
-                None => Err(Diag::new(t.span, format!("unknown type `{n}`"))),
+                Some(key) => self
+                    .named_ty(&key, args)
+                    .expect("checked by `has_type`")
+                    .map_err(|n| self.arity_error(t, n)),
+                None => Err(Diag::new(
+                    t.span,
+                    format!("unknown type `{}`{}", fill(n, &args), self.arity_hint(n)),
+                )),
             },
         }
     }
@@ -669,14 +753,68 @@ impl Checker {
             .cloned()
     }
 
-    fn named_ty(&self, key: &str) -> Option<Type> {
-        if self.records.contains_key(key) {
-            Some(Type::Record(key.to_string()))
+    fn has_type(&self, key: &str) -> bool {
+        self.records.contains_key(key) || self.enums.contains_key(key)
+    }
+
+    /// The declared record or enum `key` applied to `args`; `Err` holds the
+    /// number of type arguments it takes when `args` has another count.
+    fn named_ty(&self, key: &str, args: Vec<Type>) -> Option<Result<Type, usize>> {
+        let (ty, arity) = if let Some(rd) = self.records.get(key) {
+            (Type::Record(key.to_string(), args.clone()), rd.params.len())
         } else if self.enums.contains_key(key) {
-            Some(Type::Enum(key.to_string(), vec![]))
+            (Type::Enum(key.to_string(), vec![]), 0)
         } else {
-            None
+            return None;
+        };
+        Some(if args.len() == arity {
+            Ok(ty)
+        } else {
+            Err(arity)
+        })
+    }
+
+    /// For an unknown type, the records with the same words and another
+    /// number of parameters: `Box` for `Box (T)`.
+    fn arity_hint(&self, name: &str) -> String {
+        let words = |k: &str| {
+            k.split(' ')
+                .filter(|w| *w != "_")
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let mut near: Vec<String> = self
+            .records
+            .keys()
+            .filter(|k| words(k) == words(name) && self.visible_type(k))
+            .map(|k| format!("`{}`", self.record_display(k)))
+            .collect();
+        near.sort();
+        if near.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; did you mean {}? Type parameters go in slots",
+                near.join(", ")
+            )
         }
+    }
+
+    /// Is the type `key` written unqualified here (prelude, file, open scope)?
+    fn visible_type(&self, key: &str) -> bool {
+        match key.split_once('.') {
+            None => true,
+            Some((ns, _)) => {
+                self.cur_ns.as_deref() == Some(ns) || self.open.borrow().iter().any(|o| o == ns)
+            }
+        }
+    }
+
+    fn arity_error(&self, t: &TyExpr, n: usize) -> Diag {
+        Diag::new(
+            t.span,
+            format!("type `{}` takes {n} type argument(s)", t.name),
+        )
     }
 
     fn unknown_namespace_message(&self, q: &str) -> String {
@@ -743,7 +881,17 @@ impl Checker {
         };
         let mut types: Vec<Symbol> = Vec::new();
         for (key, r) in &self.records {
-            let Some(name) = local(key) else { continue };
+            if local(key).is_none() {
+                continue;
+            }
+            let name = self.record_display(key);
+            let name = match ns {
+                Some(n) => name
+                    .strip_prefix(&format!("{n} -> "))
+                    .unwrap_or(&name)
+                    .to_string(),
+                None => name,
+            };
             let members = r
                 .fields
                 .iter()
@@ -908,13 +1056,18 @@ impl Checker {
         for d in decls {
             match d {
                 Decl::Record {
-                    name, span, doc, ..
+                    name,
+                    params,
+                    span,
+                    doc,
+                    ..
                 } => {
                     let key = self.qualify(name);
                     self.type_name_free(&key, *span)?;
                     self.records.insert(
                         key,
                         RecordDef {
+                            params: type_params(params, "RECORD (Order (T)) { ... }")?,
                             fields: vec![],
                             doc: doc.clone(),
                         },
@@ -939,18 +1092,7 @@ impl Checker {
                     target,
                     span,
                 } => {
-                    let mut params = Vec::new();
-                    for a in &pattern.args {
-                        let single =
-                            a.name.len() == 1 && a.name.chars().all(|c| c.is_ascii_uppercase());
-                        if !single || !a.args.is_empty() || !a.qualifiers.is_empty() {
-                            return Err(Diag::new(
-                                a.span,
-                                "an alias parameter is a single capital letter, e.g. `TYPE (Result (T)) : ...`",
-                            ));
-                        }
-                        params.push(a.name.clone());
-                    }
+                    let params = type_params(&pattern.args, "TYPE (Result (T)) : ...")?;
                     let key = self.qualify(&pattern.name);
                     if self.aliases.contains_key(&key) {
                         return Err(Diag::new(
@@ -971,6 +1113,7 @@ impl Checker {
                     let mut fds: Vec<FieldDef> = Vec::new();
                     for f in fields {
                         let fd = self.mk_field(f)?;
+                        self.check_declared_params(&key, &fd, f.span)?;
                         self.check_field_clash(&key, &fds, &fd, f.span)?;
                         fds.push(fd);
                     }
@@ -1062,6 +1205,34 @@ impl Checker {
             key: key.join(" "),
             slots,
         })
+    }
+
+    /// A field may only use the record's own type parameters.
+    fn check_declared_params(&self, key: &str, fd: &FieldDef, span: Span) -> Res<()> {
+        let rd = &self.records[key];
+        let mut used = Vec::new();
+        fd.slots.iter().for_each(|s| params_in(&s.ty, &mut used));
+        match used.iter().find(|p| !rd.params.contains(p)) {
+            Some(p) => Err(Diag::new(
+                span,
+                format!(
+                    "field `{}` uses type parameter `{p}`, which `{}` does not declare; add it to the record's name as a slot, e.g. `RECORD (Box ({p})) {{ ... }}`",
+                    fd.signature(),
+                    self.record_display(key),
+                ),
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// A record as written in source, with its parameter names: `Order (T)`.
+    fn record_display(&self, key: &str) -> String {
+        let params: Vec<Type> = self.records[key]
+            .params
+            .iter()
+            .map(|p| Type::Param(p.clone()))
+            .collect();
+        Type::Record(key.to_string(), params).to_string()
     }
 
     /// A literal entry must name exactly one field, so two fields may not
@@ -1190,7 +1361,9 @@ impl Checker {
     /// record literals fitting a record whose fields they cover.
     pub fn fits(&self, a: &Type, b: &Type) -> bool {
         match (a, b) {
-            (Type::Struct(fs), Type::Record(rn)) => self.struct_problem(fs, rn).is_none(),
+            (Type::Struct(fs), Type::Record(rn, args)) => {
+                self.struct_problem(fs, rn, args).is_none()
+            }
             (Type::Struct(fs), Type::Set(e)) => self.set_problem(fs, e).is_none(),
             (Type::Struct(_), _) => false,
             _ => sub(a, b),
@@ -1200,15 +1373,15 @@ impl Checker {
     /// The field a literal entry names: an exact key match, or a bare Boolean
     /// field name (no slot values) standing for `name true`. The flag says
     /// whether the entry was the bare form.
-    fn field_for(rd: &RecordDef, key: &str, slot_values: usize) -> Option<(usize, bool)> {
-        rd.fields
+    fn field_for(fields: &[FieldDef], key: &str, slot_values: usize) -> Option<(usize, bool)> {
+        fields
             .iter()
             .position(|d| d.key == key)
             .map(|i| (i, false))
             .or_else(|| {
                 (slot_values == 0)
                     .then(|| {
-                        rd.fields
+                        fields
                             .iter()
                             .position(|d| d.bare_key().as_deref() == Some(key))
                     })
@@ -1282,12 +1455,18 @@ impl Checker {
     }
 
     /// Why a record literal with these entries does not fit record `rn`.
-    fn struct_problem(&self, fs: &[(String, Vec<Type>)], rn: &str) -> Option<String> {
-        let rd = &self.records[rn];
-        let mut given = vec![false; rd.fields.len()];
+    fn struct_problem(
+        &self,
+        fs: &[(String, Vec<Type>)],
+        rn: &str,
+        args: &[Type],
+    ) -> Option<String> {
+        let fields = self.records[rn].fields_at(args);
+        let rn = Type::Record(rn.to_string(), args.to_vec());
+        let mut given = vec![false; fields.len()];
         for (k, ts) in fs {
-            let Some((fi, bare)) = Self::field_for(rd, k, ts.len()) else {
-                let known: Vec<String> = rd.fields.iter().map(FieldDef::signature).collect();
+            let Some((fi, bare)) = Self::field_for(&fields, k, ts.len()) else {
+                let known: Vec<String> = fields.iter().map(FieldDef::signature).collect();
                 return Some(format!(
                     "record `{rn}` has no field `{}`; its fields are: {}",
                     signature(k, ts),
@@ -1298,7 +1477,7 @@ impl Checker {
                     }
                 ));
             };
-            let d = &rd.fields[fi];
+            let d = &fields[fi];
             if std::mem::replace(&mut given[fi], true) {
                 return Some(format!(
                     "field `{}` of `{rn}` is given twice",
@@ -1318,7 +1497,7 @@ impl Checker {
                 }
             }
         }
-        for (d, g) in rd.fields.iter().zip(&given) {
+        for (d, g) in fields.iter().zip(&given) {
             if !g && d.slots.iter().any(|s| s.default.is_none()) {
                 return Some(format!(
                     "record `{rn}` is missing required field `{}` (only fields whose slots all have a DEFAULT may be omitted)",
@@ -1356,14 +1535,15 @@ impl Checker {
                 .collect();
             return Ir::List(irs);
         }
-        let (Ir::Struct(given), Type::Struct(tys), Type::Record(rn)) = (&ir, ty, target) else {
+        let (Ir::Struct(given), Type::Struct(tys), Type::Record(rn, args)) = (&ir, ty, target)
+        else {
             return ir;
         };
-        let rd = &self.records[rn];
-        let mut values: Vec<Vec<Ir>> = vec![Vec::new(); rd.fields.len()];
+        let fields = self.records[rn].fields_at(args);
+        let mut values: Vec<Vec<Ir>> = vec![Vec::new(); fields.len()];
         for ((k, irs), (_, ts)) in given.iter().zip(tys) {
-            let (fi, bare) = Self::field_for(rd, k, irs.len()).expect("checked by `fits`");
-            let slots = &rd.fields[fi].slots;
+            let (fi, bare) = Self::field_for(&fields, k, irs.len()).expect("checked by `fits`");
+            let slots = &fields[fi].slots;
             values[fi] = if bare {
                 vec![Ir::Lit(Value::Bool(true))]
             } else {
@@ -1374,8 +1554,7 @@ impl Checker {
                     .collect()
             };
         }
-        let irs = rd
-            .fields
+        let irs = fields
             .iter()
             .zip(values)
             .flat_map(|(d, given)| {
@@ -1576,8 +1755,8 @@ impl Checker {
     /// "expected X, found Y", plus the reason when Y is a record literal.
     fn mismatch(&self, what: &str, want: &Type, found: &Type) -> String {
         let mut msg = format!("{what} expects {want}, found {found}");
-        if let (Type::Struct(fs), Type::Record(rn)) = (found, want)
-            && let Some(why) = self.struct_problem(fs, rn)
+        if let (Type::Struct(fs), Type::Record(rn, args)) = (found, want)
+            && let Some(why) = self.struct_problem(fs, rn, args)
         {
             msg.push_str(&format!(": {why}"));
         }
@@ -1637,19 +1816,20 @@ impl Checker {
     fn resolve_record(
         &self,
         rn: &str,
+        args: &[Type],
         entries: &[Vec<PatItem>],
         span: Span,
         binds: &mut Vec<(String, Type)>,
     ) -> Res<Pat> {
-        let rd = &self.records[rn];
+        let defs = self.records[rn].fields_at(args);
+        let rn = Type::Record(rn.to_string(), args.to_vec());
         let fields = || {
-            rd.fields
-                .iter()
+            defs.iter()
                 .map(FieldDef::signature)
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let mut found: Vec<Option<FieldMatch>> = vec![None; rd.fields.len()];
+        let mut found: Vec<Option<FieldMatch>> = vec![None; defs.len()];
         for entry in entries {
             let mut key = Vec::new();
             let mut slot_items = Vec::new();
@@ -1669,7 +1849,7 @@ impl Checker {
                 }
             }
             let key = key.join(" ");
-            let Some(fi) = rd.fields.iter().position(|d| d.key == key) else {
+            let Some(fi) = defs.iter().position(|d| d.key == key) else {
                 return Err(Diag::new(
                     span,
                     format!(
@@ -1680,18 +1860,17 @@ impl Checker {
             };
             let mut local = Vec::new();
             let mut pats = Vec::new();
-            for (slot, item) in rd.fields[fi].slots.iter().zip(slot_items) {
+            for (slot, item) in defs[fi].slots.iter().zip(slot_items) {
                 pats.push(self.resolve_slot(&slot.ty, item, span, &mut local)?);
             }
             if found[fi].replace((pats, local)).is_some() {
                 return Err(Diag::new(
                     span,
-                    format!("field `{}` is listed twice", rd.fields[fi].signature()),
+                    format!("field `{}` is listed twice", defs[fi].signature()),
                 ));
             }
         }
-        let missing: Vec<String> = rd
-            .fields
+        let missing: Vec<String> = defs
             .iter()
             .zip(&found)
             .filter(|(_, f)| f.is_none())
@@ -1733,16 +1912,19 @@ impl Checker {
         binds: &mut Vec<(String, Type)>,
     ) -> Res<Pat> {
         match (ty, items) {
-            (Type::Record(rn), [PatItem::Record(entries)]) => {
-                self.resolve_record(rn, entries, span, binds)
+            (Type::Record(rn, args), [PatItem::Record(entries)]) => {
+                self.resolve_record(rn, args, entries, span, binds)
             }
-            (Type::Record(rn), _) => {
-                let rd = &self.records[rn];
-                let fields: Vec<String> = rd.fields.iter().map(FieldDef::signature).collect();
+            (Type::Record(rn, args), _) => {
+                let fields: Vec<String> = self.records[rn]
+                    .fields_at(args)
+                    .iter()
+                    .map(FieldDef::signature)
+                    .collect();
                 Err(Diag::new(
                     span,
                     format!(
-                        "`{rn}` is a record, so the pattern must be a record pattern `{{ field (name), ... }}`; its fields are: {}",
+                        "`{ty}` is a record, so the pattern must be a record pattern `{{ field (name), ... }}`; its fields are: {}",
                         fields.join(", ")
                     ),
                 ))
@@ -1831,7 +2013,7 @@ impl Checker {
 
     fn matching(&self, scrut: &Expr, arms: &[Arm], span: Span, sc: &mut Scope) -> Res<(Ir, Type)> {
         let (sir, sty) = self.check(scrut, sc)?;
-        if !matches!(sty, Type::Enum(..) | Type::Record(_)) {
+        if !matches!(sty, Type::Enum(..) | Type::Record(..)) {
             return Err(Diag::new(
                 scrut.span,
                 format!(
@@ -1927,12 +2109,27 @@ impl Checker {
             (Type::Tuple(xs), Type::Tuple(ys)) => {
                 xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| self.unify(x, y, m))
             }
-            (Type::Enum(n, xs), Type::Enum(k, ys)) => {
+            (Type::Enum(n, xs), Type::Enum(k, ys)) | (Type::Record(n, xs), Type::Record(k, ys)) => {
                 n == k
                     && xs.len() == ys.len()
                     && xs.iter().zip(ys).all(|(x, y)| self.unify(x, y, m))
             }
-            _ => self.fits(a, p),
+            // A record literal binds the parameters its slot values fix.
+            (Type::Record(rn, xs), Type::Struct(fs)) if unbound_param(p, m) => {
+                let fields = self.records[rn].fields_at(xs);
+                for (k, ts) in fs {
+                    if let Some((fi, false)) = Self::field_for(&fields, k, ts.len()) {
+                        for (slot, t) in fields[fi].slots.iter().zip(ts) {
+                            let mut trial = m.clone();
+                            if self.unify(&slot.ty, t, &mut trial) {
+                                *m = trial;
+                            }
+                        }
+                    }
+                }
+                self.fits(a, &subst(p, m, true))
+            }
+            _ => self.fits(a, &subst(p, m, true)),
         }
     }
 
@@ -2095,9 +2292,9 @@ impl Checker {
             ids.map(|i| {
                 let mut line = format!("\n    {}", label(&self.defs[i].parts));
                 for part in &self.defs[i].parts {
-                    if let PartT::Param(_, Type::Record(rn)) = part {
+                    if let PartT::Param(_, rt @ Type::Record(rn, args)) = part {
                         let fields: Vec<String> = self.records[rn.as_str()]
-                            .fields
+                            .fields_at(args)
                             .iter()
                             .map(|f| {
                                 let opt = f.slots.iter().all(|s| s.default.is_some());
@@ -2109,7 +2306,7 @@ impl Checker {
                         } else {
                             fields.join(", ")
                         };
-                        line.push_str(&format!("\n      `{rn}` fields: {fields}"));
+                        line.push_str(&format!("\n      `{rt}` fields: {fields}"));
                     }
                 }
                 line

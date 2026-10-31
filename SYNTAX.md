@@ -329,6 +329,12 @@ RECORD (Server Config) {
   default.
 - A field may be omitted in a literal only if every slot has a `DEFAULT`.
   There are no optional fields, so destructuring always sees every field.
+- A record may take type parameters, written like an alias pattern (single
+  capital letters in slots): `RECORD (Box (T)) { value (T) }`. They are part of
+  its name, so the type is always written with them: `Box (Int)`, `Box (T)`.
+  A field may only use the record's own parameters. A literal passed to a
+  `Box (T)` parameter fixes `T` from its slot values; elsewhere state the type:
+  `LET (b : Box (Int)) : { value 5 }`.
 
 ### Literals
 
@@ -398,7 +404,7 @@ max [3, 1, 2] by (int),
 - A record declaration may list function members next to its fields:
   `FUNCTION (signature) RETURNS (Type)`, with no body. The return type is
   required.
-- A record may take type parameters, written like an alias pattern:
+- A record may take type parameters (see "Records"):
   `RECORD (Order (T)) { ... }`.
 - A record literal gives each function member a body:
   `{ FUNCTION ((a: Int) compare (b: Int)) RETURNS (Ordering) { ... } }`. The body

@@ -2578,3 +2578,53 @@ mod match_arms {
         assert!(msg.contains("`(_) : value`"), "{msg}");
     }
 }
+
+mod generic_records {
+    use super::{render, run, run_err};
+    use resh::Value;
+
+    const BOX: &str = r#"
+RECORD (Box (T)) { value (T) },
+FUNCTION (open (b: Box (T))) RETURNS (T) { MATCH (b) { { value (v) } : v } },
+"#;
+
+    #[test]
+    fn a_literal_binds_the_type_parameter() {
+        let src = format!("{BOX}\nopen {{ value 3 }},\nopen {{ value \"s\" }},");
+        assert_eq!(run(&src), vec![Value::Int(3), Value::Str("s".into())]);
+    }
+
+    #[test]
+    fn a_stated_type_fixes_the_parameter() {
+        let src = format!("{BOX}\nLET (b : Box (Int)) : {{ value 5 }},\nb,");
+        assert_eq!(render(&src), "{ value 5 }");
+        let msg = run_err(&format!("{BOX}\nLET (b : Box (Int)) : {{ value \"x\" }},"));
+        assert!(
+            msg.contains("field `value (Int)` of `Box (Int)` expects Int, found String"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn a_field_uses_only_declared_parameters() {
+        let msg = run_err("RECORD (Box (T)) { value (U) },");
+        assert!(
+            msg.contains("uses type parameter `U`, which `Box (T)` does not declare"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn the_parameters_are_part_of_the_name() {
+        let msg = run_err(&format!("{BOX}\nLET (b : Box) : {{ value 1 }},"));
+        assert!(
+            msg.contains("unknown type `Box`; did you mean `Box (T)`?"),
+            "{msg}"
+        );
+        let msg = run_err("RECORD (Box (Int)) { value (Int) },");
+        assert!(
+            msg.contains("a type parameter is a single capital letter"),
+            "{msg}"
+        );
+    }
+}
